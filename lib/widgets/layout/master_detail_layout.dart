@@ -6,6 +6,7 @@ import '../../utils/responsive.dart';
 import '../../utils/layout_lock.dart';
 import 'draggable_divider.dart';
 import 'pane_filmstrip.dart';
+import '../../theme/mojian_theme.dart';
 
 /// Master-Detail 双栏布局
 /// 平板/桌面上显示双栏，手机上只显示 master 或 detail
@@ -373,6 +374,20 @@ class _DefaultEmptyState extends StatelessWidget {
 /// 各页面自定义空态（emptyDetail）时应使用本组件、只定制 icon/message，
 /// 不要自己拼 Center/Column，也不要自己包 ColoredBox 铺底——背景由
 /// [MasterDetailLayout] 的 detail 槽统一负责。
+/// 墨笺下的页面空态(淡墨晕染托着图标 + 宋体文案,同平行视界空态);
+/// 经典风格返回 null——调用方写 `mojianEmptyState(...) ?? 原来的空态`,
+/// 经典逐像素不变。
+Widget? mojianEmptyState(
+  BuildContext context,
+  IconData icon,
+  String message, {
+  EdgeInsets? padding,
+}) {
+  if (Theme.of(context).extension<MojianTokens>() == null) return null;
+  final state = MasterDetailEmptyState(icon: icon, message: message);
+  return padding == null ? state : Padding(padding: padding, child: state);
+}
+
 class MasterDetailEmptyState extends StatelessWidget {
   const MasterDetailEmptyState({
     super.key,
@@ -388,6 +403,53 @@ class MasterDetailEmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final mj = theme.extension<MojianTokens>();
+    if (mj != null) {
+      // 墨笺:一团洇开的淡墨托着淡墨色图标,文案用宋体、字距拉开
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 120,
+              height: 120,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(
+                  center: const Alignment(-0.16, -0.2),
+                  colors: [
+                    mj.ink.withValues(alpha: 0.13),
+                    mj.accent.withValues(alpha: 0.08),
+                    mj.paper.withValues(alpha: 0),
+                  ],
+                  stops: const [0, 0.5, 1],
+                ),
+              ),
+              alignment: Alignment.center,
+              child: Icon(
+                icon,
+                size: iconSize * 0.6,
+                color: mj.ink3.withValues(alpha: 0.7),
+              ),
+            ),
+            const SizedBox(height: 18),
+            // 从 textTheme 派生(inherit: false):有的宿主槽位上方没有
+            // Material,裸 TextStyle 会继承兜底样式的黄色双下划线
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyLarge?.copyWith(
+                fontFamily: MojianTokens.serifFamily,
+                fontWeight: FontWeight.w600,
+                fontSize: 17,
+                letterSpacing: 3,
+                color: mj.ink2,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,

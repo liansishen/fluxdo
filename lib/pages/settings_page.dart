@@ -22,6 +22,8 @@ import 'notion_settings_page.dart';
 import 'preferences_page.dart';
 import 'reading_settings_page.dart';
 import 'shortcut_settings_page.dart';
+import '../theme/mojian_theme.dart';
+import '../widgets/common/mojian_menu_row.dart';
 
 class SettingsPage extends ConsumerStatefulWidget {
   static const double parallelMasterWidth = PaneBreakpoints.settingsMasterWidth;
@@ -260,30 +262,37 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   /// 搜索结果（自动从数据声明派生）
   Widget _buildSearchResults(ThemeData theme) {
-    final allResults = buildSearchIndex(context);
+    final allResults = buildSearchIndex(context, ref);
     final q = _query.toLowerCase();
     final filtered = allResults.where((r) => r.model.matchesQuery(q)).toList();
 
     if (filtered.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Symbols.search_off_rounded,
-              size: 48,
-              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+      return mojianEmptyState(
+            context,
+            Symbols.search_off_rounded,
+            context.l10n.settings_searchEmpty,
+          ) ??
+          Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Symbols.search_off_rounded,
+                  size: 48,
+                  color: theme.colorScheme.onSurfaceVariant.withValues(
+                    alpha: 0.4,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  context.l10n.settings_searchEmpty,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            Text(
-              context.l10n.settings_searchEmpty,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-        ),
-      );
+          );
     }
 
     return ListView.separated(
@@ -417,6 +426,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   }) {
     final theme = Theme.of(context);
     final finalIconColor = iconColor ?? theme.colorScheme.primary;
+    final mj = theme.extension<MojianTokens>();
+    if (mj != null) {
+      return MojianMenuRow(icon: icon, title: title, onTap: onTap);
+    }
 
     return InkWell(
       onTap: onTap,

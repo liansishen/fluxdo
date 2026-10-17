@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:app_icons/app_icons.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -1407,13 +1408,20 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
     final hasJoinedAt = _user?.createdAt != null;
     final hasInfo = hasBio || hasLocation || hasWebsite || hasJoinedAt;
 
+    final mj = theme.extension<MojianTokens>();
+    final plainBanner = mj != null && !hasBackground;
+    final barFg = plainBanner ? mj.ink : Colors.white;
     final banner = SizedBox(
       height: bannerHeight,
       child: Stack(
         fit: StackFit.expand,
         children: [
           // 个人主页可能长时间停留,装饰背景不常驻刷新(与竖版同口径)。
-          const GrainGradientBackground(animated: false),
+          // 墨笺没有头图时是一条素纸色横幅,不用彩色颗粒渐变
+          if (mj != null)
+            ColoredBox(color: mj.paper3)
+          else
+            const GrainGradientBackground(animated: false),
           if (hasBackground)
             Image(
               image: discourseImageProvider(UrlHelper.resolveUrlWithCdn(bgUrl)),
@@ -1432,7 +1440,8 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
               errorBuilder: (_, _, _) => const SizedBox.shrink(),
             ),
           // 轻压暗:保住悬浮按钮可读性,不吃头图本身。
-          Container(color: Colors.black.withValues(alpha: 0.2)),
+          if (mj == null || hasBackground)
+            Container(color: Colors.black.withValues(alpha: 0.2)),
         ],
       ),
     );
@@ -1672,17 +1681,20 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
             ),
           ),
           // 悬浮顶栏:返回 + 操作按钮,渐变黑纱保证压图可读。
+          // 墨笺没有头图时横幅是素纸,直接用墨色按钮、不加黑纱
           Positioned(
             top: 0,
             left: 0,
             right: 0,
             child: Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [Colors.black45, Colors.transparent],
-                ),
+              decoration: BoxDecoration(
+                gradient: plainBanner
+                    ? null
+                    : const LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.black45, Colors.transparent],
+                      ),
               ),
               child: SafeArea(
                 bottom: false,
@@ -1692,16 +1704,16 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                     vertical: 4,
                   ),
                   child: IconTheme(
-                    data: const IconThemeData(color: Colors.white),
+                    data: IconThemeData(color: barFg),
                     child: Row(
                       children: [
                         // 与竖版 AppBar 同一套返回键语义:嵌入预览位
                         // (onEmbeddedBack == null)不渲染任何返回键。
                         if (!widget.embeddedMode)
-                          const BackButton(color: Colors.white)
+                          BackButton(color: barFg)
                         else if (widget.onEmbeddedBack != null)
                           BackButton(
-                            color: Colors.white,
+                            color: barFg,
                             onPressed: widget.onEmbeddedBack,
                           ),
                         const Spacer(),
@@ -1989,6 +2001,8 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
         currentUser != null &&
         _user != null &&
         currentUser.username == _user!.username;
+    // 墨笺:纸底墨字,不要颗粒渐变与压暗遮罩;用户头图只作顶部一条淡出的横幅
+    final mj = theme.extension<MojianTokens>();
 
     return SliverAppBar(
       expandedHeight: expandedHeight,
@@ -1999,7 +2013,12 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
       backgroundColor:
           Colors.transparent, // Transparent to show FlexibleSpaceBar background
       surfaceTintColor: Colors.transparent, // Prevent M3 tint
-      iconTheme: const IconThemeData(color: Colors.white),
+      iconTheme: IconThemeData(color: mj?.ink ?? Colors.white),
+      systemOverlayStyle: mj == null
+          ? null
+          : (theme.brightness == Brightness.light
+                ? SystemUiOverlayStyle.dark
+                : SystemUiOverlayStyle.light),
       // 同上（错误态 AppBar）的注释：onEmbeddedBack 为空时不能塞
       // BackButton，且要显式关掉 automaticallyImplyLeading。
       automaticallyImplyLeading: !widget.embeddedMode,
@@ -2039,6 +2058,36 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
           return Stack(
             fit: StackFit.expand,
             children: [
+              if (mj != null) ...[
+                ColoredBox(color: mj.paper),
+                if (hasBackground)
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: expandedHeight * 0.42,
+                    // 头图上压着墨色文字,只能淡;展开时浓一些,收起时随 t 退到
+                    // 纸底,免得收起后的小标题压在照片上
+                    child: ShaderMask(
+                      shaderCallback: (rect) => LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.black.withValues(alpha: 0.2 + 0.32 * t),
+                          Colors.black.withValues(alpha: 0),
+                        ],
+                      ).createShader(rect),
+                      blendMode: BlendMode.dstIn,
+                      child: Image(
+                        image: discourseImageProvider(
+                          UrlHelper.resolveUrlWithCdn(bgUrl),
+                        ),
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                      ),
+                    ),
+                  ),
+              ] else ...[
               // ===== 层 0: 背景 - shader 动画 + 径向渐变辉光 + 图片叠加 =====
               // 用 ClipRect 裁剪溢出，内部固定为 expandedHeight，防止收起时 shader 被压扁
               Positioned.fill(
@@ -2084,6 +2133,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                   Curves.easeOut.transform(1.0 - t), // 使用 easeOut 曲线优化滑动体验
                 ),
               ),
+              ],
 
               // ===== 层 2: 用户信息内容 - 展开时显示，收起时淡出 =====
               // 宽屏时信息区与下方列表同宽限居中(头图背景仍全宽出血)。
@@ -2138,7 +2188,10 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                                 : null,
                             radius: 16,
                             fallbackText: _user?.username,
-                            border: Border.all(color: Colors.white70, width: 1),
+                            border: Border.all(
+                              color: mj?.ruleStrong ?? Colors.white70,
+                              width: 1,
+                            ),
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -2149,8 +2202,11 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                                 : (_user?.username ?? ''),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              fontFamily: mj == null
+                                  ? null
+                                  : MojianTokens.serifFamily,
+                              color: mj?.ink ?? Colors.white,
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
                             ),
@@ -2192,6 +2248,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
         currentUser != null &&
         _user != null &&
         currentUser.username == _user!.username;
+    final ink = _headerInk(theme);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -2241,8 +2298,8 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                           ? BorderRadius.circular(8)
                           : null,
                       border: Border.all(
-                        color: Colors.white,
-                        width: 2,
+                        color: ink.avatarRing,
+                        width: ink.mojian ? 1 : 2,
                       ),
                     ),
                     child: AvatarWithFlair(
@@ -2295,16 +2352,20 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                                 theme.extension<MojianTokens>() != null
                                 ? MojianTokens.serifFamily
                                 : null,
-                            color: Colors.white,
-                            fontSize: 22,
-                            fontWeight: FontWeight.w600,
-                            shadows: const [
-                              Shadow(
-                                color: Colors.black45,
-                                offset: Offset(0, 1),
-                                blurRadius: 2,
-                              ),
-                            ],
+                            color: ink.fg,
+                            fontSize: ink.mojian ? 24 : 22,
+                            fontWeight: ink.mojian
+                                ? FontWeight.w700
+                                : FontWeight.w600,
+                            shadows: ink.mojian
+                                ? null
+                                : const [
+                                    Shadow(
+                                      color: Colors.black45,
+                                      offset: Offset(0, 1),
+                                      blurRadius: 2,
+                                    ),
+                                  ],
                           ),
                         ),
                       ),
@@ -2335,12 +2396,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                         ),
                         child: Text(
                           '@${_user?.username}',
-                          style: TextStyle(
-                            color: Colors.white.withValues(
-                              alpha: 0.85,
-                            ),
-                            fontSize: 13,
-                          ),
+                          style: TextStyle(color: ink.fg2, fontSize: 13),
                         ),
                       ),
                     )
@@ -2353,13 +2409,16 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                       vertical: 2,
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(12),
+                      color: ink.chipFill,
+                      borderRadius: BorderRadius.circular(ink.mojian ? 4 : 12),
+                      border: ink.chipBorder == null
+                          ? null
+                          : Border.all(color: ink.chipBorder!),
                     ),
                     child: Text(
                       _getTrustLevelLabel(_user?.trustLevel ?? 0),
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: ink.mojian ? ink.fg2 : ink.fg,
                         fontSize: 10,
                         fontWeight: FontWeight.w600,
                       ),
@@ -2401,6 +2460,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                               ),
                     reason: _user!.suspendReason,
                     color: Colors.redAccent,
+                    reasonColor: ink.mojian ? ink.fg2 : null,
                   ),
                   if (_user!.isSilenced)
                     const SizedBox(height: 8),
@@ -2421,6 +2481,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                               ),
                     reason: _user!.silenceReason,
                     color: Colors.orangeAccent,
+                    reasonColor: ink.mojian ? ink.fg2 : null,
                   ),
               ],
             ),
@@ -2433,10 +2494,17 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
             child: Container(
               height: 54,
               padding: const EdgeInsets.symmetric(horizontal: 12),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
+              // 墨笺:简介不要半透明底块,改左侧一道竖细线(像引文)
+              decoration: ink.mojian
+                  ? BoxDecoration(
+                      border: Border(
+                        left: BorderSide(color: ink.bioRule, width: 2),
+                      ),
+                    )
+                  : BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
               child: Row(
                 children: [
                   Expanded(
@@ -2446,9 +2514,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             textStyle: TextStyle(
-                              color: Colors.white.withValues(
-                                alpha: 0.9,
-                              ),
+                              color: ink.bioText,
                               fontSize: 14,
                               height: 1.3,
                             ),
@@ -2458,9 +2524,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              color: Colors.white.withValues(
-                                alpha: 0.5,
-                              ),
+                              color: ink.fg3,
                               fontSize: 14,
                               height: 1.3,
                               fontStyle: FontStyle.italic,
@@ -2472,7 +2536,9 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                     Icon(
                       Symbols.chevron_right_rounded,
                       size: 16,
-                      color: Colors.white.withValues(alpha: 0.6),
+                      color: ink.mojian
+                          ? ink.fg3
+                          : Colors.white.withValues(alpha: 0.6),
                     ),
                   ],
                 ],
@@ -2579,23 +2645,28 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
               vertical: 4,
             ),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.15),
+              color: ink.mojian
+                  ? ink.chipFill
+                  : Colors.white.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(12),
+              border: ink.chipBorder == null
+                  ? null
+                  : Border.all(color: ink.chipBorder!),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(
+                Icon(
                   Symbols.flash_on_rounded,
                   size: 12,
-                  color: Colors.white70,
+                  color: ink.mojian ? ink.fg2 : Colors.white70,
                 ),
                 const SizedBox(width: 4),
                 RelativeTimeText(
                   dateTime:
                       _user?.lastSeenAt ?? _user!.lastPostedAt!,
-                  style: const TextStyle(
-                    color: Colors.white70,
+                  style: TextStyle(
+                    color: ink.mojian ? ink.fg2 : Colors.white70,
                     fontSize: 11,
                   ),
                 ),
@@ -2610,13 +2681,15 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
   /// Tab 栏本体(样式统一)。窄版挂在 SliverAppBar.bottom 的圆角容器里,
   /// 宽版直接放右栏顶部。
   Widget _buildTabBar(ThemeData theme) {
+    // 墨笺:沿用主题的墨色标签 + 强调色短横
+    final mojian = theme.extension<MojianTokens>() != null;
     return TabBar(
       controller: _tabController,
       isScrollable: true,
       tabAlignment: TabAlignment.start,
-      labelColor: theme.colorScheme.primary,
-      unselectedLabelColor: theme.colorScheme.onSurfaceVariant,
-      indicatorColor: theme.colorScheme.primary,
+      labelColor: mojian ? null : theme.colorScheme.primary,
+      unselectedLabelColor: mojian ? null : theme.colorScheme.onSurfaceVariant,
+      indicatorColor: mojian ? null : theme.colorScheme.primary,
       labelPadding: const EdgeInsets.symmetric(horizontal: 12),
       indicatorSize: TabBarIndicatorSize.label,
       dividerColor: Colors.transparent,
@@ -2773,7 +2846,26 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
     ];
   }
 
+  /// 窄版头部信息区的配色:经典 = 白字压深色头图;墨笺 = 纸底墨字
+  _HeaderInk _headerInk(ThemeData theme) {
+    final mj = theme.extension<MojianTokens>();
+    if (mj == null) return const _HeaderInk.classic();
+    return _HeaderInk(
+      mojian: true,
+      fg: mj.ink,
+      fg2: mj.ink3,
+      fg3: mj.ink4,
+      paper: mj.paper,
+      avatarRing: mj.ruleStrong,
+      chipFill: Colors.transparent,
+      chipBorder: mj.ruleStrong,
+      bioText: mj.ink2,
+      bioRule: mj.ruleStrong,
+    );
+  }
+
   Widget _buildStatSlot(String value, String label, int rawValue) {
+    final ink = _headerInk(Theme.of(context));
     return Tooltip(
       message: '$rawValue',
       child: Row(
@@ -2788,7 +2880,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                   Theme.of(context).extension<MojianTokens>() != null
                   ? MojianTokens.serifFamily
                   : null,
-              color: Colors.white,
+              color: ink.fg,
               fontSize: 17,
               fontWeight: FontWeight.w600,
             ),
@@ -2797,7 +2889,9 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
           Text(
             label,
             style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.7),
+              color: ink.mojian
+                  ? ink.fg2
+                  : Colors.white.withValues(alpha: 0.7),
               fontSize: 12,
             ),
           ),
@@ -2811,14 +2905,15 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
       return const SizedBox.shrink();
     }
 
+    final ink = _headerInk(Theme.of(context));
     return _isFollowLoading
         ? Container(
             width: 32,
             height: 32,
             padding: const EdgeInsets.all(8),
-            child: const CircularProgressIndicator(
+            child: CircularProgressIndicator(
               strokeWidth: 2,
-              color: Colors.white,
+              color: ink.fg,
             ),
           )
         : TextButton.icon(
@@ -2832,15 +2927,24 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                   ? context.l10n.userProfile_followed
                   : context.l10n.userProfile_follow,
             ),
+            // 墨笺:未关注 = 墨色实心,已关注 = 细描边
             style: TextButton.styleFrom(
-              backgroundColor: _isFollowed
+              backgroundColor: ink.mojian
+                  ? (_isFollowed ? Colors.transparent : ink.fg)
+                  : _isFollowed
                   ? Colors.white.withValues(alpha: 0.15)
                   : Colors.white,
-              foregroundColor: _isFollowed ? Colors.white : Colors.black87,
+              foregroundColor: ink.mojian
+                  ? (_isFollowed ? ink.fg2 : ink.paper)
+                  : _isFollowed
+                  ? Colors.white
+                  : Colors.black87,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(18),
                 side: _isFollowed
-                    ? const BorderSide(color: Colors.white38)
+                    ? BorderSide(
+                        color: ink.mojian ? ink.chipBorder! : Colors.white38,
+                      )
                     : BorderSide.none,
               ),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 0),
@@ -3133,7 +3237,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
             summary.mostLikedUsers.isEmpty &&
             summary.topCategories.isEmpty &&
             summary.badges.isEmpty)
-          Center(
+          mojianEmptyState(context, Symbols.summarize_rounded, context.l10n.userProfile_noSummary, padding: const EdgeInsets.only(top: 80)) ?? Center(
             child: Padding(
               padding: const EdgeInsets.only(top: 80),
               child: Column(
@@ -3176,7 +3280,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
   }
 
   Widget _buildSummaryTopicItem(ThemeData theme, SummaryTopic topic) {
-    return Card(
+    return _FeedCard(
       margin: const EdgeInsets.only(bottom: 8),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -3226,7 +3330,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
     final topic = reply.topic;
     final targetTopicId = topic?.id ?? reply.topicId;
 
-    return Card(
+    return _FeedCard(
       margin: const EdgeInsets.only(bottom: 8),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -3277,7 +3381,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
   }
 
   Widget _buildSummaryLinkItem(ThemeData theme, SummaryLink link) {
-    return Card(
+    return _FeedCard(
       margin: const EdgeInsets.only(bottom: 8),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -3411,7 +3515,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
         ? Color(int.parse('FF${cat.color}', radix: 16))
         : theme.colorScheme.primary;
 
-    return Card(
+    return _FeedCard(
       margin: const EdgeInsets.only(bottom: 8),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -3508,7 +3612,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
 
     // 空状态
     if (reactions == null || reactions.isEmpty) {
-      return Center(
+      return mojianEmptyState(context, Symbols.emoji_emotions_rounded, context.l10n.userProfile_noReactions) ?? Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -3576,7 +3680,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
 
     // 空状态
     if (boosts == null || boosts.isEmpty) {
-      return Center(
+      return mojianEmptyState(context, Symbols.rocket_launch_rounded, context.l10n.userProfile_noBoosts) ?? Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -3642,7 +3746,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
 
     // 空状态
     if (topics == null || topics.isEmpty) {
-      return Center(
+      return mojianEmptyState(context, Symbols.how_to_vote_rounded, context.l10n.userProfile_noVotes) ?? Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -3725,7 +3829,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
 
     // 空状态
     if (posts == null || posts.isEmpty) {
-      return Center(
+      return mojianEmptyState(context, Symbols.check_circle_rounded, context.l10n.userProfile_noSolved) ?? Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -3782,7 +3886,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
     final theme = Theme.of(context);
     final boostText = BoostContentParser.parse(boost.cooked).displayText;
 
-    return Card(
+    return _FeedCard(
       margin: const EdgeInsets.only(bottom: 12),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       clipBehavior: Clip.antiAlias,
@@ -3865,7 +3969,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
   Widget _buildSolvedItem(SolvedPost post) {
     final theme = Theme.of(context);
 
-    return Card(
+    return _FeedCard(
       margin: const EdgeInsets.only(bottom: 12),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       clipBehavior: Clip.antiAlias,
@@ -3941,7 +4045,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
   Widget _buildActionItem(UserAction action) {
     final theme = Theme.of(context);
 
-    return Card(
+    return _FeedCard(
       margin: const EdgeInsets.only(bottom: 12),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       clipBehavior: Clip.antiAlias,
@@ -4029,7 +4133,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
         ? _getEmojiUrl(reaction.reactionValue!)
         : null;
 
-    return Card(
+    return _FeedCard(
       margin: const EdgeInsets.only(bottom: 12),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       clipBehavior: Clip.antiAlias,
@@ -4154,4 +4258,78 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
         return S.current.userProfile_actionDefault;
     }
   }
+}
+
+/// 个人页各标签页的列表项外框:经典是卡片;墨笺是平铺行 + 底部发丝线
+/// (和首页话题行同一套「细线代替卡片」)。
+class _FeedCard extends StatelessWidget {
+  const _FeedCard({
+    required this.child,
+    this.margin,
+    this.shape,
+    this.clipBehavior,
+  });
+
+  final Widget child;
+  final EdgeInsetsGeometry? margin;
+  final ShapeBorder? shape;
+  final Clip? clipBehavior;
+
+  @override
+  Widget build(BuildContext context) {
+    final mj = Theme.of(context).extension<MojianTokens>();
+    if (mj != null) {
+      return Material(
+        type: MaterialType.transparency,
+        shape: Border(bottom: BorderSide(color: mj.rule)),
+        clipBehavior: Clip.antiAlias,
+        child: child,
+      );
+    }
+    return Card(
+      margin: margin,
+      shape: shape,
+      clipBehavior: clipBehavior,
+      child: child,
+    );
+  }
+}
+
+/// 个人页窄版头部的配色(见 _headerInk)
+class _HeaderInk {
+  const _HeaderInk({
+    required this.mojian,
+    required this.fg,
+    required this.fg2,
+    required this.fg3,
+    required this.paper,
+    required this.avatarRing,
+    required this.chipFill,
+    required this.chipBorder,
+    required this.bioText,
+    required this.bioRule,
+  });
+
+  const _HeaderInk.classic()
+    : mojian = false,
+      fg = Colors.white,
+      fg2 = const Color(0xD9FFFFFF),
+      fg3 = const Color(0x80FFFFFF),
+      paper = Colors.white,
+      avatarRing = Colors.white,
+      chipFill = const Color(0x33FFFFFF),
+      chipBorder = null,
+      bioText = const Color(0xE6FFFFFF),
+      bioRule = Colors.transparent;
+
+  final bool mojian;
+  final Color fg;
+  final Color fg2;
+  final Color fg3;
+  final Color paper;
+  final Color avatarRing;
+  final Color chipFill;
+  final Color? chipBorder;
+  final Color bioText;
+  final Color bioRule;
 }

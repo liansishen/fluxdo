@@ -9,6 +9,7 @@ import '../../providers/pinned_categories_provider.dart';
 import '../../utils/font_awesome_helper.dart';
 import '../../utils/url_helper.dart';
 import '../../services/discourse_cache_manager.dart';
+import '../../theme/mojian_theme.dart';
 
 class CategoryShortcuts extends ConsumerWidget {
   const CategoryShortcuts({
@@ -71,6 +72,8 @@ class _CategoryShortcutItem extends ConsumerWidget {
     final categoryColor = _parseColor(category.color, colorScheme.primary);
     final activeCategoryId = ref.watch(activeSidebarCategoryIdProvider);
     final isSelected = activeCategoryId == category.id;
+    final mj = Theme.of(context).extension<MojianTokens>();
+    if (mj != null) return _buildMojian(context, mj, isSelected);
     final backgroundColor =
         isSelected ? colorScheme.secondaryContainer : Colors.transparent;
 
@@ -115,6 +118,64 @@ class _CategoryShortcutItem extends ConsumerWidget {
       ),
     );
   }
+
+  /// 墨笺:宽侧栏是「分类标记 + 名称」的紧凑行;窄侧栏保留分类图标
+  Widget _buildMojian(BuildContext context, MojianTokens mj, bool selected) {
+    final brightness = Theme.of(context).brightness;
+    final dot = MojianTheme.categoryColor(category.color, brightness);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 1),
+      child: Material(
+        color: selected ? mj.paper2 : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: onTap,
+          child: SizedBox(
+            height: extended ? 36 : 46,
+            child: extended
+                ? Row(
+                    children: [
+                      const SizedBox(width: 12),
+                      // 分类有图标/徽标/锁就用它(与经典一致),否则墨笺方点
+                      SizedBox(
+                        width: 16,
+                        child: Center(
+                          child: _hasCategoryMark(category)
+                              ? _buildCategoryIcon(category, dot, 16)
+                              : Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    color: dot,
+                                    borderRadius: BorderRadius.circular(2),
+                                  ),
+                                ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          category.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            color: selected ? mj.ink : mj.ink2,
+                            fontWeight: selected
+                                ? FontWeight.w600
+                                : FontWeight.w400,
+                          ),
+                        ),
+                      ),
+                    ],
+                  )
+                : Center(child: _buildCategoryIcon(category, dot, 20)),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 Color _parseColor(String hex, Color fallback) {
@@ -124,6 +185,11 @@ Color _parseColor(String hex, Color fallback) {
     return fallback;
   }
 }
+
+bool _hasCategoryMark(Category category) =>
+    FontAwesomeHelper.getIcon(category.icon) != null ||
+    (category.uploadedLogo?.isNotEmpty ?? false) ||
+    category.readRestricted;
 
 Widget _buildCategoryIcon(Category category, Color color, double size) {
   final logoUrl = category.uploadedLogo;
