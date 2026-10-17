@@ -41,7 +41,7 @@ class AppearanceWarmup {
   }) {
     final variant = themeState.schemeVariant;
     final signature = (
-      themeState.accentSource.index,
+      themeState.isMojian ? -1 : themeState.accentSource.index,
       themeState.effectiveSeedColor.toARGB32(),
       variant.index,
       brightness.index,
@@ -62,6 +62,20 @@ class AppearanceWarmup {
     final installedFamily = themeState.installedFontFamily;
     if (installedFamily != null) {
       queue(() => _warmUpTypeface(installedFamily));
+    }
+    // 墨笺风格下外观页不显示色卡与配色风格卡，主题模式卡用墨笺固定配色；
+    // 只有「经典」风格卡的预览要用当前种子算亮/暗两套
+    if (themeState.isMojian) {
+      for (final previewBrightness in Brightness.values) {
+        queue(
+          () => SeedColorScheme.from(
+            seedColor: themeState.effectiveSeedColor,
+            brightness: previewBrightness,
+            variant: variant,
+          ),
+        );
+      }
+      return;
     }
 
     // 色卡网格：动态色卡 + 内置调色板（跟随当前配色风格）
