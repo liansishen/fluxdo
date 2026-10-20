@@ -39,6 +39,7 @@ import 'services/local_notification_service.dart';
 import 'services/custom_font_service.dart';
 import 'services/data_management/cache_size_service.dart';
 import 'services/discourse_cache_manager.dart';
+import 'services/linux_webview_render_service.dart';
 import 'services/render_backend_service.dart';
 import 'services/toast_service.dart';
 import 'package:m3e_ui/m3e_ui.dart';
@@ -160,7 +161,43 @@ Future<void> _applyAndroidDisplayMode(SharedPreferences prefs) async {
   }
 }
 
-Future<void> main() async {
+OverlayEntry? _linuxWebViewCrashEntry;
+
+/// 网页进程崩溃提示。崩溃多发生在人机验证页，而验证页是插在根 Overlay 上的
+/// OverlayEntry、盖在所有路由之上，走 showAppDialog 会被它挡住，所以这里也直接插
+/// OverlayEntry（后插的在上面）。
+void _showLinuxWebViewCrashDialog() {
+  final overlay = navigatorKey.currentState?.overlay;
+  if (overlay == null || _linuxWebViewCrashEntry != null) return;
+  late final OverlayEntry entry;
+  entry = OverlayEntry(
+    builder: (context) => Stack(
+      fit: StackFit.expand,
+      children: [
+        const ModalBarrier(dismissible: false, color: Colors.black54),
+        AlertDialog(
+          title: Text(S.current.preferences_linuxWebViewCrashTitle),
+          content: Text(S.current.preferences_linuxWebViewCrashBody),
+          actions: [
+            FilledButton(
+              onPressed: () {
+                entry.remove();
+                _linuxWebViewCrashEntry = null;
+              },
+              child: Text(S.current.common_gotIt),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
+  _linuxWebViewCrashEntry = entry;
+  overlay.insert(entry);
+}
+
+Future<void> main(List<String> args) async {
+  DeepLinkService.instance.launchArgs = args;
+
   // 自定义 binding:接管标准图片解码入口,全局限制解码并发(= 限制
   // Impeller 纹理上传并发,图密话题快滚 raster 尖峰的对症闸门,
   // 见 image_decode_gate.dart)。
@@ -251,6 +288,12 @@ Future<void> main() async {
   if (Platform.isAndroid) {
     InAppWebViewController.setWebContentsDebuggingEnabled(false);
   }
+
+  // Linux：内置网页进程在硬件渲染下崩溃（多见于 NVIDIA 专有驱动）时，原生侧已记下、
+  // 下次启动改软件渲染，这里提示用户重启
+  LinuxWebViewRenderService.listen(
+    onWebProcessCrashed: _showLinuxWebViewCrashDialog,
+  );
 
   // 阶段 1：并行执行所有不相互依赖的初始化
   final futures = <Future<dynamic>>[
