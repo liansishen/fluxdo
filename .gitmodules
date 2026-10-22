@@ -1,8 +1,8 @@
 [submodule "core/doh_proxy"]
 	path = core/doh_proxy
-	url = https://github.com/1molchuan/fluxdo_doh.git
+	url = https://github.com/liansishen/fluxdo_doh.git
 	branch = cfluxdo
 [submodule "packages/fluxdo_render"]
 	path = packages/fluxdo_render
-	url = https://github.com/1molchuan/fluxdo_render.git
+	url = https://github.com/liansishen/fluxdo_render.git
 	branch = cfluxdo

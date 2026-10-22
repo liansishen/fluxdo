@@ -26,6 +26,49 @@ constexpr const wchar_t kGetPreferredBrightnessRegKey[] =
   L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
 constexpr const wchar_t kGetPreferredBrightnessRegValue[] = L"AppsUseLightTheme";
 
+
+// 窗口位置使用 Win32 工作区坐标；由系统处理显示器移除后的可见区域调整。
+constexpr const wchar_t kWindowStateRegKey[] =
+    L"Software\\com.github.molchuan\\cfluxdo";
+constexpr const wchar_t kWindowPlacementValue[] = L"WindowPlacement";
+
+bool LoadWindowPlacement(WINDOWPLACEMENT* placement) {
+  DWORD size = sizeof(*placement);
+  const LSTATUS result = RegGetValueW(
+      HKEY_CURRENT_USER, kWindowStateRegKey, kWindowPlacementValue,
+      RRF_RT_REG_BINARY, nullptr, placement, &size);
+  return result == ERROR_SUCCESS && size == sizeof(*placement) &&
+         placement->length == sizeof(*placement) &&
+         (placement->showCmd == SW_SHOWNORMAL ||
+          placement->showCmd == SW_SHOWMAXIMIZED) &&
+         placement->rcNormalPosition.right > placement->rcNormalPosition.left &&
+         placement->rcNormalPosition.bottom > placement->rcNormalPosition.top;
+}
+
+void SaveWindowPlacement(HWND window) {
+  if (!IsWindowVisible(window)) {
+    return;
+  }
+  WINDOWPLACEMENT placement = {sizeof(WINDOWPLACEMENT)};
+  if (!GetWindowPlacement(window, &placement)) {
+    return;
+  }
+  // 最小化不能成为下次启动状态，但须保留最小化前的最大化状态。
+  placement.showCmd =
+      placement.showCmd == SW_SHOWMAXIMIZED ||
+              (placement.showCmd == SW_SHOWMINIMIZED &&
+               (placement.flags & WPF_RESTORETOMAXIMIZED) != 0)
+          ? SW_SHOWMAXIMIZED
+          : SW_SHOWNORMAL;
+  placement.flags = 0;
+  HKEY key;
+  if (RegCreateKeyExW(HKEY_CURRENT_USER, kWindowStateRegKey, 0, nullptr, 0,
+                      KEY_SET_VALUE, nullptr, &key, nullptr) == ERROR_SUCCESS) {
+    RegSetValueExW(key, kWindowPlacementValue, 0, REG_BINARY,
+                  reinterpret_cast<const BYTE*>(&placement), sizeof(placement));
+    RegCloseKey(key);
+  }
+}
 // The number of Win32Window objects that currently exist.
 static int g_active_window_count = 0;
 
@@ -144,13 +187,22 @@ bool Win32Window::Create(const std::wstring& title,
     return false;
   }
 
+  WINDOWPLACEMENT placement = {sizeof(WINDOWPLACEMENT)};
+  if (LoadWindowPlacement(&placement)) {
+    initial_show_command_ = placement.showCmd;
+    // 先在隐藏状态恢复普通窗口边界，首帧再按保存的模式显示，避免闪现默认窗口。
+    placement.flags = 0;
+    placement.showCmd = SW_HIDE;
+    SetWindowPlacement(window, &placement);
+  }
+
   UpdateTheme(window);
 
   return OnCreate();
 }
 
 bool Win32Window::Show() {
-  return ShowWindow(window_handle_, SW_SHOWNORMAL);
+  return ShowWindow(window_handle_, initial_show_command_);
 }
 
 // static
@@ -179,6 +231,12 @@ Win32Window::MessageHandler(HWND hwnd,
                             WPARAM const wparam,
                             LPARAM const lparam) noexcept {
   switch (message) {
+    case WM_EXITSIZEMOVE:
+    case WM_CLOSE:
+    case WM_QUERYENDSESSION:
+      SaveWindowPlacement(hwnd);
+      break;
+
     case WM_DESTROY:
       window_handle_ = nullptr;
       Destroy();

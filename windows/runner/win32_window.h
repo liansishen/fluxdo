@@ -92,6 +92,9 @@ class Win32Window {
 
   bool quit_on_close_ = false;
 
+  // 首帧使用保存的最大化或普通模式显示，不恢复最小化状态。
+  int initial_show_command_ = SW_SHOWNORMAL;
+
   // window handle for top level window.
   HWND window_handle_ = nullptr;
 
