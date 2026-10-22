@@ -15,7 +15,8 @@ class LdcUserInfo {
   final bool isAdmin;
   final String remainQuota;
   final int payLevel;
-  final int dailyLimit;
+  /// null 表示服务端未设置每日限额。
+  final int? dailyLimit;
 
   LdcUserInfo({
     required this.id,
@@ -39,7 +40,8 @@ class LdcUserInfo {
 
   factory LdcUserInfo.fromJson(Map<String, dynamic> json) {
     return LdcUserInfo(
-      id: json['id'] as int,
+      // 服务端返回字符串 ID，旧版本地缓存仍使用整数。
+      id: json['id'] is int ? json['id'] as int : int.parse(json['id'] as String),
       username: json['username'] as String,
       nickname: json['nickname'] as String,
       trustLevel: json['trust_level'] as int,
@@ -55,7 +57,7 @@ class LdcUserInfo {
       isAdmin: json['is_admin'] as bool,
       remainQuota: json['remain_quota'] as String,
       payLevel: json['pay_level'] as int,
-      dailyLimit: json['daily_limit'] as int,
+      dailyLimit: json['daily_limit'] as int?,
     );
   }
 
