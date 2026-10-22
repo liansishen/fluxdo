@@ -87,6 +87,15 @@ void main() {
       await tester.pump();
       await Future<void>.delayed(const Duration(milliseconds: 300));
     });
+    // 合成之后还要走 ffmpeg 转码腿(找 ffmpeg 要起进程、找到还要真转一次),
+    // 都是随机器负载波动的真实耗时。固定等 300ms 在满载时会没进 recorded
+    // 态就断言,故轮询到出现「发送」为止(上限约 20s);断言本身不变。
+    for (var i = 0; i < 100 && find.text('发送').evaluate().isEmpty; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 200)),
+      );
+      await tester.pump();
+    }
     await tester.pumpAndSettle();
 
     expect(find.text('发送'), findsOneWidget, reason: '进入 recorded 态');

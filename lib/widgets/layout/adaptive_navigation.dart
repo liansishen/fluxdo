@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:common_ui/common_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,7 +11,6 @@ import 'package:m3e_ui/m3e_ui.dart';
 import '../../navigation/nav_action_bus.dart';
 import '../../providers/preferences_provider.dart';
 import '../../theme/mojian_theme.dart';
-import '../../utils/blur_config.dart';
 
 /// 导航目标项配置
 class AdaptiveDestination {
@@ -504,9 +504,6 @@ class _AdaptiveBottomNavigationState
     final floating = ref.watch(
       preferencesProvider.select((p) => p.bottomNavFloating),
     );
-    final floatingBlur = ref.watch(
-      preferencesProvider.select((p) => p.bottomNavFloatingBlur),
-    );
 
     // 悬浮胶囊：自绘条目布局。M3 的「未选中图标居中、标签下垂」两段式
     // 结构在紧凑胶囊高度下必然失衡，改为压实的图标+标签整体。
@@ -517,7 +514,6 @@ class _AdaptiveBottomNavigationState
       );
       return _FloatingBottomBarShell(
         itemHeight: itemHeight,
-        blur: floatingBlur,
         itemCount: widget.destinations.length,
         child: _CapsuleNavBar(
           selectedIndex: widget.selectedIndex,
@@ -709,7 +705,6 @@ class _ActiveDestinationIcon extends ConsumerWidget {
 class _FloatingBottomBarShell extends StatelessWidget {
   const _FloatingBottomBarShell({
     required this.itemHeight,
-    required this.blur,
     required this.itemCount,
     required this.child,
   });
@@ -717,23 +712,14 @@ class _FloatingBottomBarShell extends StatelessWidget {
   /// 单个条目高度（胶囊高 = 本值 + [_CapsuleMetrics.innerInset] × 2）
   final double itemHeight;
 
-  /// 毛玻璃模糊开关
-  final bool blur;
-
   /// 入口数量（自适应宽度的基准）
   final int itemCount;
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
     final barHeight = itemHeight + _CapsuleMetrics.innerInset * 2;
     final radius = barHeight / 2;
-    final shape = RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(radius),
-    );
 
     // 内容留白（最内层，玻璃/实色两种底色共用）
     final content = Padding(
@@ -741,26 +727,13 @@ class _FloatingBottomBarShell extends StatelessWidget {
       child: child,
     );
 
-    // 模糊开：BackdropFilter + 半透明底色透出内容；模糊关：实色胶囊。
-    // 底色不透明度取 TG Android mainTabs（液态玻璃 0.85 / 关闭 0.76）。
-    final body = blur
-        ? BackdropFilter(
-            filter: createBlurFilter(blurSigma),
-            child: DecoratedBox(
-              decoration: ShapeDecoration(
-                shape: shape,
-                color: scheme.surfaceContainer.withValues(alpha: 0.82),
-              ),
-              child: content,
-            ),
-          )
-        : DecoratedBox(
-            decoration: ShapeDecoration(
-              shape: shape,
-              color: scheme.surfaceContainer,
-            ),
-            child: content,
-          );
+    // 材质统一遵循全局玻璃策略；关闭时直接使用实色，不建离屏层。
+    // 不传主题色罩，避免玻璃被主题色染成彩色塑料板。
+    final body = GlassSurfaceFrame(
+      radius: radius,
+      recipe: GlassRecipe.navigation,
+      child: content,
+    );
 
     return SafeArea(
       top: false,
@@ -787,41 +760,7 @@ class _FloatingBottomBarShell extends StatelessWidget {
               child: SizedBox(
                 width: width,
                 // 投影放在模糊层之外：玻璃下的内容清晰穿透，影子独立柔和
-                child: DecoratedBox(
-                  decoration: ShapeDecoration(
-                    shape: shape,
-                    shadows: [
-                      BoxShadow(
-                        color: Colors.black.withValues(
-                          alpha: isDark ? 0.18 : 0.06,
-                        ),
-                        blurRadius: 24,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(radius),
-                    // 描边画在裁切之内（最上层）：0.4 宽的边如果落在
-                    // ClipRRect 外侧会被抗锯齿吃掉半条，看着忽隐忽现
-                    child: Stack(
-                      fit: StackFit.passthrough,
-                      children: [
-                        body,
-                        Positioned.fill(
-                          child: IgnorePointer(
-                            child: CustomPaint(
-                              painter: _CapsuleBorderPainter(
-                                radius: radius,
-                                isDark: isDark,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+                child: body,
               ),
             ),
           );
@@ -829,55 +768,6 @@ class _FloatingBottomBarShell extends StatelessWidget {
       ),
     );
   }
-}
-
-/// 胶囊描边：上浅下深的单像素级细边。
-///
-/// TG Android `BlurredBackgroundProviderImpl.mainTabs` 用两个色分别画上下
-/// 边（浅色 top 黑 6.7% / bottom 黑 12.5%，深色 top 白 2.4% / bottom 白
-/// 6.7%），模拟玻璃边缘的受光差。这里用一条垂直渐变描边等价表达。
-///
-/// 不用 `scheme.outline`：那是中灰色，压在半透明玻璃上会显脏；TG 两端都
-/// 是纯黑/纯白低透明度。
-class _CapsuleBorderPainter extends CustomPainter {
-  const _CapsuleBorderPainter({required this.radius, required this.isDark});
-
-  final double radius;
-  final bool isDark;
-
-  static const double _width = 0.4;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    // 描边以路径为中心线各占一半，内缩半个宽度才能整条落在胶囊内
-    final rect = Offset.zero & size;
-    final inner = rect.deflate(_width / 2);
-    final rrect = RRect.fromRectAndRadius(
-      inner,
-      Radius.circular(radius - _width / 2),
-    );
-    final paint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = _width
-      ..shader = ui.Gradient.linear(
-        Offset(inner.center.dx, inner.top),
-        Offset(inner.center.dx, inner.bottom),
-        isDark
-            ? [
-                const Color(0x0AFFFFFF),
-                const Color(0x14FFFFFF),
-              ]
-            : [
-                const Color(0x11000000),
-                const Color(0x20000000),
-              ],
-      );
-    canvas.drawRRect(rrect, paint);
-  }
-
-  @override
-  bool shouldRepaint(_CapsuleBorderPainter old) =>
-      old.radius != radius || old.isDark != isDark;
 }
 
 /// 悬浮胶囊底栏的条目区：图标+标签压实成一组，选中指示 pill 在槽位之间

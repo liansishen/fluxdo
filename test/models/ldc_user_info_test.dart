@@ -46,4 +46,14 @@ void main() {
     expect(user.dailyLimit, 100);
     expect(user.remainQuota, '90');
   });
+
+  test('字符串大整数 ID 写入缓存后不丢精度', () {
+    final user = LdcUserInfo.fromJson(_response(id: '9007199254740993'));
+    final restored = LdcUserInfo.fromJson(
+      jsonDecode(jsonEncode(user.toJson())) as Map<String, dynamic>,
+    );
+    expect(restored.id, 9007199254740993);
+    expect(restored.dailyLimit, isNull);
+    expect(restored.toJson(), user.toJson());
+  });
 }

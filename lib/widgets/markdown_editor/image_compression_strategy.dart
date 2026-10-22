@@ -5,7 +5,7 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import '../../../../../l10n/s.dart';
+import '../../l10n/s.dart';
 
 /// Windows/Linux 不支持 flutter_image_compress，回退到 image 包
 bool get _useNativeCompress =>

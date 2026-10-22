@@ -27,7 +27,9 @@ void main() {
 
     for (final entity in Directory('lib').listSync(recursive: true)) {
       if (entity is! File || !entity.path.endsWith('.dart')) continue;
-      final path = entity.path;
+      // Windows 上 entity.path 用反斜杠,而豁免清单/报告用正斜杠 ——
+      // 统一成正斜杠再比对,否则豁免项在本机静默失效。
+      final path = entity.path.replaceAll(r'\', '/');
       if (exempt.containsKey(path)) continue;
 
       final src = entity.readAsStringSync();

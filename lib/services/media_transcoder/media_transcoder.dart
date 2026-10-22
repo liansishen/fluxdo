@@ -1,4 +1,4 @@
-/// 媒体转码平台抽象(音视频压缩到站点 4MB 上限的执行层)。
+/// 媒体转码平台抽象(音视频压缩到站点附件上限的执行层)。
 ///
 /// 三条实现腿(安装包零/近零增量,见 [[voice-media-upload-pipeline]]):
 /// - iOS/macOS:AVAssetReader/Writer(系统框架,H264 videotoolbox 硬编);
@@ -22,12 +22,20 @@ class MediaProbeInfo {
   const MediaProbeInfo({
     required this.duration,
     required this.hasVideo,
+    this.fps,
+    this.audioChannels,
+    this.audioSampleRate,
+    this.hasAudio,
     this.width,
     this.height,
   });
 
   final Duration duration;
   final bool hasVideo;
+  final double? fps;
+  final int? audioChannels;
+  final int? audioSampleRate;
+  final bool? hasAudio;
   final int? width;
   final int? height;
 }
@@ -67,24 +75,24 @@ class TranscodeSpec {
   /// 视频缩放目标高(宽按比例,偶数对齐);null 保持原尺寸。
   final int? maxHeight;
 
-  /// 目标帧率(仅 ffmpeg/Apple 腿支持;media3 不降帧,码率主导)。
+  /// 目标帧率；各平台按源帧率降帧，不提升低帧率素材。
   final int? fps;
 
   final int audioSampleRate;
   final int audioChannels;
 
   Map<String, Object?> toChannelMap() => {
-        'input': input,
-        'output': output,
-        'audioOnly': audioOnly,
-        'audioBitrate': audioBitrate,
-        'videoBitrate': videoBitrate,
-        'videoCodec': videoCodec,
-        'maxHeight': maxHeight,
-        'fps': fps,
-        'audioSampleRate': audioSampleRate,
-        'audioChannels': audioChannels,
-      };
+    'input': input,
+    'output': output,
+    'audioOnly': audioOnly,
+    'audioBitrate': audioBitrate,
+    'videoBitrate': videoBitrate,
+    'videoCodec': videoCodec,
+    'maxHeight': maxHeight,
+    'fps': fps,
+    'audioSampleRate': audioSampleRate,
+    'audioChannels': audioChannels,
+  };
 }
 
 abstract class MediaTranscoder {
@@ -134,6 +142,10 @@ class _ChannelTranscoder extends MediaTranscoder {
     return MediaProbeInfo(
       duration: Duration(milliseconds: ms),
       hasVideo: res['hasVideo'] as bool? ?? false,
+      fps: (res['fps'] as num?)?.toDouble(),
+      audioChannels: res['audioChannels'] as int?,
+      audioSampleRate: res['audioSampleRate'] as int?,
+      hasAudio: res['hasAudio'] as bool?,
       width: res['width'] as int?,
       height: res['height'] as int?,
     );
@@ -141,8 +153,7 @@ class _ChannelTranscoder extends MediaTranscoder {
 
   @override
   Future<bool> transcode(TranscodeSpec spec) async {
-    final res =
-        await _ch.invokeMethod<bool>('transcode', spec.toChannelMap());
+    final res = await _ch.invokeMethod<bool>('transcode', spec.toChannelMap());
     return res ?? false;
   }
 

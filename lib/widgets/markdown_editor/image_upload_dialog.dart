@@ -12,7 +12,7 @@ import '../../services/toast_service.dart';
 import '../../utils/dialog_utils.dart';
 import 'image_compression_strategy.dart';
 import 'image_editor_i18n_zh.dart';
-import '../../../../../l10n/s.dart';
+import '../../l10n/s.dart';
 
 /// 回车 = 按当前设置直接上传(桌面端一键确认;移动端软键盘回车不经这条
 /// 路径,不受影响)。

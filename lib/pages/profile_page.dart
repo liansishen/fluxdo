@@ -41,8 +41,6 @@ import '../widgets/cdk_balance_card.dart';
 import '../widgets/profile_stats_card.dart';
 import '../widgets/common/spotlight_overlay.dart';
 import 'profile_stats_edit_page.dart';
-import '../services/ldc_oauth_service.dart';
-import '../services/cdk_oauth_service.dart';
 import '../l10n/s.dart';
 import '../navigation/nav_action_bus.dart';
 import '../services/toast_service.dart';
@@ -71,6 +69,8 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
   late ScrollController _rightScrollController;
   bool _showTitle = false;
   bool _isRefreshing = false;
+  bool _ldcProcessing = false;
+  bool _cdkProcessing = false;
 
   // 余额卡片(CDK/LDC)是否已可渲染:仅在本页首次成为活跃 tab 后置 true。
   // 避免 IndexedStack 冷启动预构建本页时,balance card 的 watch 就触发
@@ -125,8 +125,10 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
       await Future.wait([
         ref.read(currentUserProvider.notifier).refreshSilently(force: true),
         ref.read(userSummaryProvider.notifier).refresh(),
-        if (ldcEnabled) ref.read(ldcUserInfoProvider.notifier).refresh(),
-        if (cdkEnabled) ref.read(cdkUserInfoProvider.notifier).refresh(),
+        if (ldcEnabled && !_ldcProcessing)
+          ref.read(ldcUserInfoProvider.notifier).refresh(),
+        if (cdkEnabled && !_cdkProcessing)
+          ref.read(cdkUserInfoProvider.notifier).refresh(),
       ]);
     } finally {
       if (mounted && showAppBarIndicator) {
@@ -294,33 +296,57 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
   }
 
   Future<void> _reauthorizeLdc() async {
-    final service = LdcOAuthService();
-    if (!mounted) return;
+    if (!mounted || _ldcProcessing) return;
+    setState(() => _ldcProcessing = true);
+    final username = ref.read(currentUserProvider).value?.username;
     try {
+      final service = ref.read(ldcOAuthServiceProvider);
       final result = await service.reauthorize(context);
-      if (result && mounted) {
-        ref.read(ldcUserInfoProvider.notifier).refresh();
-        ToastService.showSuccess(S.current.profile_ldcReauthSuccess);
+      if (result && mounted && username != null &&
+          ref.read(currentUserProvider).value?.username == username &&
+          ref.read(sharedPreferencesProvider).getBool('ldc_enabled') == true) {
+        await ref.read(ldcUserInfoProvider.notifier).refresh();
+        if (mounted &&
+            ref.read(currentUserProvider).value?.username == username &&
+            ref.read(sharedPreferencesProvider).getBool('ldc_enabled') == true) {
+          ToastService.showSuccess(S.current.profile_ldcReauthSuccess);
+        }
       }
     } catch (e) {
       if (mounted) {
         ToastService.showError(S.current.metaverse_authFailed(e.toString()));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _ldcProcessing = false);
       }
     }
   }
 
   Future<void> _reauthorizeCdk() async {
-    final service = CdkOAuthService();
-    if (!mounted) return;
+    if (!mounted || _cdkProcessing) return;
+    setState(() => _cdkProcessing = true);
+    final username = ref.read(currentUserProvider).value?.username;
     try {
+      final service = ref.read(cdkOAuthServiceProvider);
       final result = await service.reauthorize(context);
-      if (result && mounted) {
-        ref.read(cdkUserInfoProvider.notifier).refresh();
-        ToastService.showSuccess(S.current.profile_cdkReauthSuccess);
+      if (result && mounted && username != null &&
+          ref.read(currentUserProvider).value?.username == username &&
+          ref.read(sharedPreferencesProvider).getBool('cdk_enabled') == true) {
+        await ref.read(cdkUserInfoProvider.notifier).refresh();
+        if (mounted &&
+            ref.read(currentUserProvider).value?.username == username &&
+            ref.read(sharedPreferencesProvider).getBool('cdk_enabled') == true) {
+          ToastService.showSuccess(S.current.profile_cdkReauthSuccess);
+        }
       }
     } catch (e) {
       if (mounted) {
         ToastService.showError(S.current.metaverse_authFailed(e.toString()));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _cdkProcessing = false);
       }
     }
   }
@@ -630,11 +656,13 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                 if (ldcEnabled)
                   LdcBalanceCard(
                     inline: true,
+                    isProcessing: _ldcProcessing,
                     onReauthorize: () => _reauthorizeLdc(),
                   ),
                 if (cdkEnabled)
                   CdkBalanceCard(
                     inline: true,
+                    isProcessing: _cdkProcessing,
                     onReauthorize: () => _reauthorizeCdk(),
                   ),
               ],

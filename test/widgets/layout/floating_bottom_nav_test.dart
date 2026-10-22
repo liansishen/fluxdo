@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxdo/providers/theme_provider.dart';
+import 'package:fluxdo/widgets/common/app_glass_settings.dart';
 import 'package:fluxdo/widgets/layout/adaptive_navigation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -28,7 +29,8 @@ void main() {
     SharedPreferences.setMockInitialValues({
       'pref_bottom_nav_floating': true,
       'pref_bottom_nav_labelless': labelless,
-      'pref_bottom_nav_floating_blur': true,
+      'pref_glass_enabled': true,
+      'pref_glass_effect_level': 'basic',
     });
     final prefs = await SharedPreferences.getInstance();
 
@@ -36,6 +38,7 @@ void main() {
       ProviderScope(
         overrides: [sharedPreferencesProvider.overrideWithValue(prefs)],
         child: MaterialApp(
+          builder: (_, child) => AppGlassSettings(child: child!),
           home: MediaQuery(
             data: MediaQueryData(
               size: screen,
@@ -109,13 +112,15 @@ void main() {
 
     SharedPreferences.setMockInitialValues({
       'pref_bottom_nav_floating': true,
-      'pref_bottom_nav_floating_blur': true,
+      'pref_glass_enabled': true,
+      'pref_glass_effect_level': 'basic',
     });
     final prefs = await SharedPreferences.getInstance();
     await tester.pumpWidget(
       ProviderScope(
         overrides: [sharedPreferencesProvider.overrideWithValue(prefs)],
         child: MaterialApp(
+          builder: (_, child) => AppGlassSettings(child: child!),
           home: MediaQuery(
             data: const MediaQueryData(size: Size(1200, 900)),
             child: Scaffold(

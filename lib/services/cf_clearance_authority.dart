@@ -157,6 +157,18 @@ class CfClearanceAuthority {
     record?.rejectedValue = null;
   }
 
+  /// 目标业务接口已明确响应，只解除该域的旧挑战及冷却，不影响主站。
+  void recordVerifiedHost(String host) {
+    final record = _hosts[_normalizeHost(host)];
+    if (record == null) return;
+    record.challenged.clear();
+    record.rejectedAt = null;
+    record.rejectedValue = null;
+    record.cooldownUntil = null;
+    record.consecutiveFailures = 0;
+    record.failureCountedRound = null;
+  }
+
   // ---------------------------------------------------------------------------
   // 可用性
   // ---------------------------------------------------------------------------

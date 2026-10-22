@@ -14,9 +14,11 @@ import '../../utils/load_more_coordinator.dart';
 import '../common/app_bottom_sheet.dart';
 import '../common/cached_image.dart';
 import '../common/error_view.dart';
+
 import 'package:m3e_ui/m3e_ui.dart';
+
 import '../common/paged_list_footer.dart';
-import '../../../../../l10n/s.dart';
+import '../../l10n/s.dart';
 
 /// 表情包市场浏览面板 (Bottom Sheet)
 ///
@@ -421,6 +423,7 @@ class _StickerGroupTile extends ConsumerWidget {
             memCacheWidth: 80,
             memCacheHeight: 80,
             thumbnailMode: true,
+            priority: DownloadPriority.high,
             fit: BoxFit.cover,
             bucket: BlobImageCache.stickerOriginalBucket,
             placeholder: (_) => _buildFallbackIcon(theme),

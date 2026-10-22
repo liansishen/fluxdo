@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'dart:ui' as ui;
 
 import 'package:flutter/widgets.dart';
+import 'package:common_ui/common_ui.dart' show DesktopScrollInteractionBinding;
 
 import 'frame_jank_monitor.dart';
 import 'frame_scheduler_probe.dart';
@@ -227,7 +228,7 @@ class GatedImageCodec implements ui.Codec {
 /// 必须在 main() 里以 `FluxdoWidgetsBinding.ensureInitialized()` 替代
 /// `WidgetsFlutterBinding.ensureInitialized()`。
 class FluxdoWidgetsBinding extends WidgetsFlutterBinding
-    with PerfPipelineProbe, FrameSchedulerProbe {
+    with PerfPipelineProbe, FrameSchedulerProbe, DesktopScrollInteractionBinding {
   static FluxdoWidgetsBinding? _instance;
 
   static FluxdoWidgetsBinding ensureInitialized() =>

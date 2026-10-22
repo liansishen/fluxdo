@@ -1,15 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:app_icons/app_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:m3e_ui/m3e_ui.dart';
 import '../providers/theme_provider.dart';
-import '../services/ldc_oauth_service.dart';
-import '../services/cdk_oauth_service.dart';
 import '../l10n/s.dart';
 import '../services/toast_service.dart';
 import '../providers/ldc_providers.dart';
 import '../providers/cdk_providers.dart';
+import '../providers/discourse_providers.dart';
 import '../widgets/ldc_balance_card.dart';
 import '../widgets/cdk_balance_card.dart';
 import '../modules/ldc_reward/ldc_reward.dart';
@@ -32,6 +30,12 @@ class _MetaversePageState extends ConsumerState<MetaversePage> {
   bool _ldcProcessing = false;
   bool _cdkProcessing = false;
 
+  // 授权弹窗返回时，原账户可能已经退出或切换。
+  bool _isCurrentAccount(String? username) =>
+      mounted &&
+      username != null &&
+      ref.read(currentUserProvider).value?.username == username;
+
   @override
   void initState() {
     super.initState();
@@ -47,10 +51,12 @@ class _MetaversePageState extends ConsumerState<MetaversePage> {
   Future<void> _refreshEnabledServices() async {
     if (_ldcEnabled) {
       await ref.read(ldcUserInfoProvider.future).catchError((_) => null);
+      if (!mounted) return;
       ref.read(ldcUserInfoProvider.notifier).refresh();
     }
     if (_cdkEnabled) {
       await ref.read(cdkUserInfoProvider.future).catchError((_) => null);
+      if (!mounted) return;
       ref.read(cdkUserInfoProvider.notifier).refresh();
     }
   }
@@ -72,16 +78,18 @@ class _MetaversePageState extends ConsumerState<MetaversePage> {
   }
 
   Future<void> _enableLdc() async {
+    final username = ref.read(currentUserProvider).value?.username;
     try {
-      final service = LdcOAuthService();
+      final service = ref.read(ldcOAuthServiceProvider);
       final result = await service.authorize(context);
 
-      if (result && mounted) {
-        final prefs = await SharedPreferences.getInstance();
+      if (result && _isCurrentAccount(username)) {
+        final prefs = ref.read(sharedPreferencesProvider);
         await prefs.setBool(_ldcEnabledKey, true);
+        if (!_isCurrentAccount(username)) return;
         setState(() => _ldcEnabled = true);
-        ref.read(ldcUserInfoProvider.notifier).refresh();
-        if (mounted) {
+        await ref.read(ldcUserInfoProvider.notifier).refresh();
+        if (_isCurrentAccount(username) && _ldcEnabled) {
           ToastService.showSuccess(S.current.metaverse_ldcAuthSuccess);
         }
       }
@@ -93,16 +101,15 @@ class _MetaversePageState extends ConsumerState<MetaversePage> {
   }
 
   Future<void> _disableLdc() async {
+    final notifier = ref.read(ldcUserInfoProvider.notifier);
     try {
-      final service = LdcOAuthService();
+      final service = ref.read(ldcOAuthServiceProvider);
       await service.logout();
     } catch (e) {
       // 忽略登出错误
     }
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_ldcEnabledKey, false);
-    setState(() => _ldcEnabled = false);
-    ref.read(ldcUserInfoProvider.notifier).clear();
+    await notifier.disable();
+    if (mounted) setState(() => _ldcEnabled = false);
   }
 
   Future<void> _toggleCdk(bool value) async {
@@ -122,16 +129,18 @@ class _MetaversePageState extends ConsumerState<MetaversePage> {
   }
 
   Future<void> _enableCdk() async {
+    final username = ref.read(currentUserProvider).value?.username;
     try {
-      final service = CdkOAuthService();
+      final service = ref.read(cdkOAuthServiceProvider);
       final result = await service.authorize(context);
 
-      if (result && mounted) {
-        final prefs = await SharedPreferences.getInstance();
+      if (result && _isCurrentAccount(username)) {
+        final prefs = ref.read(sharedPreferencesProvider);
         await prefs.setBool(_cdkEnabledKey, true);
+        if (!_isCurrentAccount(username)) return;
         setState(() => _cdkEnabled = true);
-        ref.read(cdkUserInfoProvider.notifier).refresh();
-        if (mounted) {
+        await ref.read(cdkUserInfoProvider.notifier).refresh();
+        if (_isCurrentAccount(username) && _cdkEnabled) {
           ToastService.showSuccess(S.current.metaverse_cdkAuthSuccess);
         }
       }
@@ -143,16 +152,15 @@ class _MetaversePageState extends ConsumerState<MetaversePage> {
   }
 
   Future<void> _disableCdk() async {
+    final notifier = ref.read(cdkUserInfoProvider.notifier);
     try {
-      final service = CdkOAuthService();
+      final service = ref.read(cdkOAuthServiceProvider);
       await service.logout();
     } catch (e) {
       // 忽略登出错误
     }
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_cdkEnabledKey, false);
-    setState(() => _cdkEnabled = false);
-    ref.read(cdkUserInfoProvider.notifier).clear();
+    await notifier.disable();
+    if (mounted) setState(() => _cdkEnabled = false);
   }
 
   @override
@@ -213,13 +221,18 @@ class _MetaversePageState extends ConsumerState<MetaversePage> {
   Future<void> _reauthorizeLdc() async {
     if (_ldcProcessing) return;
     setState(() => _ldcProcessing = true);
+    final username = ref.read(currentUserProvider).value?.username;
     try {
-      final service = LdcOAuthService();
+      final service = ref.read(ldcOAuthServiceProvider);
       if (!mounted) return;
       final result = await service.reauthorize(context);
-      if (result && mounted) {
-        ref.read(ldcUserInfoProvider.notifier).refresh();
-        ToastService.showSuccess(S.current.metaverse_ldcReauthSuccess);
+      if (result && _isCurrentAccount(username) &&
+          ref.read(sharedPreferencesProvider).getBool(_ldcEnabledKey) == true) {
+        await ref.read(ldcUserInfoProvider.notifier).refresh();
+        if (_isCurrentAccount(username) &&
+            ref.read(sharedPreferencesProvider).getBool(_ldcEnabledKey) == true) {
+          ToastService.showSuccess(S.current.metaverse_ldcReauthSuccess);
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -235,13 +248,18 @@ class _MetaversePageState extends ConsumerState<MetaversePage> {
   Future<void> _reauthorizeCdk() async {
     if (_cdkProcessing) return;
     setState(() => _cdkProcessing = true);
+    final username = ref.read(currentUserProvider).value?.username;
     try {
-      final service = CdkOAuthService();
+      final service = ref.read(cdkOAuthServiceProvider);
       if (!mounted) return;
       final result = await service.reauthorize(context);
-      if (result && mounted) {
-        ref.read(cdkUserInfoProvider.notifier).refresh();
-        ToastService.showSuccess(S.current.metaverse_cdkReauthSuccess);
+      if (result && _isCurrentAccount(username) &&
+          ref.read(sharedPreferencesProvider).getBool(_cdkEnabledKey) == true) {
+        await ref.read(cdkUserInfoProvider.notifier).refresh();
+        if (_isCurrentAccount(username) &&
+            ref.read(sharedPreferencesProvider).getBool(_cdkEnabledKey) == true) {
+          ToastService.showSuccess(S.current.metaverse_cdkReauthSuccess);
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -257,8 +275,9 @@ class _MetaversePageState extends ConsumerState<MetaversePage> {
   Widget _buildLdcServiceItem(ThemeData theme) {
     if (_ldcEnabled) {
       return LdcBalanceCard(
-        onDisable: _ldcProcessing ? null : () => _toggleLdc(false),
-        onReauthorize: _ldcProcessing ? null : _reauthorizeLdc,
+        isProcessing: _ldcProcessing,
+        onDisable: () => _toggleLdc(false),
+        onReauthorize: _reauthorizeLdc,
       );
     }
 
@@ -344,8 +363,9 @@ class _MetaversePageState extends ConsumerState<MetaversePage> {
   Widget _buildCdkServiceItem(ThemeData theme) {
     if (_cdkEnabled) {
       return CdkBalanceCard(
-        onDisable: _cdkProcessing ? null : () => _toggleCdk(false),
-        onReauthorize: _cdkProcessing ? null : _reauthorizeCdk,
+        isProcessing: _cdkProcessing,
+        onDisable: () => _toggleCdk(false),
+        onReauthorize: _reauthorizeCdk,
       );
     }
 

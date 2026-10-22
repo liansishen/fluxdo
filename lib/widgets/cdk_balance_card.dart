@@ -5,15 +5,18 @@ import '../providers/cdk_providers.dart';
 import '../pages/webview_page.dart';
 import '../services/network/exceptions/oauth_exception.dart';
 import 'package:m3e_ui/m3e_ui.dart';
-import '../../../../l10n/s.dart';
+import '../l10n/s.dart';
 import '../theme/mojian_theme.dart';
 import 'common/mojian_ledger_card.dart';
+import 'common/balance_card_action_button.dart';
+import 'common/balance_card_cf_action.dart';
 
 class CdkBalanceCard extends ConsumerWidget {
   static const String _dashboardUrl = 'https://cdk.linux.do/dashboard';
 
   final bool compact;
   final bool inline;
+  final bool isProcessing;
   final VoidCallback? onDisable;
   final VoidCallback? onReauthorize;
 
@@ -21,17 +24,27 @@ class CdkBalanceCard extends ConsumerWidget {
     super.key,
     this.compact = false,
     this.inline = false,
+    this.isProcessing = false,
     this.onDisable,
     this.onReauthorize,
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    return IgnorePointer(
+      ignoring: isProcessing,
+      child: _buildCard(context, ref),
+    );
+  }
+
+  Widget _buildCard(BuildContext context, WidgetRef ref) {
     final cdkUserInfo = ref.watch(cdkUserInfoProvider);
 
     // 授权过期时强制显示错误卡片（即使有旧数据缓存）；其他错误仅在无旧数据时显示
     if (cdkUserInfo.hasError &&
-        (!cdkUserInfo.hasValue || cdkUserInfo.error is OAuthExpiredException)) {
+        (cdkUserInfo.value == null ||
+            cdkUserInfo.error is OAuthExpiredException ||
+            OAuthErrorPolicy.isCfChallenge(cdkUserInfo.error))) {
       return _buildErrorCard(context, ref, cdkUserInfo.error!);
     }
 
@@ -44,7 +57,7 @@ class CdkBalanceCard extends ConsumerWidget {
     if (userInfo == null) return const SizedBox.shrink();
 
     final theme = Theme.of(context);
-    final isRefreshing = cdkUserInfo.isLoading;
+    final isRefreshing = isProcessing || cdkUserInfo.isLoading;
 
     if (inline) {
       return Material(
@@ -335,6 +348,36 @@ class CdkBalanceCard extends ConsumerWidget {
   Widget _buildErrorCard(BuildContext context, WidgetRef ref, Object error) {
     final theme = Theme.of(context);
     final isExpired = error is OAuthExpiredException;
+    final isCfChallenge = OAuthErrorPolicy.isCfChallenge(error);
+    final errorTitle = isCfChallenge
+        ? S.current.error_securityChallenge
+        : isExpired
+        ? S.current.common_authExpired
+        : S.current.common_loadFailed;
+    final isBusy = isProcessing || ref.watch(cdkUserInfoProvider).isLoading;
+    final canReauthorize = isExpired && onReauthorize != null;
+
+    Widget actionButton({bool filled = false, bool outlined = false}) => isCfChallenge
+        ? BalanceCardCfAction(
+            businessUrl: 'https://cdk.linux.do',
+            outlined: outlined,
+            onRetry: () => ref
+                .read(cdkUserInfoProvider.notifier)
+                .refreshAfterCfVerification(),
+            isLoading: isBusy,
+            filled: filled,
+          )
+        : BalanceCardActionButton(
+            outlined: outlined,
+            label: canReauthorize
+                ? S.current.common_reAuth
+                : S.current.common_retry,
+            onPressed: canReauthorize
+                ? onReauthorize!
+                : () => ref.read(cdkUserInfoProvider.notifier).refresh(),
+            isLoading: isBusy,
+            filled: filled,
+          );
 
     if (inline) {
       return Material(
@@ -354,7 +397,11 @@ class CdkBalanceCard extends ConsumerWidget {
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
-                      isExpired ? Symbols.lock_clock_rounded : Symbols.error_rounded,
+                      isCfChallenge
+                          ? Symbols.shield_rounded
+                          : isExpired
+                          ? Symbols.lock_clock_rounded
+                          : Symbols.error_rounded,
                       size: 20,
                       color: isExpired
                           ? theme.colorScheme.error
@@ -373,7 +420,7 @@ class CdkBalanceCard extends ConsumerWidget {
                           ),
                         ),
                         Text(
-                          isExpired ? S.current.common_authExpired : S.current.common_loadFailed,
+                          errorTitle,
                           style: theme.textTheme.titleMedium?.copyWith(
                             fontWeight: FontWeight.w600,
                             color: isExpired
@@ -384,16 +431,7 @@ class CdkBalanceCard extends ConsumerWidget {
                       ],
                     ),
                   ),
-                  if (isExpired && onReauthorize != null)
-                    TextButton(
-                      onPressed: onReauthorize,
-                      child: Text(S.current.common_reAuth),
-                    )
-                  else
-                    TextButton(
-                      onPressed: () => ref.read(cdkUserInfoProvider.notifier).refresh(),
-                      child: Text(S.current.common_retry),
-                    ),
+                  actionButton(),
                 ],
               ),
             ),
@@ -430,7 +468,11 @@ class CdkBalanceCard extends ConsumerWidget {
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
-                  isExpired ? Symbols.lock_clock_rounded : Symbols.error_rounded,
+                  isCfChallenge
+                      ? Symbols.shield_rounded
+                      : isExpired
+                      ? Symbols.lock_clock_rounded
+                      : Symbols.error_rounded,
                   size: 20,
                   color: isExpired
                       ? theme.colorScheme.error
@@ -449,7 +491,7 @@ class CdkBalanceCard extends ConsumerWidget {
                       ),
                     ),
                     Text(
-                      isExpired ? S.current.common_authExpired : S.current.common_loadFailed,
+                      errorTitle,
                       style: theme.textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w600,
                         color: isExpired
@@ -460,16 +502,7 @@ class CdkBalanceCard extends ConsumerWidget {
                   ],
                 ),
               ),
-              if (isExpired && onReauthorize != null)
-                TextButton(
-                  onPressed: onReauthorize,
-                  child: Text(S.current.common_reAuth),
-                )
-              else
-                TextButton(
-                  onPressed: () => ref.read(cdkUserInfoProvider.notifier).refresh(),
-                  child: Text(S.current.common_retry),
-                ),
+              actionButton(),
             ],
           ),
         ),
@@ -480,7 +513,7 @@ class CdkBalanceCard extends ConsumerWidget {
     if (mj != null) {
       // 墨笺:账本卡;过期时框线与状态字用错误色
       return MojianLedgerCard(
-        icon: isExpired ? Symbols.lock_clock_rounded : Symbols.error_rounded,
+        icon: isCfChallenge ? Symbols.shield_rounded : isExpired ? Symbols.lock_clock_rounded : Symbols.error_rounded,
         title: 'LINUX DO CDK',
         danger: isExpired,
         trailing: onDisable != null
@@ -488,9 +521,7 @@ class CdkBalanceCard extends ConsumerWidget {
             : null,
         children: [
           Text(
-            isExpired
-                ? S.current.common_authExpired
-                : S.current.common_loadFailed,
+            errorTitle,
             style: MojianLedgerCard.figureStyle(mj).copyWith(
               fontSize: 24,
               color: isExpired ? theme.colorScheme.error : mj.ink,
@@ -498,21 +529,11 @@ class CdkBalanceCard extends ConsumerWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            isExpired ? S.current.cdk_reAuthHint : S.current.common_checkNetworkRetry,
+            isCfChallenge ? S.current.cf_operationBlockedByChallenge : isExpired ? S.current.cdk_reAuthHint : S.current.common_checkNetworkRetry,
             style: theme.textTheme.bodyMedium?.copyWith(color: mj.ink3),
           ),
           const SizedBox(height: 14),
-          OutlinedButton.icon(
-            onPressed: isExpired && onReauthorize != null
-                ? onReauthorize
-                : () => ref.read(cdkUserInfoProvider.notifier).refresh(),
-            icon: const Icon(Symbols.refresh_rounded, size: 18),
-            label: Text(
-              isExpired && onReauthorize != null
-                  ? S.current.common_reAuth
-                  : S.current.common_retry,
-            ),
-          ),
+          actionButton(outlined: true),
         ],
       );
     }
@@ -523,9 +544,7 @@ class CdkBalanceCard extends ConsumerWidget {
       shadowColor: isExpired
           ? theme.colorScheme.error.withValues(alpha: 0.3)
           : theme.colorScheme.tertiary.withValues(alpha: 0.3),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(24),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
       child: Container(
@@ -536,10 +555,7 @@ class CdkBalanceCard extends ConsumerWidget {
                     theme.colorScheme.error.withValues(alpha: 0.8),
                     theme.colorScheme.error.withValues(alpha: 0.6),
                   ]
-                : [
-                    theme.colorScheme.tertiary,
-                    theme.colorScheme.secondary,
-                  ],
+                : [theme.colorScheme.tertiary, theme.colorScheme.secondary],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
@@ -550,7 +566,11 @@ class CdkBalanceCard extends ConsumerWidget {
               right: -20,
               top: -20,
               child: Icon(
-                isExpired ? Symbols.lock_clock_rounded : Symbols.error_rounded,
+                isCfChallenge
+                    ? Symbols.shield_rounded
+                    : isExpired
+                    ? Symbols.lock_clock_rounded
+                    : Symbols.error_rounded,
                 size: 150,
                 color: Colors.white.withValues(alpha: 0.1),
               ),
@@ -569,7 +589,11 @@ class CdkBalanceCard extends ConsumerWidget {
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Icon(
-                          isExpired ? Symbols.lock_clock_rounded : Symbols.error_rounded,
+                          isCfChallenge
+                              ? Symbols.shield_rounded
+                              : isExpired
+                              ? Symbols.lock_clock_rounded
+                              : Symbols.error_rounded,
                           color: Colors.white,
                           size: 20,
                         ),
@@ -584,7 +608,7 @@ class CdkBalanceCard extends ConsumerWidget {
                           ),
                         ),
                       ),
-                      if (onDisable != null)
+                      if (onDisable != null && !isBusy)
                         GestureDetector(
                           onTap: onDisable,
                           child: Container(
@@ -604,7 +628,7 @@ class CdkBalanceCard extends ConsumerWidget {
                   ),
                   const SizedBox(height: 24),
                   Text(
-                    isExpired ? S.current.common_authExpired : S.current.common_loadFailed,
+                    errorTitle,
                     style: theme.textTheme.displaySmall?.copyWith(
                       fontWeight: FontWeight.w600,
                       color: Colors.white,
@@ -613,32 +637,17 @@ class CdkBalanceCard extends ConsumerWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    isExpired ? S.current.cdk_reAuthHint : S.current.common_checkNetworkRetry,
+                    isCfChallenge
+                        ? S.current.cf_dataBlockedByChallenge
+                        : isExpired
+                        ? S.current.cdk_reAuthHint
+                        : S.current.common_checkNetworkRetry,
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: Colors.white.withValues(alpha: 0.7),
                     ),
                   ),
                   const SizedBox(height: 16),
-                  if (isExpired && onReauthorize != null)
-                    FilledButton.icon(
-                      onPressed: onReauthorize,
-                      icon: const Icon(Symbols.refresh_rounded, size: 18),
-                      label: Text(S.current.common_reAuth),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: Colors.white.withValues(alpha: 0.2),
-                        foregroundColor: Colors.white,
-                      ),
-                    )
-                  else
-                    FilledButton.icon(
-                      onPressed: () => ref.read(cdkUserInfoProvider.notifier).refresh(),
-                      icon: const Icon(Symbols.refresh_rounded, size: 18),
-                      label: Text(S.current.common_retry),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: Colors.white.withValues(alpha: 0.2),
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
+                  actionButton(filled: true),
                 ],
               ),
             ),

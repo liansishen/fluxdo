@@ -6,9 +6,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxdo/l10n/slang/strings.g.dart';
 import 'package:fluxdo/models/category.dart';
 import 'package:fluxdo/models/topic.dart';
+import 'package:fluxdo/pages/bookmarks/bookmarks_models.dart';
 import 'package:fluxdo/providers/category_provider.dart';
 import 'package:fluxdo/providers/theme_provider.dart';
 import 'package:fluxdo/utils/platform_utils.dart';
+import 'package:fluxdo/utils/relative_time_clock.dart';
 import 'package:fluxdo/widgets/bookmark/bookmarks_list_content.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -26,14 +28,30 @@ Topic _topic({required int id, required String title, String? bookmarkName}) {
   );
 }
 
+/// 书签卡默认走自绘路径([PaintedTopicCard] 把标题直接画在画布上),
+/// 列表里没有承载标题的 [Text];按生产同一份卡片身份键
+/// ([bookmarkTopicIdentity])定位。
+Finder _cardOf(_BookmarkSeed seed) {
+  return find.byKey(ValueKey(bookmarkTopicIdentity(seed.toTopic())));
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late SharedPreferences prefs;
 
+  void keepClockAlive() {}
+
   setUpAll(() async {
+    // 自绘排版缓存常驻订阅分钟心跳(真实时钟),避免它的计时器落到单个
+    // 测试的 fake async 里报「A Timer is still pending」。
+    RelativeTimeClock.instance.addListener(keepClockAlive);
     SharedPreferences.setMockInitialValues({});
     prefs = await SharedPreferences.getInstance();
   });
+
+  tearDownAll(
+    () => RelativeTimeClock.instance.removeListener(keepClockAlive),
+  );
 
   testWidgets('汇总条只统计非空名称并按数量降序展示', (tester) async {
     await tester.pumpWidget(
@@ -62,6 +80,10 @@ void main() {
   });
 
   testWidgets('切换汇总项后只显示对应名称书签，切回全部恢复完整列表', (tester) async {
+    const alpha = _BookmarkSeed(id: 1, title: 'Alpha', bookmarkName: 'codex');
+    const beta = _BookmarkSeed(id: 2, title: 'Beta', bookmarkName: 'beta');
+    const gamma = _BookmarkSeed(id: 3, title: 'Gamma', bookmarkName: 'codex');
+
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -70,32 +92,30 @@ void main() {
             (ref) => const AsyncValue.data(<int, Category>{}),
           ),
         ],
-        child: _BookmarksListTestHost(
-          topics: [
-            _BookmarkSeed(id: 1, title: 'Alpha', bookmarkName: 'codex'),
-            _BookmarkSeed(id: 2, title: 'Beta', bookmarkName: 'beta'),
-            _BookmarkSeed(id: 3, title: 'Gamma', bookmarkName: 'codex'),
-          ],
-        ),
+        child: const _BookmarksListTestHost(topics: [alpha, beta, gamma]),
       ),
     );
 
     await tester.tap(find.text('codex (2)'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Alpha'), findsOneWidget);
-    expect(find.text('Gamma'), findsOneWidget);
-    expect(find.text('Beta'), findsNothing);
+    expect(_cardOf(alpha), findsOneWidget);
+    expect(_cardOf(gamma), findsOneWidget);
+    expect(_cardOf(beta), findsNothing);
 
     await tester.tap(find.text('全部'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Alpha'), findsOneWidget);
-    expect(find.text('Beta'), findsOneWidget);
-    expect(find.text('Gamma'), findsOneWidget);
+    expect(_cardOf(alpha), findsOneWidget);
+    expect(_cardOf(beta), findsOneWidget);
+    expect(_cardOf(gamma), findsOneWidget);
   });
 
   testWidgets('点击未设置后只显示未命名书签', (tester) async {
+    const alpha = _BookmarkSeed(id: 1, title: 'Alpha', bookmarkName: 'codex');
+    const noName1 = _BookmarkSeed(id: 2, title: 'No Name 1', bookmarkName: '   ');
+    const noName2 = _BookmarkSeed(id: 3, title: 'No Name 2');
+
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -104,25 +124,23 @@ void main() {
             (ref) => const AsyncValue.data(<int, Category>{}),
           ),
         ],
-        child: _BookmarksListTestHost(
-          topics: const [
-            _BookmarkSeed(id: 1, title: 'Alpha', bookmarkName: 'codex'),
-            _BookmarkSeed(id: 2, title: 'No Name 1', bookmarkName: '   '),
-            _BookmarkSeed(id: 3, title: 'No Name 2'),
-          ],
-        ),
+        child: const _BookmarksListTestHost(topics: [alpha, noName1, noName2]),
       ),
     );
 
     await tester.tap(find.text('未设置 (2)'));
     await tester.pumpAndSettle();
 
-    expect(find.text('No Name 1'), findsOneWidget);
-    expect(find.text('No Name 2'), findsOneWidget);
-    expect(find.text('Alpha'), findsNothing);
+    expect(_cardOf(noName1), findsOneWidget);
+    expect(_cardOf(noName2), findsOneWidget);
+    expect(_cardOf(alpha), findsNothing);
   });
 
   testWidgets('隐藏汇总条再恢复后保留之前的筛选状态', (tester) async {
+    const alpha = _BookmarkSeed(id: 1, title: 'Alpha', bookmarkName: 'codex');
+    const beta = _BookmarkSeed(id: 2, title: 'Beta', bookmarkName: 'beta');
+    const gamma = _BookmarkSeed(id: 3, title: 'Gamma', bookmarkName: 'codex');
+
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -131,13 +149,7 @@ void main() {
             (ref) => const AsyncValue.data(<int, Category>{}),
           ),
         ],
-        child: _BookmarksListTestHost(
-          topics: [
-            _BookmarkSeed(id: 1, title: 'Alpha', bookmarkName: 'codex'),
-            _BookmarkSeed(id: 2, title: 'Beta', bookmarkName: 'beta'),
-            _BookmarkSeed(id: 3, title: 'Gamma', bookmarkName: 'codex'),
-          ],
-        ),
+        child: const _BookmarksListTestHost(topics: [alpha, beta, gamma]),
       ),
     );
 
@@ -151,17 +163,17 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('codex (2)'), findsNothing);
-    expect(find.text('Alpha'), findsOneWidget);
-    expect(find.text('Gamma'), findsOneWidget);
-    expect(find.text('Beta'), findsNothing);
+    expect(_cardOf(alpha), findsOneWidget);
+    expect(_cardOf(gamma), findsOneWidget);
+    expect(_cardOf(beta), findsNothing);
 
     state.showSummaryBar();
     await tester.pumpAndSettle();
 
     expect(find.text('codex (2)'), findsOneWidget);
-    expect(find.text('Alpha'), findsOneWidget);
-    expect(find.text('Gamma'), findsOneWidget);
-    expect(find.text('Beta'), findsNothing);
+    expect(_cardOf(alpha), findsOneWidget);
+    expect(_cardOf(gamma), findsOneWidget);
+    expect(_cardOf(beta), findsNothing);
   });
 
   testWidgets('桌面端可以拖动横向滚动顶部书签标签', (tester) async {
@@ -272,6 +284,10 @@ void main() {
     PlatformUtils.debugDesktopOverride = false;
     addTearDown(() => PlatformUtils.debugDesktopOverride = null);
 
+    const alpha = _BookmarkSeed(id: 1, title: 'Alpha', bookmarkName: 'codex');
+    const beta = _BookmarkSeed(id: 2, title: 'Beta', bookmarkName: 'beta');
+    const gamma = _BookmarkSeed(id: 3, title: 'Gamma', bookmarkName: 'codex');
+
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -280,13 +296,7 @@ void main() {
             (ref) => const AsyncValue.data(<int, Category>{}),
           ),
         ],
-        child: _BookmarksListTestHost(
-          topics: const [
-            _BookmarkSeed(id: 1, title: 'Alpha', bookmarkName: 'codex'),
-            _BookmarkSeed(id: 2, title: 'Beta', bookmarkName: 'beta'),
-            _BookmarkSeed(id: 3, title: 'Gamma', bookmarkName: 'codex'),
-          ],
-        ),
+        child: const _BookmarksListTestHost(topics: [alpha, beta, gamma]),
       ),
     );
     await tester.pumpAndSettle();
@@ -304,31 +314,31 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(state._selectedBookmarkName, 'codex');
-    expect(find.text('Alpha'), findsOneWidget);
-    expect(find.text('Gamma'), findsOneWidget);
-    expect(find.text('Beta'), findsNothing);
+    expect(_cardOf(alpha), findsOneWidget);
+    expect(_cardOf(gamma), findsOneWidget);
+    expect(_cardOf(beta), findsNothing);
 
     await tester.drag(swipeRegion, const Offset(-320, 0));
     await tester.pumpAndSettle();
 
     expect(state._selectedBookmarkName, 'beta');
-    expect(find.text('Beta'), findsOneWidget);
-    expect(find.text('Alpha'), findsNothing);
+    expect(_cardOf(beta), findsOneWidget);
+    expect(_cardOf(alpha), findsNothing);
 
     await tester.drag(swipeRegion, const Offset(320, 0));
     await tester.pumpAndSettle();
 
     expect(state._selectedBookmarkName, 'codex');
-    expect(find.text('Alpha'), findsOneWidget);
-    expect(find.text('Gamma'), findsOneWidget);
+    expect(_cardOf(alpha), findsOneWidget);
+    expect(_cardOf(gamma), findsOneWidget);
 
     await tester.drag(swipeRegion, const Offset(320, 0));
     await tester.pumpAndSettle();
 
     expect(state._selectedBookmarkName, isNull);
-    expect(find.text('Alpha'), findsOneWidget);
-    expect(find.text('Beta'), findsOneWidget);
-    expect(find.text('Gamma'), findsOneWidget);
+    expect(_cardOf(alpha), findsOneWidget);
+    expect(_cardOf(beta), findsOneWidget);
+    expect(_cardOf(gamma), findsOneWidget);
   });
 
   testWidgets('手机端左右拖动顶部名称标签只滚动标签条不切换筛选项', (tester) async {
@@ -393,6 +403,8 @@ class _BookmarkSeed {
   final int id;
   final String title;
   final String? bookmarkName;
+
+  Topic toTopic() => _topic(id: id, title: title, bookmarkName: bookmarkName);
 }
 
 class _BookmarksListTestHost extends StatefulWidget {
@@ -425,15 +437,7 @@ class _BookmarksListTestHostState extends State<_BookmarksListTestHost> {
 
   @override
   Widget build(BuildContext context) {
-    final topics = widget.topics
-        .map(
-          (item) => _topic(
-            id: item.id,
-            title: item.title,
-            bookmarkName: item.bookmarkName,
-          ),
-        )
-        .toList();
+    final topics = widget.topics.map((item) => item.toTopic()).toList();
 
     return TranslationProvider(
       child: MaterialApp(

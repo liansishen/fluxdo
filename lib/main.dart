@@ -26,6 +26,7 @@ import 'services/highlighter_service.dart';
 import 'widgets/common/notification_icon_button.dart';
 import 'widgets/common/anchor_guard_sliver.dart';
 import 'widgets/common/fullscreen_swipe_back.dart';
+import 'widgets/common/app_glass_settings.dart';
 import 'package:common_ui/common_ui.dart';
 import 'package:flutter_displaymode/flutter_displaymode.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -809,6 +810,7 @@ class MainApp extends ConsumerWidget {
         return TranslationProvider(
           child: Builder(
             builder: (context) => MaterialApp(
+              scrollBehavior: const DesktopScrollInteractionBehavior(),
               navigatorKey: navigatorKey,
               // JankNavObserver 给 [JANK] 日志加导航归因(debug/profile 观测用)
               // KeyboardFocusGuard 压掉浮层关闭后键盘自弹(移动端)
@@ -943,7 +945,7 @@ class MainApp extends ConsumerWidget {
                   }
                 }
 
-                return result;
+                return AppGlassSettings(child: result);
               },
               home: const OnboardingGate(child: PreheatGate(child: MainPage())),
             ),

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import '../../network_logger.dart';
 import 'bootstrap_doh_client.dart';
+import 'ech_dns_policy.dart';
 
 /// 走 Rust DoH 客户端的解析回调：返回 IP 字符串列表，空表示没解析出来
 typedef DohNativeLookup =
@@ -17,11 +18,21 @@ class DohResolver {
     String? authToken,
     this.onAuthRejected,
     this.nativeLookup,
+    EchDnsPolicy echDnsPolicy = const EchDnsPolicy(),
   })  : _serverUrl = serverUrl,
         _bootstrapIps = bootstrapIps,
         _authToken = authToken,
-        _preferIPv6 = preferIPv6 {
+        _preferIPv6 = preferIPv6,
+        _echDnsPolicy = echDnsPolicy {
     _initClient();
+  }
+
+  EchDnsPolicy _echDnsPolicy;
+
+  set echDnsPolicy(EchDnsPolicy policy) {
+    _echDnsPolicy = policy;
+    _cacheAll.clear();
+    _inflight.clear();
   }
 
   String _serverUrl;
@@ -138,7 +149,7 @@ class DohResolver {
     try {
       return await future;
     } finally {
-      _inflight.remove(host);
+      if (identical(_inflight[host], future)) _inflight.remove(host);
     }
   }
 
@@ -148,9 +159,11 @@ class DohResolver {
     if (native != null) {
       return _resolveViaNative(host, native);
     }
+    final policy = _echDnsPolicy;
     final stopwatch = Stopwatch()..start();
     try {
-      final result = await _client.lookupAllWithTtl(host);
+      final result = await _client.lookupAllWithTtl(policy.queryName(host));
+      if (!identical(policy, _echDnsPolicy)) return await resolveAll(host);
       stopwatch.stop();
 
       if (result.addresses.isEmpty) {
@@ -181,6 +194,7 @@ class DohResolver {
       return sorted;
     } catch (e) {
       stopwatch.stop();
+      if (!identical(policy, _echDnsPolicy)) return await resolveAll(host);
       NetworkLogger.logDoh(
         host: host,
         durationMs: stopwatch.elapsedMilliseconds,
@@ -195,9 +209,11 @@ class DohResolver {
     String host,
     DohNativeLookup native,
   ) async {
+    final policy = _echDnsPolicy;
     final stopwatch = Stopwatch()..start();
     try {
       final raw = await native(host, _serverUrl, _preferIPv6);
+      if (!identical(policy, _echDnsPolicy)) return await resolveAll(host);
       stopwatch.stop();
       final addresses = raw
           .map((value) => InternetAddress.tryParse(value.trim()))
@@ -224,6 +240,7 @@ class DohResolver {
       return sorted;
     } catch (e) {
       stopwatch.stop();
+      if (!identical(policy, _echDnsPolicy)) return await resolveAll(host);
       NetworkLogger.logDoh(
         host: host,
         durationMs: stopwatch.elapsedMilliseconds,
@@ -248,9 +265,11 @@ class DohResolver {
   /// 系统 DNS 回退解析（全部）
   Future<List<InternetAddress>> _fallbackResolveAll(String host) async {
     if (!enableFallback) return [];
+    final policy = _echDnsPolicy;
 
     try {
-      final addresses = await InternetAddress.lookup(host);
+      final addresses = await InternetAddress.lookup(policy.queryName(host));
+      if (!identical(policy, _echDnsPolicy)) return await resolveAll(host);
       if (addresses.isEmpty) return [];
 
       final sorted = _sortAddresses(addresses);
@@ -266,6 +285,7 @@ class DohResolver {
 
       return sorted;
     } catch (e) {
+      if (!identical(policy, _echDnsPolicy)) return await resolveAll(host);
       NetworkLogger.log('[DOH] 系统 DNS 回退也失败: $host | $e');
       return [];
     }

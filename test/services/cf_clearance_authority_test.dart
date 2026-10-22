@@ -343,6 +343,22 @@ void main() {
       );
     });
 
+    test('业务域手动验证成功立即解除旧限制，不解除其他域的挑战', () {
+      for (final host in [main, cdk, 'credit.linux.do']) {
+        authority.noteIncumbentChallenged('old-value', host: host);
+        authority.noteRejected(host, value: 'old-value');
+        authority.startIneffectiveCooldown(host);
+      }
+      authority.recordVerifiedHost(cdk);
+      expect(authority.isKnownChallenged('old-value', host: cdk), isFalse);
+      expect(authority.cooldownUntil(cdk), isNull);
+      expect(authority.consecutiveFailures(cdk), 0);
+      expect(authority.isKnownChallenged('old-value', host: main), isTrue);
+      expect(authority.isKnownChallenged('old-value', host: 'credit.linux.do'), isTrue);
+      expect(authority.cooldownUntil(main), isNotNull);
+      expect(authority.cooldownUntil('credit.linux.do'), isNotNull);
+    });
+
     test('cdk 上定稿值无效 → 只冷却 cdk，主站与其他子域不受影响', () {
       authority.startIneffectiveCooldown(cdk);
 
