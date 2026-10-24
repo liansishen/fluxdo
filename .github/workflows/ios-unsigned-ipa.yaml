@@ -1,0 +1,89 @@
+name: iOS Unsigned IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      flutter-version:
+        description: 'Flutter SDK 版本'
+        required: false
+        default: '3.47.7'
+  push:
+    branches:
+      - feat/ios-unsigned-ipa
+    paths:
+      - 'ios/**'
+      - 'lib/**'
+      - 'packages/**'
+      - 'core/doh_proxy/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'tool/**'
+      - '.github/workflows/ios-unsigned-ipa.yaml'
+
+concurrency:
+  group: ios-unsigned-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ inputs.flutter-version || '3.47.7' }}
+          channel: stable
+          cache: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core/doh_proxy
+          key: ios-unsigned
+
+      - name: Show toolchain versions
+        run: |
+          flutter --version
+          xcodebuild -version
+          pod --version
+
+      - name: Cache iOS engine artifacts
+        run: flutter precache --ios
+
+      - name: Install Dart dependencies
+        run: flutter pub get
+
+      - name: Build unsigned IPA
+        run: dart tool/build_ipa_nosign.dart -y
+
+      - name: Verify native DOH library
+        run: |
+          test -f build/ios/iphoneos/Runner.app/Runner
+          nm -gU build/ios/iphoneos/Runner.app/Runner | grep "_doh_proxy_start_with_config_json"
+
+      - name: Generate checksum
+        run: |
+          cd build/ios/ipa
+          shasum -a 256 ./*.ipa | tee SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: fluxdo-unsigned-ipa
+          path: |
+            build/ios/ipa/*.ipa
+            build/ios/ipa/SHA256SUMS.txt
+          retention-days: 30
+          if-no-files-found: error
