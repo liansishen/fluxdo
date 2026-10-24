@@ -22,7 +22,6 @@ import '../../../../../services/notion/notion_bookmark_auto_sync.dart';
 import '../../../../../services/toast_service.dart';
 import '../../../post_links.dart';
 import '../post_action_bar.dart';
-import '../post_device_source.dart';
 import '../post_voting_control.dart';
 import '../post_voting_comments_view.dart';
 import '../../../../bookmark/bookmark_edit_sheet_launcher.dart';
@@ -195,9 +194,7 @@ class _PostFooterSectionState extends ConsumerState<PostFooterSection> {
   /// 无活跃实例时静默跳过,footer 本地 state 仍保证当场显示)。
   /// 弹幕层/action bar 读的是 provider 的 post.boosts —— 此前只写本地
   /// state,弹幕模式下自己刚发的 boost 直接不可见。
-  void _syncBoostToProvider(
-    void Function(TopicDetailNotifier notifier) apply,
-  ) {
+  void _syncBoostToProvider(void Function(TopicDetailNotifier notifier) apply) {
     final params = TopicDetailNotifier.activeParamsFor(widget.topicId);
     if (params == null) return;
     try {
@@ -350,10 +347,7 @@ class _PostFooterSectionState extends ConsumerState<PostFooterSection> {
               child: widget.opTopSlot,
             ),
           ],
-          if (widget.post.iosDeviceName case final deviceName?)
-            PostDeviceSource(deviceName: deviceName)
-          else
-            const SizedBox(height: 12),
+          const SizedBox(height: 12),
           PostActionBar(
             post: widget.post,
             isGuest: isGuest,

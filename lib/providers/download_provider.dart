@@ -12,12 +12,14 @@ import '../pages/download_list_page.dart';
 import '../services/download_diagnostics.dart';
 import '../services/download_service.dart';
 import '../services/toast_service.dart';
+import '../services/site_context.dart';
+import '../services/site_data_lifecycle.dart';
 import '../l10n/s.dart';
 import 'theme_provider.dart'; // sharedPreferencesProvider
 
 /// 下载记录状态管理
 class DownloadNotifier extends StateNotifier<List<DownloadItem>> {
-  static const String _storageKey = 'download_items';
+  static String get _storageKey => SiteContext.storageKey('download_items');
 
   final SharedPreferences _prefs;
   final DownloadService _downloadService;
@@ -296,14 +298,17 @@ class DownloadNotifier extends StateNotifier<List<DownloadItem>> {
   }
 
   /// 持久化到 SharedPreferences
-  void _save() {
+  Future<void> _save() async {
     final jsonStr = jsonEncode(state.map((e) => e.toJson()).toList());
-    _prefs.setString(_storageKey, jsonStr);
+    await _prefs.setString(_storageKey, jsonStr);
   }
 }
 
 final downloadProvider =
     StateNotifierProvider<DownloadNotifier, List<DownloadItem>>((ref) {
       final prefs = ref.watch(sharedPreferencesProvider);
-      return DownloadNotifier(prefs);
+      final notifier = DownloadNotifier(prefs);
+      final unregister = SiteDataLifecycle.register(notifier._save);
+      ref.onDispose(unregister);
+      return notifier;
     });

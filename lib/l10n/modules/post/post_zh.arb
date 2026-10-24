@@ -453,14 +453,5 @@
       }
     }
   },
-  "nested_restoreFailed": "暂时无法恢复该位置，请重试",
-  "post_deviceSource": "来自 {device}",
-  "@post_deviceSource": {
-    "placeholders": {
-      "device": {
-        "type": "String"
-      }
-    }
-  },
-  "post_deviceSourceTitle": "帖子来源"
+  "nested_restoreFailed": "暂时无法恢复该位置，请重试"
 }

@@ -20,8 +20,9 @@ Widget host(Widget child, {bool dark = false, double scale = 1}) =>
           GlobalCupertinoLocalizations.delegate,
         ],
         builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(context)
-              .copyWith(textScaler: TextScaler.linear(scale)),
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.linear(scale)),
           child: child!,
         ),
         home: Scaffold(body: child),
@@ -75,6 +76,14 @@ void main() {
     );
     await tester.tap(find.text('适用域名'));
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('添加'),
+      100,
+      scrollable: find.descendant(
+        of: find.byType(EchDomainsEditor),
+        matching: find.byType(Scrollable),
+      ),
+    );
     await tester.tap(find.text('添加'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextFormField), 'example.com');
@@ -102,8 +111,18 @@ void main() {
         matching: find.byType(Scrollable),
       ),
     );
+    await tester.drag(
+      find.descendant(
+        of: find.byType(EchDomainsEditor),
+        matching: find.byType(Scrollable),
+      ),
+      const Offset(0, -120),
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('删除'));
     await tester.pumpAndSettle();
+    expect(find.text('images.example.net'), findsNothing);
+    expect(policy.customDomains, ['images.example.net']);
     await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
     expect(policy.customDomains, ['images.example.net']);

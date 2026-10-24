@@ -3,7 +3,7 @@ class EchDnsPolicy {
   const EchDnsPolicy({this.enabled = true, this.customDomains = const []});
 
   static const cloudflareQueryName = 'cloudflare-ech.com';
-  static const builtinDomains = ['linux.do', 'ldstatic.com'];
+  static const builtinDomains = ['linux.do', 'ldstatic.com', 'idcflare.com'];
 
   final bool enabled;
   final List<String> customDomains;

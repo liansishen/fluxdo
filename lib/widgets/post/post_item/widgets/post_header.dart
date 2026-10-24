@@ -46,6 +46,53 @@ class _PostAnniversaryIcon extends StatelessWidget {
   }
 }
 
+class _PostIosDeviceNameBadge extends StatelessWidget {
+  const _PostIosDeviceNameBadge({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = theme.colorScheme.onSurfaceVariant;
+
+    return Tooltip(
+      message: label,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 144),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest.withValues(
+              alpha: 0.65,
+            ),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.smartphone_rounded, size: 11, color: color),
+              const SizedBox(width: 3),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: color,
+                    fontSize: 10,
+                    height: 1.1,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// 帖子头像组件（独立widget避免不必要的重建）
 class PostAvatar extends StatefulWidget {
   final Post post;
@@ -139,7 +186,10 @@ class _PostAvatarState extends State<PostAvatar> {
           imageUrl: avatarUrl.isNotEmpty ? avatarUrl : null,
           radius: rect.shortestSide / 2,
           fallbackText: widget.post.username,
-          border: Border.all(color: Theme.of(ctx).colorScheme.primary, width: 2),
+          border: Border.all(
+            color: Theme.of(ctx).colorScheme.primary,
+            width: 2,
+          ),
         ),
       ),
       child: CompositedTransformTarget(link: _link, child: avatar),
@@ -197,6 +247,7 @@ class PostHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final deviceName = post.iosDeviceName?.trim();
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -279,15 +330,23 @@ class PostHeader extends StatelessWidget {
                 padding: const EdgeInsets.only(top: 2),
                 child: Row(
                   children: [
-                    Text(
-                      '@${post.username}',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                        fontSize: 11,
+                    Flexible(
+                      child: Text(
+                        '@${post.username}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                          fontSize: 11,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
                       ),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
                     ),
+                    if (deviceName != null && deviceName.isNotEmpty) ...[
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: _PostIosDeviceNameBadge(label: deviceName),
+                      ),
+                    ],
                     if (post.userTitle != null) ...[
                       const SizedBox(width: 6),
                       Flexible(
@@ -434,7 +493,11 @@ class PostHeader extends StatelessWidget {
               child: CircularProgressIndicator(strokeWidth: 2),
             )
           else
-            Icon(Symbols.reply_rounded, size: 14, color: theme.colorScheme.primary),
+            Icon(
+              Symbols.reply_rounded,
+              size: 14,
+              color: theme.colorScheme.primary,
+            ),
           const SizedBox(width: 6),
           SmartAvatar(
             imageUrl: replyToUser.avatarTemplate.isNotEmpty

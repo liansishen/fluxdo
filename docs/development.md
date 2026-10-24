@@ -91,11 +91,29 @@ just release -- patch --dry-run
 ## 编辑器、草稿与上传
 
 - 编辑工作台统一承载源码与语义富文本模式；两种模式的固定工具顺序分别保存，表格、图片网格、对象工具和上传任务复用同一选区与撤销历史。
+- 桌面回复弹层直接使用路由实际高度约束，默认取可用高度的 75% 并封顶 580 逻辑像素；正文与预览各自滚动，移动端保留原有 95% 高度。
 - 富文本导入、源码镜像和提交快照使用语义编解码链路。修改 `tools/discourse-cook-bundle/src/` 后，需按该目录脚本重新生成 `assets/cook/discourse-cook.js`，避免 Dart 与 cook token 协议不一致。
 - 草稿保留本地持久化、云端序列及冲突恢复状态；舍弃草稿会终止旧保存链路，上传任务开始后空草稿也能继续插入上传结果。
 - 上传按站点能力采用 S3 分片，可在网络设置中强制关闭；进度、取消与失败清理由统一任务控制器管理。媒体压缩遵循站点附件上限，并保留实测大小与格式回退反馈。
 - 玻璃材质由 `common_ui` 的全局开关和效果档位管理，shader 注册在该包的 `pubspec.yaml`；墨笺编辑器继续使用纸面、顶边细线与透明工具组。
 - Toast 使用统一胶囊队列和玻璃表面，下载与 Notion 同步的失败会结束进度提示并显示可读错误。
+
+## 话题列表时间
+
+- 发帖时间位于最后回复时间左侧，当天显示时分，往日显示短日期；缺少 `createdAt` 时不显示。不为整张卡片或发帖日期添加悬停提示，避免遮挡列表阅读；自绘卡仍通过无障碍语义提供完整创建时间。时间格式统一复用 `TimeUtils`。
+- 四档按本地日历日期差计算：当天（未来日期也归此档）、1～7 天、8～30 天、超过 30 天；颜色来自当前主题的文字角色与令牌，随明暗模式切换。
+- 显示设置的「显示发帖时间」默认开启，持久化键为 `pref_show_topic_creation_time`。偏好快照通知已挂载自绘卡原地重排，布局缓存和预热签名包含开关；分钟心跳负责跨日切换，隐藏卡暂停刷新。
+- 置顶紧凑行的时间不参与 `Row` 弹性均分，按内容收缩并限制为行可用宽度的 40%；标题独占剩余空间，时间和回复数保持靠右，避免标题提前截断和大字号横向溢出。
+- 回归入口：`test/widgets/topic/topic_creation_time_test.dart`、`test/widgets/post/reply_sheet_preview_test.dart`。
+
+## 多站点运行与隔离
+
+- `ForumSite` 定义 LINUX DO、IDCFlare 的域名和 Logo；`SiteContext` 在启动阶段读取选择，当前引擎内保持不变。LINUX DO 沿用原存储键与目录，IDCFlare 使用 `site:idcflare:` 前缀和 `sites/idcflare` support 子目录。
+- 左上角 Logo 调用 `SiteSwitchService`：先通过 `SiteDataLifecycle.flushBeforeSwitch()` 收取编辑器现场并刷盘，再保存选择并调用 `fluxdo/site_switch`。保存或原生重启失败会回滚选择；切站不调用登出或清理另一站数据。
+- Windows / Linux 以进程重启释放 WebView 和原生代理，等待旧进程退出后才启动新引擎；保留窗口尺寸与最大化，Windows / X11 也保留位置。Wayland 窗口位置由合成器决定。Android 停止代理后重建 Activity 与引擎，保留 WebView Cookie。
+- 两站分别保存密码、CSRF、UserAPIKey、RSA/nonce、Cookie、数据库与账号内容；主题、字体和 AI 模型配置保持全局，AI 会话分站。备份保留数据的原始站点归属，不导入当前站点选择或待打开链接。
+- IDCFlare 默认打开系统浏览器的 `/user-api-key/new` 授权页，可在网页中选择 LINUX DO 登录，再经 `discourse://auth_redirect` 回调完成本站 OTP 会话兑换；内置完整网页登录保留为备用入口。不运行 LINUX DO 专属 fingerprint / `_rt` bootstrap，不显示 LDC/CDK 等专属功能。跨站主域链接先切站再打开，子域和非标准来源不能直接按论坛 ID 路由。
+- 回归入口：`test/services/site_*_test.dart`、Cookie / SessionTokenAuthority 既有测试，以及 `packages/ai_model_manager/test/services/ai_chat_storage_site_test.dart`。原生交接还需实际验证双向切换、原站登录态与窗口状态。
 
 ## IDE 集成
 

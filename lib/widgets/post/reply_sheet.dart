@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:fluxdo/widgets/markdown_editor/composer_submission_snapshot.dart';
 
 import '../markdown_editor/uploads/upload_task_labels.dart';
@@ -1135,15 +1137,16 @@ class _ReplySheetState extends ConsumerState<ReplySheet> {
     _richModeEnabled = ref.watch(preferencesProvider).useRichComposer;
     final theme = Theme.of(context);
 
-    // 使用 FractionallySizedBox 固定 0.95 高度
-    // SafeArea(bottom: false)：顶部安全区域由 SafeArea 处理，
-    // 底部安全区域由 ChatBottomPanelContainer 内部管理，避免双重底部间距
+    // 桌面直接约束弹层外壳，避免只缩编辑区后留下满屏空白。
+    // 按路由真实可用高度最多占 75%，高 DPI 普通窗口也要留出帖子背景。
+    // 移动端保留原有 95% 高度。
+    // 底部安全区域由 ChatBottomPanelContainer 管理，避免双重间距。
     // CallbackShortcuts 包整个弹层:Cmd/Ctrl+Enter 提交(对齐 Discourse
     // composer),焦点在标题输入框时同样生效;守卫与发送按钮一致。
     final sheet = SafeArea(
       bottom: false,
       child: FractionallySizedBox(
-        heightFactor: 0.95,
+        heightFactor: PlatformUtils.isDesktop ? 1 : 0.95,
         alignment: Alignment.bottomCenter,
         child: Scaffold(
           backgroundColor: Colors.transparent,
@@ -1381,7 +1384,16 @@ class _ReplySheetState extends ConsumerState<ReplySheet> {
             if (!_isSubmitting && !_isLoadingRaw) _submit();
           },
       },
-      child: sheet,
+      child: PlatformUtils.isDesktop
+          ? LayoutBuilder(
+              builder: (context, bounds) => ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: math.min(580.0, bounds.maxHeight * 0.75),
+                ),
+                child: sheet,
+              ),
+            )
+          : sheet,
     );
   }
 }

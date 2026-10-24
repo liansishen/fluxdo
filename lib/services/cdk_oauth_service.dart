@@ -1,3 +1,4 @@
+import 'site_context.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:html/parser.dart' as html_parser;
@@ -26,6 +27,7 @@ class CdkOAuthService {
   void cancelPendingRequests() => _session.cancel();
 
   Future<String> getAuthUrl() async {
+    if (!SiteContext.isLinuxDo) throw UnsupportedError('仅 LINUX DO 支持 CDK 授权');
     final response = await _dio.get(
       '$baseUrl/api/v1/oauth/login',
       options: Options(extra: {'skipCsrf': true}),
@@ -34,6 +36,7 @@ class CdkOAuthService {
   }
 
   Future<void> callback(String code, String state) async {
+    if (!SiteContext.isLinuxDo) throw UnsupportedError('仅 LINUX DO 支持 CDK 授权');
     // X-Requested-With: XMLHttpRequest 是 cdk.linux.do CSRF 校验的唯一依据,
     // 缺这个头服务端直接 403 "CSRF 验证失败"。
     // 实测最小集 = cookie + UA + content-type + X-Requested-With。
@@ -48,6 +51,7 @@ class CdkOAuthService {
   }
 
   Future<void> logout() async {
+    if (!SiteContext.isLinuxDo) return;
     cancelPendingRequests();
     await _dio.get(
       '$baseUrl/api/v1/oauth/logout',
@@ -59,6 +63,7 @@ class CdkOAuthService {
   Future<bool> reauthorize(BuildContext context) => authorize(context);
 
   Future<CdkUserInfo?> getUserInfo({String? expectedUsername}) async {
+    if (!SiteContext.isLinuxDo) return null;
     final data = await _session.getUserInfo(expectedUsername: expectedUsername);
     return CdkUserInfo.fromJson(data);
   }
@@ -70,6 +75,7 @@ class CdkOAuthService {
       : fallback;
 
   Future<bool> authorize(BuildContext context) async {
+    if (!SiteContext.isLinuxDo) return false;
     cancelPendingRequests();
     final String authUrl;
     try {
