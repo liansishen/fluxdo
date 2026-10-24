@@ -64,8 +64,14 @@ jobs:
       - name: Install Dart dependencies
         run: flutter pub get
 
+      - name: Resolve version
+        id: version
+        run: |
+          version=$(sed -n 's/^version: //p' pubspec.yaml | cut -d+ -f1)
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
       - name: Build unsigned IPA
-        run: dart tool/build_ipa_nosign.dart -y
+        run: dart tool/build_ipa_nosign.dart "${{ steps.version.outputs.value }}" -y
 
       - name: Verify native DOH library
         run: |

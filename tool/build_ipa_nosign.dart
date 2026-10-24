@@ -88,7 +88,7 @@ Future<String> _resolveVersion(List<String> args) async {
   }
 
   final pubspecVersion = _readVersionFromPubspec();
-  if (!_cliUi.canPrompt) {
+  if (_isCiEnvironment() || !_cliUi.canPrompt) {
     return pubspecVersion;
   }
 
@@ -96,7 +96,7 @@ Future<String> _resolveVersion(List<String> args) async {
     prompt: '输入 iOS 无签名 IPA 版本号',
     defaultValue: pubspecVersion,
   );
-  return selected?.trim() ?? '';
+  return selected?.trim() ?? pubspecVersion;
 }
 
 String _readVersionFromPubspec() {
@@ -127,3 +127,8 @@ const _usage = '''
 用法:
   dart tool/build_ipa_nosign.dart [版本号] [-y|--yes]
 ''';
+
+bool _isCiEnvironment() {
+  final ci = Platform.environment['CI']?.trim().toLowerCase();
+  return ci == '1' || ci == 'true';
+}
