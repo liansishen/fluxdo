@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:app_icons/app_icons.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../constants.dart';
 import 'network/cookie/cookie_jar_service.dart';
 import 'session/webview_use.dart';
@@ -300,9 +301,9 @@ class CfChallengeService {
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     visualDensity: VisualDensity.compact,
                   ),
-                  onPressed: () => Navigator.of(
-                    dialogContext,
-                  ).pop(_CompatPromptChoice.disableAutoVerify),
+                  onPressed: () =>
+                      Navigator.of(dialogContext)
+                          .pop(_CompatPromptChoice.disableAutoVerify),
                   child: Text(
                     S.current.cf_sessionCompatDisableAuto,
                     style: theme.textTheme.bodyMedium?.copyWith(
@@ -324,9 +325,9 @@ class CfChallengeService {
               ),
             ),
             FilledButton(
-              onPressed: () => Navigator.of(
-                dialogContext,
-              ).pop(_CompatPromptChoice.enableCompat),
+              onPressed: () =>
+                  Navigator.of(dialogContext)
+                      .pop(_CompatPromptChoice.enableCompat),
               child: Text(S.current.cf_sessionCompatEnable),
             ),
           ],
@@ -991,6 +992,7 @@ class _CfChallengePageState extends State<CfChallengePage> {
     _needsManualAttention = false;
     _snapshotInitialClearance();
     widget.signals.attachReader(_readFreshClearance);
+    widget.signals.attachCurrentReader(() => _readCookieValue('cf_clearance'));
   }
 
   /// 轮次定稿期间主动读值的入口：只返回与初始快照不同的新值。
@@ -1001,10 +1003,18 @@ class _CfChallengePageState extends State<CfChallengePage> {
 
   /// 同步记录备份旧值，再补充读取 WebView；慢快照可能已是新值，不能收录。
   Future<void> _snapshotInitialClearance() async {
+    // 备份的旧值最可靠，同步记下（读值入口可能在下面的 await 之前就被调用）
     final backup = widget.oldCfClearanceValue;
     if (backup != null && backup.isNotEmpty) {
       _initialCfClearances.add(backup);
+      debugPrint(
+        '[CfChallenge] 使用备份的旧 cf_clearance 作为初始快照 '
+        '(${backup.length} chars)',
+      );
     }
+
+    // 再读一次 WebView：它可能留着另一个旧值，也要记下（可能读不到，聊胜于无）。
+    // 读得太慢就不记：那时页面可能已经铸出新值，把新值当旧值会让验证永远等不到结果
     try {
       final stopwatch = Stopwatch()..start();
       final cookieValue = await _readCookieValue('cf_clearance');
@@ -1012,8 +1022,13 @@ class _CfChallengePageState extends State<CfChallengePage> {
         debugPrint('[CfChallenge] 快照读取过慢，不记录 WebView 中的 cf_clearance');
         return;
       }
-      if (cookieValue != null && cookieValue.isNotEmpty) {
-        _initialCfClearances.add(cookieValue);
+      if (cookieValue != null &&
+          cookieValue.isNotEmpty &&
+          _initialCfClearances.add(cookieValue)) {
+        debugPrint(
+          '[CfChallenge] ⚠️ 验证页加载时 WebView 仍存在旧 cf_clearance '
+          '(${cookieValue.length} chars)，将忽略该值',
+        );
       }
     } catch (e) {
       debugPrint('[CfChallenge] 快照 cf_clearance 失败: $e');
@@ -1023,6 +1038,7 @@ class _CfChallengePageState extends State<CfChallengePage> {
   @override
   void dispose() {
     widget.signals.attachReader(null);
+    widget.signals.attachCurrentReader(null);
     _pillDelayTimer?.cancel();
     _timeoutTimer?.cancel();
     _noChallengeCheckTimer?.cancel();
@@ -1950,8 +1966,7 @@ class _CfChallengePageState extends State<CfChallengePage> {
 
         try {
           final html = await controller.evaluateJavascript(
-            source:
-                'document.documentElement ? document.documentElement.innerHTML : ""',
+            source: 'document.documentElement ? document.documentElement.innerHTML : ""',
           );
           if (_hasPopped || !mounted || _handedOff) return;
           if (watcherGeneration != _revealStateWatchGeneration) return;
@@ -2161,8 +2176,7 @@ class _CfChallengePageState extends State<CfChallengePage> {
     if (generation != _loadGeneration) return;
     try {
       final html = await controller.evaluateJavascript(
-        source:
-            'document.documentElement ? document.documentElement.innerHTML : ""',
+        source: 'document.documentElement ? document.documentElement.innerHTML : ""',
       );
       if (_hasPopped ||
           !mounted ||

@@ -116,14 +116,6 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('底栏外观只保留布局开关，并说明玻璃效果统一在外观设置调整', (tester) async {
-    await pumpSettings(tester, bottomNav: true);
-    expect(find.byType(SwitchListTile), findsNWidgets(2));
-    expect(find.text('玻璃效果'), findsOneWidget);
-    expect(find.text('前往外观设置，统一调整底栏与编辑工具岛的玻璃效果。'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
   testWidgets('玻璃分组和底栏入口只在墨笺隐藏，Claude 仍可调整', (tester) async {
     for (final style in UiStyle.values) {
       for (final bottomNav in [false, true]) {

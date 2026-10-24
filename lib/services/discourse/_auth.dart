@@ -667,8 +667,7 @@ mixin _AuthMixin on _DiscourseServiceBase {
           handler.next(options);
         },
         onResponse: (response, handler) async {
-          final skipAuthCheck =
-              response.requestOptions.spec.skipAuthCheck;
+          final skipAuthCheck = response.requestOptions.spec.skipAuthCheck;
 
           final loggedOut = response.headers.value('discourse-logged-out');
           if (!skipAuthCheck &&
@@ -718,8 +717,7 @@ mixin _AuthMixin on _DiscourseServiceBase {
           handler.next(response);
         },
         onError: (error, handler) async {
-          final skipAuthCheck =
-              error.requestOptions.spec.skipAuthCheck;
+          final skipAuthCheck = error.requestOptions.spec.skipAuthCheck;
           final data = error.response?.data;
           debugPrint('[DIO] Error: ${error.response?.statusCode}');
 
@@ -1249,8 +1247,9 @@ mixin _AuthMixin on _DiscourseServiceBase {
         'jarTHash': _safeTokenHash(tToken),
         ..._sentTDiagnostics(response.requestOptions),
       });
-      return _recoverOrLogoutAfterStartupCheck(
-        triggerInfo: 'GET /session/current.json → ${response.statusCode} 无 current_user',
+      return await _recoverOrLogoutAfterStartupCheck(
+        triggerInfo:
+            'GET /session/current.json → ${response.statusCode} 无 current_user',
         signalRequestOptions: response.requestOptions,
         storedUsername: username,
         jarTToken: tToken,

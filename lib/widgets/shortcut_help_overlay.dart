@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:app_icons/app_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../l10n/s.dart';
 import '../models/shortcut_binding.dart';
 import '../providers/shortcut_provider.dart';
@@ -107,9 +108,14 @@ class _ShortcutHelpDialogState extends State<_ShortcutHelpDialog> {
                             for (var i = 0; i < columns.length; i++) ...[
                               Expanded(
                                 child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
                                   children: [
-                                    for (var j = 0; j < columns[i].length; j++) ...[
+                                    for (
+                                      var j = 0;
+                                      j < columns[i].length;
+                                      j++
+                                    ) ...[
                                       if (j != 0) const SizedBox(height: 16),
                                       _ShortcutCategoryCard(
                                         title: columns[i][j].title,
@@ -119,7 +125,8 @@ class _ShortcutHelpDialogState extends State<_ShortcutHelpDialog> {
                                   ],
                                 ),
                               ),
-                              if (i != columns.length - 1) const SizedBox(width: 16),
+                              if (i != columns.length - 1)
+                                const SizedBox(width: 16),
                             ],
                           ],
                         ),
@@ -168,7 +175,9 @@ class _ShortcutSearchField extends StatelessWidget {
                 icon: const Icon(Symbols.close_rounded, size: 18),
               ),
         filled: true,
-        fillColor: theme.colorScheme.surfaceContainerLow.withValues(alpha: 0.92),
+        fillColor: theme.colorScheme.surfaceContainerLow.withValues(
+          alpha: 0.92,
+        ),
         isDense: true,
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 14,
@@ -395,7 +404,8 @@ List<_ShortcutGroup> _buildGroups(
 }) {
   final normalizedQuery = query.trim().toLowerCase();
   final groupedBindings = <ShortcutCategory, List<ShortcutBinding>>{
-    for (final category in ShortcutCategory.values) category: <ShortcutBinding>[],
+    for (final category in ShortcutCategory.values)
+      category: <ShortcutBinding>[],
   };
 
   for (final binding in bindings) {
@@ -434,6 +444,20 @@ List<_ShortcutGroup> _buildGroups(
             label: l10n.shortcuts_composerSubmit,
             activator: composerSubmitActivators().first,
           ),
+          // 撤销/恢复:键位由框架(源码模式)与编辑器内核(富文本)
+          // 各自实现,不在 spec 表里,这里单独列出
+          _ShortcutEntry(
+            label: l10n.toolbar_undo,
+            activator: composerHistoryActivators()['undo']!,
+          ),
+          _ShortcutEntry(
+            label: l10n.toolbar_redo,
+            activator: composerHistoryActivators()['redo']!,
+          ),
+          _ShortcutEntry(
+            label: l10n.composer_quickPanel,
+            activator: composerQuickPanelActivator(),
+          ),
           for (final spec in buildComposerShortcutSpecs())
             _ShortcutEntry(label: spec.label(l10n), activator: spec.activator),
         ],
@@ -442,12 +466,7 @@ List<_ShortcutGroup> _buildGroups(
       );
       return entries.isEmpty
           ? const <_ShortcutGroup>[]
-          : [
-              _ShortcutGroup(
-                title: l10n.shortcuts_composer,
-                entries: entries,
-              ),
-            ];
+          : [_ShortcutGroup(title: l10n.shortcuts_composer, entries: entries)];
     }(),
   ];
 }
@@ -463,17 +482,19 @@ List<_ShortcutEntry> _filterEntries(
     return List.unmodifiable(entries);
   }
 
-  return List.unmodifiable(entries.where((entry) {
-    final actionLabel = entry.label.toLowerCase();
-    final keyLabel =
-        ShortcutBinding.formatActivator(entry.activator).toLowerCase();
-    final keyParts = ShortcutBinding.formatActivatorParts(entry.activator)
-        .join(' ')
-        .toLowerCase();
-    return actionLabel.contains(query) ||
-        keyLabel.contains(query) ||
-        keyParts.contains(query);
-  }));
+  return List.unmodifiable(
+    entries.where((entry) {
+      final actionLabel = entry.label.toLowerCase();
+      final keyLabel = ShortcutBinding.formatActivator(entry.activator)
+          .toLowerCase();
+      final keyParts = ShortcutBinding.formatActivatorParts(entry.activator)
+          .join(' ')
+          .toLowerCase();
+      return actionLabel.contains(query) ||
+          keyLabel.contains(query) ||
+          keyParts.contains(query);
+    }),
+  );
 }
 
 List<List<_ShortcutGroup>> _buildMasonryColumns(

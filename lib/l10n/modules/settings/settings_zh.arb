@@ -113,6 +113,8 @@
   "preferences_exitOnSingleBackDesc": "在首页返回时直接退出并使用系统预测退出动画；关闭时需连续返回两次",
   "preferences_hideBarOnScroll": "滚动收起导航栏",
   "preferences_hideBarOnScrollDesc": "首页滚动时自动收起顶栏和底栏",
+  "preferences_autoLoadTopicUpdates": "自动载入新话题",
+  "preferences_autoLoadTopicUpdatesDesc": "列表停在顶部时自动载入新话题，往下浏览时只显示提示条",
   "preferences_longPressPreview": "长按预览",
   "preferences_longPressPreviewDesc": "长按话题卡片快速预览内容",
   "preferences_openLinksInApp": "外部链接使用内置浏览器",
@@ -220,5 +222,9 @@
   "shortcuts_switchToTopics": "切换到话题",
   "shortcuts_toggleAiPanel": "AI 助手面板",
   "shortcuts_toggleNotifications": "通知面板",
-  "shortcuts_topic": "话题"
+  "shortcuts_topic": "话题",
+  "preferences_crashlytics": "崩溃日志上报",
+  "preferences_crashlyticsDesc": "发生崩溃时自动上报日志，帮助开发者定位问题",
+  "preferences_enableCrashlyticsContent": "本应用使用 Firebase Crashlytics 收集崩溃信息以改进应用稳定性。\n\n收集的数据包括设备信息和崩溃详情，不包含个人隐私数据。您可以在设置中关闭此功能。",
+  "preferences_enableCrashlyticsTitle": "数据收集说明"
 }

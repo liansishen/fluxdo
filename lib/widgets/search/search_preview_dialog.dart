@@ -3,6 +3,7 @@ import 'package:app_icons/app_icons.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
+
 import '../../l10n/s.dart';
 import '../../models/category.dart';
 import '../../models/search_result.dart';
@@ -41,6 +42,7 @@ class SearchPreviewDialog extends ConsumerWidget {
     required SearchPost post,
     VoidCallback? onOpen,
     BuildContext? sourceContext,
+
     Color? anchorColor,
     double anchorRadius = 10,
   }) {
@@ -48,6 +50,7 @@ class SearchPreviewDialog extends ConsumerWidget {
     return showMorphingPreviewDialog(
       context,
       sourceContext: sourceContext,
+
       anchorColor: anchorColor,
       anchorRadius: anchorRadius,
       builder: (context) =>

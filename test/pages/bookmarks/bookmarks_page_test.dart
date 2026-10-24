@@ -229,10 +229,7 @@ void main() {
   void keepClockAlive() {}
 
   setUpAll(() => RelativeTimeClock.instance.addListener(keepClockAlive));
-  tearDownAll(
-    () => RelativeTimeClock.instance.removeListener(keepClockAlive),
-  );
-
+  tearDownAll(() => RelativeTimeClock.instance.removeListener(keepClockAlive));
   _testPage('工作区会复用同一话题标签并在关闭后回到书签页', (tester) async {
     PlatformUtils.debugDesktopOverride = true;
     addTearDown(() => PlatformUtils.debugDesktopOverride = null);

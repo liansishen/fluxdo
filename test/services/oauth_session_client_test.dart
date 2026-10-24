@@ -231,7 +231,6 @@ void main() {
         expect(after.maxAge, before.maxAge);
         onlyUserInfoRequests();
       });
-
       test('业务 401 直接报告过期，不发起自动重新授权', () async {
         adapter.status = 401;
         await expectLater(

@@ -13,6 +13,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../services/message_bus_service.dart';
 import '../../utils/time_utils.dart';
+import '../category_provider.dart';
 import '../discourse_providers.dart';
 import 'message_bus_service_provider.dart';
 import 'topic_tracking_providers.dart';

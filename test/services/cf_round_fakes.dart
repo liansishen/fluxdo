@@ -71,8 +71,10 @@ class FakeRoundEnvironment implements CfRoundEnvironment {
   /// 权威闸门是否采纳落值。
   bool gateAccepts = true;
 
-  /// 模拟只能落 WebView 当前值，以及落值中站点再次签值。
+  /// 像真实落值一样：只收 WebView 里当前那枚值（acceptValues 口径）
   bool landOnlyCurrentWebView = false;
+
+  /// 落值开始时回调（模拟落值期间站点又签了新值）
   void Function(String value)? onLand;
 
   /// App 侧 jar 里的 cf_clearance。
@@ -80,6 +82,9 @@ class FakeRoundEnvironment implements CfRoundEnvironment {
 
   /// 验证 WebView 里当前的 cf_clearance。
   String? webView;
+
+  /// 验证开始前 WebView 里就有的值：真实验证页会把它和 jar 备份一起当旧值
+  String? staleWebView;
 
   final List<String> calls = [];
   final List<int> recordedFailures = [];
@@ -133,8 +138,11 @@ class FakeRoundEnvironment implements CfRoundEnvironment {
     // 像验证页一样：只把与旧值不同的值当作新值
     round.attachReader(() async {
       final value = webView;
-      return value != null && value != backup ? value : null;
+      return value != null && value != backup && value != staleWebView
+          ? value
+          : null;
     });
+    round.attachCurrentReader(() async => webView);
     return true;
   }
 

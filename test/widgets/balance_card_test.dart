@@ -19,6 +19,7 @@ import 'package:fluxdo/providers/cdk_providers.dart';
 import 'package:fluxdo/providers/ldc_providers.dart';
 import 'package:fluxdo/services/local_notification_service.dart';
 import 'package:fluxdo/services/network/exceptions/oauth_exception.dart';
+
 import 'package:fluxdo/widgets/cdk_balance_card.dart';
 import 'package:fluxdo/widgets/common/balance_card_action_button.dart';
 import 'package:fluxdo/widgets/common/balance_card_cf_action.dart';
@@ -84,6 +85,7 @@ Widget _app(ProviderContainer container, Widget child) {
     child: TranslationProvider(
       child: MaterialApp(
         navigatorKey: navigatorKey,
+
         locale: const Locale('zh'),
         supportedLocales: AppLocaleUtils.supportedLocales,
         localizationsDelegates: const [
@@ -156,7 +158,10 @@ void main() {
         if (layout != 'mojian' && layout != 'claude') return balanceCard;
         final theme = layout == 'mojian'
             ? MojianTheme.build(
-                scheme: MojianTheme.colorScheme(Brightness.light, MojianAccent.cinnabar),
+                scheme: MojianTheme.colorScheme(
+                  Brightness.light,
+                  MojianAccent.cinnabar,
+                ),
                 accent: MojianAccent.cinnabar,
                 fontFamily: 'UserFont',
                 pageTransitionsTheme: const PageTransitionsTheme(),

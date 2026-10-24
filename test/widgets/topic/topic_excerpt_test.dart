@@ -68,6 +68,15 @@ void main() {
   });
   tearDown(() => TopicCardStyleScope.current = TopicCardStyle.defaults);
 
+  ThemeData mojianTheme() => MojianTheme.build(
+    scheme: MojianTheme.colorScheme(Brightness.light, MojianAccent.cinnabar),
+    accent: MojianAccent.cinnabar,
+    fontFamily: null,
+    pageTransitionsTheme: const PageTransitionsTheme(),
+    iconTheme: const IconThemeData(),
+    primaryIconTheme: const IconThemeData(),
+  );
+
   Widget app(Widget child, {double scale = 1, ThemeData? theme}) =>
       ProviderScope(
         overrides: [
@@ -260,6 +269,51 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('墨笺摘要夹在自绘标题与元信息之间且能展开', (tester) async {
+    const style = TopicCardStyle(showExcerpt: true, maxCollapsedLines: 2);
+    await prefs.setString('pref_topic_card_style', style.toJsonString());
+    TopicCardStyleScope.current = style;
+    var taps = 0;
+    final longExcerpt = List.filled(40, '墨笺列表的长摘要').join(' ');
+    await tester.pumpWidget(
+      app(
+        Builder(
+          builder: (context) => buildTopicItem(
+            context: context,
+            topic: _topic(1, excerpt: longExcerpt),
+            isSelected: false,
+            onTap: () => taps++,
+            enableLongPress: false,
+            categoryMap: const {},
+          ),
+        ),
+        theme: mojianTheme(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final painted = find.byType(PaintedTopicCard);
+    expect(painted, findsOneWidget);
+    expect(find.byType(TopicCard), findsNothing);
+    expect(
+      find.descendant(
+        of: painted,
+        matching: find.byType(TopicExpandableExcerpt),
+      ),
+      findsOneWidget,
+    );
+    final collapsed = tester.getSize(painted).height;
+    // 展开按钮仍可交互，摘要撑高自绘行而不触发话题跳转。
+    await tester.tap(find.text('查看更多'));
+    await tester.pumpAndSettle();
+    expect(tester.getSize(painted).height, greaterThan(collapsed));
+    expect(taps, 0);
+    await tester.tapAt(tester.getTopLeft(painted) + const Offset(40, 30));
+    await tester.pump();
+    expect(taps, 1);
+    expect(api.pending, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('即使三个开关均开启，私信仍保持原布局且不请求首楼', (tester) async {
     const style = TopicCardStyle(
       showExcerpt: true,
@@ -418,9 +472,9 @@ void main() {
     );
     await tester.pumpAndSettle();
     final toggle = find.widgetWithText(SwitchListTile, '允许额外请求');
-    bool savedValue() => TopicCardStyle.fromJsonString(
-      prefs.getString('pref_topic_card_style'),
-    ).allowExcerptFetch;
+    bool savedValue() =>
+        TopicCardStyle.fromJsonString(prefs.getString('pref_topic_card_style'))
+            .allowExcerptFetch;
 
     await revealSetting(tester, toggle);
     await tester.pumpAndSettle();

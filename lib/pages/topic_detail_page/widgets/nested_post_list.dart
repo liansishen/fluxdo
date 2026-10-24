@@ -559,7 +559,7 @@ class _NestedPostListState extends ConsumerState<NestedPostList> {
                         alignment: AlignmentDirectional.centerStart,
                         child: TextButton.icon(
                           key: const ValueKey('nested-resume-reading'),
-                          icon: const Icon(Icons.history_rounded),
+                          icon: const Icon(Symbols.history_rounded),
                           onPressed: widget.onResume,
                           label: Text(
                             context.l10n.nested_resumeReading(

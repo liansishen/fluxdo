@@ -1,18 +1,22 @@
 import '../services/site_context.dart';
+
 import 'package:flutter/material.dart';
 import 'package:app_icons/app_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../providers/core_providers.dart';
 import '../providers/ldc_providers.dart';
 import '../pages/webview_page.dart';
 import '../services/network/exceptions/oauth_exception.dart';
 import '../utils/number_utils.dart';
+
 import 'package:m3e_ui/m3e_ui.dart';
+
 import '../l10n/s.dart';
 import '../theme/mojian_theme.dart';
-import 'common/mojian_ledger_card.dart';
 import 'common/balance_card_action_button.dart';
 import 'common/balance_card_cf_action.dart';
+import 'common/mojian_ledger_card.dart';
 
 class LdcBalanceCard extends ConsumerWidget {
   static const String _homeUrl = 'https://credit.linux.do/home';
@@ -451,7 +455,8 @@ class LdcBalanceCard extends ConsumerWidget {
     final isBusy = isProcessing || ref.watch(ldcUserInfoProvider).isLoading;
     final canReauthorize = isExpired && onReauthorize != null;
 
-    Widget actionButton({bool filled = false, bool outlined = false}) => isCfChallenge
+    Widget actionButton({bool filled = false, bool outlined = false}) =>
+        isCfChallenge
         ? BalanceCardCfAction(
             businessUrl: 'https://credit.linux.do',
             outlined: outlined,
@@ -607,10 +612,14 @@ class LdcBalanceCard extends ConsumerWidget {
     if (mj != null) {
       // 墨笺:账本卡;过期时框线与状态字用错误色
       return MojianLedgerCard(
-        icon: isCfChallenge ? Symbols.shield_rounded : isExpired ? Symbols.lock_clock_rounded : Symbols.error_rounded,
+        icon: isCfChallenge
+            ? Symbols.shield_rounded
+            : isExpired
+            ? Symbols.lock_clock_rounded
+            : Symbols.error_rounded,
         title: 'LINUX DO Credits',
         danger: isExpired,
-        trailing: onDisable != null
+        trailing: onDisable != null && !isBusy
             ? MojianLedgerCard.powerButton(mj, onDisable!)
             : null,
         children: [
@@ -623,7 +632,11 @@ class LdcBalanceCard extends ConsumerWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            isCfChallenge ? S.current.cf_operationBlockedByChallenge : isExpired ? S.current.ldc_reAuthHint : S.current.common_checkNetworkRetry,
+            isCfChallenge
+                ? S.current.cf_operationBlockedByChallenge
+                : isExpired
+                ? S.current.ldc_reAuthHint
+                : S.current.common_checkNetworkRetry,
             style: theme.textTheme.bodyMedium?.copyWith(color: mj.ink3),
           ),
           const SizedBox(height: 14),

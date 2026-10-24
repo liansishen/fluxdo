@@ -52,6 +52,9 @@ class _SystemTimer implements CfRoundTimer {
 /// 没有新值返回 null（旧值过滤由验证页负责，它知道哪枚是残留）。
 typedef CfFreshClearanceReader = Future<String?> Function();
 
+/// 读 WebView 当前 cf_clearance，不管是不是验证开始前就有的旧值。
+typedef CfCurrentClearanceReader = Future<String?> Function();
+
 /// 验证页上报给轮次的原始信号。
 ///
 /// 页面只报告看到了什么，不再自己判定「完成」：此前四个完成出口各有一套
@@ -62,13 +65,17 @@ abstract interface class CfVerificationSignals {
   /// 挂上（或摘下）读取 WebView 新值的入口；定稿期间轮次会主动轮询它。
   void attachReader(CfFreshClearanceReader? reader);
 
+  /// 挂上（或摘下）读取 WebView 当前值（含旧值）的入口：网络层确认通过、
+  /// 却一直没有新值时用它兜底（见 [CfVerificationRound.conclusiveGrace]）。
+  void attachCurrentReader(CfCurrentClearanceReader? reader);
+
   /// 页面读到一枚新值（[source] 只用于日志）。
   void clearanceSeen(String value, {required String source});
 
   /// 完成迹象：挑战脚本拿到放行响应、页面离开挑战、`/challenge` 落到源站等。
   ///
   /// [conclusive] 表示网络层已确认通过（`/challenge` 返回源站 404 且不带
-  /// cf-mitigated）：此后在限期内必须定稿，读不到新值按 notLanded 收口。
+  /// cf-mitigated）：先等新值，宽限后尝试落 WebView 现值，仍无法落值才按 notLanded 收口。
   void completionHint(String reason, {bool conclusive = false});
 
   /// 页面露出了可交互的挑战（说明网络是通的）。
@@ -97,11 +104,11 @@ abstract interface class CfVerificationSignals {
 
 /// 一轮验证的定稿与落值。
 ///
-/// **唯一定稿规则**：页面上报（或轮次自己从 WebView 读到）的最新新值，
-/// 连续 [settleWindow]（1.5 秒）没有再变，才算定稿；定稿后经
-/// [landing]（BoundarySync + 权威闸门）写进 jar 并读回确认，确认后才以
-/// [CfRoundPassed] 收口。所有完成迹象都只是让轮次更积极地去读值，
-/// 不能单独让一轮通过。
+/// **定稿规则**：页面上报（或轮次自己从 WebView 读到）的最新新值，
+/// 连续 [settleWindow]（1.5 秒）没有再变，才算定稿；网络层确认源站 404
+/// 且 [conclusiveGrace] 内没有新值时，改用 WebView 现值交给请求重放。
+/// 两条路径都必须经 [landing]（BoundarySync + 权威闸门）写进 jar 并读回
+/// 确认，确认后才以 [CfRoundPassed] 收口；完成迹象本身不能让一轮通过。
 ///
 /// 1.5 秒的来由：挑战脚本拿到放行响应后还要跳转/补最后一步，这时立刻收口
 /// 会拿到一枚对 Dio 无效的半成品（2026-10-13 实测：放行响应 0.6 秒后
@@ -114,6 +121,7 @@ class CfVerificationRound implements CfVerificationSignals {
     this.settleWindow = const Duration(milliseconds: 1500),
     this.probeInterval = const Duration(milliseconds: 250),
     this.completionDeadline = const Duration(seconds: 8),
+    this.conclusiveGrace = const Duration(seconds: 3),
     this.landingAttempts = 3,
     this.landingRetryDelay = const Duration(milliseconds: 500),
   }) : _landing = landing,
@@ -130,6 +138,14 @@ class CfVerificationRound implements CfVerificationSignals {
   /// 完成迹象出现后最多等多久见到新值（与验证页完成探测的 8 秒一致）。
   final Duration completionDeadline;
 
+  /// 网络层确认通过后等新值的宽限。过了还没有新值，说明这次根本没有下发
+  /// 挑战（`/challenge` 直接落到源站 404，WebView 现有的值本来就有效）：
+  /// 把 WebView 现有的值落进 jar 交给重放。jar 里原来就是这枚而重放仍被拦，
+  /// 由调用方按「验证通过但对 Dio 无效」处理（冷却、询问改用浏览器网络栈），
+  /// 不再每次白等 [completionDeadline] 再按 notLanded 计失败、反复弹验证。
+  /// 宽限期内仍优先等新值：CF 常在挑战提交和 /challenge 跳转各签一次。
+  final Duration conclusiveGrace;
+
   /// 落值确认的尝试次数与间隔（取代各调用方「等 1.5 秒 → 同步 → 重试
   /// 3×500ms」的配方）。
   final int landingAttempts;
@@ -140,6 +156,8 @@ class CfVerificationRound implements CfVerificationSignals {
   final Completer<CfRoundOutcome> _completer = Completer<CfRoundOutcome>();
 
   CfFreshClearanceReader? _reader;
+  CfCurrentClearanceReader? _currentReader;
+  bool _triedCurrentValue = false;
   String? _pendingValue;
   DateTime? _pendingSince;
 
@@ -172,6 +190,11 @@ class CfVerificationRound implements CfVerificationSignals {
   @override
   void attachReader(CfFreshClearanceReader? reader) {
     _reader = reader;
+  }
+
+  @override
+  void attachCurrentReader(CfCurrentClearanceReader? reader) {
+    _currentReader = reader;
   }
 
   @override
@@ -315,12 +338,29 @@ class CfVerificationRound implements CfVerificationSignals {
 
     final conclusiveAt = _conclusiveAt;
     if (conclusiveAt != null &&
+        !_triedCurrentValue &&
+        now.difference(conclusiveAt) >= conclusiveGrace) {
+      _triedCurrentValue = true;
+      final current = await _readCurrent();
+      if (isDone || _landingInProgress) return;
+      if (current != null && _pendingValue == null) {
+        CfChallengeLogger.log(
+          '[ROUND $id] conclusive pass without a fresh cf_clearance after '
+          '${conclusiveGrace.inSeconds}s; no challenge was issued, landing the '
+          'current WebView value (${current.length} chars)',
+          level: 'warning',
+        );
+        await _land(current);
+        return;
+      }
+    }
+    if (conclusiveAt != null &&
         now.difference(conclusiveAt) >= completionDeadline) {
-      // 网络层已确认通过，却始终读不到新值：值没法交给请求用
+      // 网络层已确认通过，但新值和现值都无法交给请求用。
       _complete(
         CfRoundFailed(round: id, reason: CfRoundFailure.notLanded),
         detail:
-            'no fresh cf_clearance within '
+            'no usable cf_clearance within '
             '${completionDeadline.inSeconds}s after conclusive pass',
       );
       return;
@@ -357,13 +397,19 @@ class CfVerificationRound implements CfVerificationSignals {
         '(jar=${inJar?.length ?? 0} chars)',
         level: 'warning',
       );
-      // 站点可能在后续跳转再次签值；只允许换一次，且仍须确认目标值进入 jar。
+      // 定稿后站点又签了一枚（CF 常在挑战提交和随后的 /challenge 跳转各签一次，
+      // 第二枚晚到时定稿窗口已过）：落值只收 WebView 现有的那枚，死等旧值必败。
+      // 改落最新值、重新计次，只换一次，免得来回换卡住
       if (!switched) {
         final latest = await _readLatest();
         if (isDone) return;
         if (latest != null &&
             !CfClearanceAuthority.isSameValue(latest, value)) {
           switched = true;
+          CfChallengeLogger.log(
+            '[ROUND $id] cf_clearance changed during landing '
+            '(${latest.length} chars), landing the newer value',
+          );
           value = latest;
           _pendingValue = latest;
           attempt = 0;
@@ -379,7 +425,20 @@ class CfVerificationRound implements CfVerificationSignals {
     );
   }
 
-  /// 读取入口已过滤本轮旧值；读不到或读取失败时继续原目标的有限重试。
+  /// 读 WebView 当前值，不论新旧（读不到 / 出错返回 null）
+  Future<String?> _readCurrent() async {
+    final reader = _currentReader;
+    if (reader == null) return null;
+    try {
+      final value = (await reader())?.trim();
+      return value == null || value.isEmpty ? null : value;
+    } catch (e) {
+      debugPrint('[CfRound] 读取 WebView 当前 cf_clearance 失败: $e');
+      return null;
+    }
+  }
+
+  /// 落值期间读一次 WebView 当前的新值（读不到 / 出错返回 null）
   Future<String?> _readLatest() async {
     final reader = _reader;
     if (reader == null) return null;

@@ -359,10 +359,7 @@ class _MojianNavFramePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.drawRect(
-      Rect.fromLTWH(0, 0, size.width, 1),
-      Paint()..color = rule,
-    );
+    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, 1), Paint()..color = rule);
     if (count <= 0 || selectedIndex < 0 || selectedIndex >= count) return;
     // NavigationBar 把各项等分整条宽度
     final slot = size.width / count;
@@ -570,6 +567,34 @@ class _AdaptiveBottomNavigationState
 /// - 外边距/内边距对齐 Telegram（iOS `TabBarComponent` innerInset 4、
 ///   sideInset 12；Android `MainTabsActivity` inset ≈4、距导航栏 8）。
 abstract final class _CapsuleMetrics {
+  /// 选中 pill 的最大横向拉伸比例（18%）
+  static const double maxStretch = 0.18;
+
+  /// 达到最大拉伸所需的速度（槽位/秒）
+  static const double fullStretchSlotsPerSecond = 8;
+
+  /// pill 随速度的横向拉伸量。
+  ///
+  /// 快速连点时 pill 被“拉长”，停下来恢复原形 —— 这是悬浮底栏
+  /// 最显著的动态特征，比单纯平移多一层“有质量”的手感。
+  static double stretchFor(double slotsPerSecond) =>
+      (slotsPerSecond.abs() / fullStretchSlotsPerSecond * maxStretch).clamp(
+        0.0,
+        maxStretch,
+      );
+
+  /// 拉伸的变换原点（0=左缘，0.5=居中，1=右缘）。
+  ///
+  /// 原点朝运动方向偏移：向右飞时钉住右端、尾巴向左拖出，形成
+  /// “被甩在后面”的观感。固定居中的话两端均匀外撑，只像变胖。
+  /// 限幅 0.15~0.85：完全钉到端点会让回弹显得生硬。
+  static double stretchOriginX(double slotsPerSecond, double stretch) {
+    if (stretch <= 0 || slotsPerSecond == 0) return 0.5;
+    final direction = slotsPerSecond > 0 ? 1.0 : -1.0;
+    final normalized = (stretch / maxStretch).clamp(0.0, 1.0);
+    return (0.5 + direction * normalized * 0.35).clamp(0.15, 0.85);
+  }
+
   /// 带字态 item 基准高
   static const double itemHeightLabeled = 48;
 
@@ -629,9 +654,8 @@ abstract final class _CapsuleMetrics {
   /// 行高补偿。缩放 ≤1 时恒为基准值，不影响默认观感。
   static double itemHeight(BuildContext context, {required bool labelless}) {
     if (labelless) return itemHeightLabelless;
-    final scaled = MediaQuery.textScalerOf(
-      context,
-    ).scale(labelSize * labelHeight);
+    final scaled = MediaQuery.textScalerOf(context)
+        .scale(labelSize * labelHeight);
     final natural = iconTop + iconSize + iconGap + scaled + labelBottom;
     return math.max(itemHeightLabeled, natural);
   }
@@ -753,7 +777,9 @@ class _FloatingBottomBarShell extends StatelessWidget {
             maxWidth,
           );
           return Padding(
-            padding: const EdgeInsets.only(bottom: _CapsuleMetrics.bottomMargin),
+            padding: const EdgeInsets.only(
+              bottom: _CapsuleMetrics.bottomMargin,
+            ),
             child: Align(
               // 槽位约束是 looseConstraints.tighten(width)：maxHeight 几乎
               // 是整个页面高，Expand 类组件（Center）会把胶囊顶到屏幕中间。
@@ -870,7 +896,8 @@ class _CapsuleNavBarState extends State<_CapsuleNavBar>
             final slot = constraints.maxWidth / count;
             return Stack(
               children: [
-                // 滑动选中 pill：铺满整个条目槽位，位置弹簧插值
+                // 滑动选中 pill：铺满整个条目槽位，位置弹簧插值，
+                // 并随弹簧速度横向拉伸（详见 _CapsuleMetrics.stretchFor）
                 AnimatedBuilder(
                   animation: _position,
                   builder: (context, _) {
@@ -879,16 +906,29 @@ class _CapsuleNavBarState extends State<_CapsuleNavBar>
                       0.0,
                       (count - 1).toDouble(),
                     );
+                    // velocity 单位已经是「槽位/秒」，与拉伸公式同量纲
+                    final velocity = _position.velocity;
+                    final stretch = _CapsuleMetrics.stretchFor(velocity);
+                    final originX = _CapsuleMetrics.stretchOriginX(
+                      velocity,
+                      stretch,
+                    );
                     return Positioned(
                       left: slot * pos,
                       top: 0,
                       width: slot,
                       height: widget.itemHeight,
                       child: IgnorePointer(
-                        child: DecoratedBox(
-                          decoration: ShapeDecoration(
-                            color: pillColor,
-                            shape: const StadiumBorder(),
+                        child: Transform(
+                          // 只横向拉伸；纵向不动（纵向一起缩会变成「弹性
+                          // 球」，而不是「被甩在后面的拖尾」）
+                          transform: Matrix4.diagonal3Values(1 + stretch, 1, 1),
+                          alignment: Alignment(originX * 2 - 1, 0),
+                          child: DecoratedBox(
+                            decoration: ShapeDecoration(
+                              color: pillColor,
+                              shape: const StadiumBorder(),
+                            ),
                           ),
                         ),
                       ),

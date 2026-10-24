@@ -253,6 +253,7 @@ class LoggerUtils {
       );
     }
 
+    // 网络引擎计数（建连 / 握手 / 连接复用 / 等待），看连接效率
     final netStats = DohProxyService.instance.netStats();
     if (netStats != null) {
       lines.add('引擎: ${netStatsSummary(netStats)}');

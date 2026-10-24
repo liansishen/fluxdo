@@ -87,4 +87,22 @@ console.log(Buffer.concat(state.chunks).toString('base64'));
     expect(sends, 1);
   });
 
+  test('适配器上传接线复用能力查询并在读取流前选定协议', () {
+    final source = File(
+      'lib/services/network/adapters/webview_http_adapter.dart',
+    ).readAsStringSync();
+    final start = source.indexOf('Future<String?> _buildStreamedBodyScript(');
+    final end = source.indexOf('Future<String?> _buildDirectBodyScript', start);
+    final body = source.substring(start, end);
+    expect(
+      body.indexOf('_responseTransport.usesBase64()'),
+      lessThan(body.indexOf('transferStarted = true')),
+    );
+    expect(body, contains('WebViewRequestCodec.pipe('));
+    expect(source, contains(r'${WebViewRequestCodec.receiverScript}'));
+    expect(
+      body,
+      contains("transferStarted ? 'transfer_failed' : 'bridge_fallback'"),
+    );
+  });
 }

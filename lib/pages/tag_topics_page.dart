@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:app_icons/app_icons.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../models/topic.dart';
 import '../providers/discourse_providers.dart';
 import '../providers/selected_topic_provider.dart';
@@ -22,7 +23,9 @@ import '../widgets/common/error_view.dart';
 import 'topic_detail_page/topic_detail_page.dart';
 import 'search_page.dart';
 import '../models/search_filter.dart';
+
 import 'package:dio/dio.dart';
+
 import '../services/app_error_handler.dart';
 import '../l10n/s.dart';
 import '../widgets/desktop_refresh_indicator.dart';
@@ -127,7 +130,20 @@ class _TagTopicsPageState extends ConsumerState<TagTopicsPage>
     super.dispose();
   }
 
+  @override
+  bool get canAutoApplyTopicUpdates =>
+      !_isLoading &&
+      !_isLoadingMore &&
+      TopicListUpdatesMixin.scrolledToTop(_scrollController);
+
+  @override
+  Future<void> applyTopicUpdates() => _showTopicUpdates();
+
   void _onScroll() {
+    // 回到顶部时把攒着的新话题自动载入（开关打开时）
+    if (_scrollController.position.pixels <= 1) {
+      scheduleAutoApplyTopicUpdates();
+    }
     final distance =
         _scrollController.position.maxScrollExtent -
         _scrollController.position.pixels;

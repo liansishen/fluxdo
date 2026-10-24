@@ -1,4 +1,5 @@
 import '../../site_context.dart';
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -279,6 +280,7 @@ class NetworkSettingsService {
   static const selectNoticeVersionKey = 'doh_select_notice_version';
 
   /// atlas（CF 橙云入口）的路由表接口，只回源 hk2，表按线路选池
+  static const _linuxDoHost = 'linux.do';
   static const _atlasHost = 'atlas.1molchuan.top';
   static const accelAtlasRoutesUrl = 'https://$_atlasHost/v1/routes';
 
@@ -474,9 +476,11 @@ class NetworkSettingsService {
   /// 是否已读过网络偏好；启动 VPN 检查据此决定直接写偏好还是应用运行态设置。
   bool get isInitialized => _prefs != null;
 
+  /// 初始化之前读取 DoH 开关，供 VPN 自动压制使用。
   static bool storedDohEnabled(SharedPreferences prefs) =>
       prefs.getBool(_dohEnabledKey) ?? true;
 
+  /// 初始化之前写入 DoH 开关，避免先启动代理再压制。
   static Future<void> storeDohEnabled(SharedPreferences prefs, bool enabled) =>
       prefs.setBool(_dohEnabledKey, enabled);
 
@@ -1006,7 +1010,7 @@ class NetworkSettingsService {
         networkSig: ConnectivityService().networkSignature.value,
         // 仅为当前站点中 Selector 已覆盖的主机预连，不扩大优选覆盖集合。
         preconnectHosts: selectorEligible && SiteContext.isLinuxDo
-            ? const ['linux.do']
+            ? const [_linuxDoHost]
             : const [],
       );
 
@@ -1605,9 +1609,8 @@ class NetworkSettingsService {
       if (hostOrder != 0) {
         return hostOrder;
       }
-      return _dnsCacheRecordKindOrder(
-        a.kind,
-      ).compareTo(_dnsCacheRecordKindOrder(b.kind));
+      return _dnsCacheRecordKindOrder(a.kind)
+          .compareTo(_dnsCacheRecordKindOrder(b.kind));
     });
     return records;
   }

@@ -74,7 +74,9 @@ abstract final class ImageSaveUtils {
         return false;
       }
       if (defaultTargetPlatform == TargetPlatform.android) {
-        // Android 字节接口猜格式可能丢失实际容器；原始文件保留动画帧。
+        // Android 的 bytes 接口依赖 Commons Imaging 猜格式，无法识别
+        // 部分动图的实际容器（如 .gif URL 返回 AVIF）。文件接口直接复制
+        // 原始数据，使用按内容确定的后缀，保留全部动画帧。
         final tempDir = await getTemporaryDirectory();
         stagingDir = await tempDir.createTemp('fluxdo_image_save_');
         final file = File(p.join(stagingDir.path, fileName));
@@ -102,12 +104,13 @@ abstract final class ImageSaveUtils {
     }
   }
 
-  /// 优先按文件头确定后缀，避免网址后缀与实际图片容器不符。
+  /// 后缀优先按文件头确定，避免 URL 后缀或内存图片的默认 PNG 名称失真。
   static String _resolveFileName(String fileName, Uint8List bytes) {
     final base =
         ShareUtils.safeFileBaseName(fileName) ??
         'fluxdo_${DateTime.now().millisecondsSinceEpoch}';
-    final ext = _imageExtension(bytes) ??
+    final ext =
+        _imageExtension(bytes) ??
         p.extension(fileName).replaceFirst('.', '').toLowerCase();
     return ext.isEmpty ? '$base.png' : '$base.$ext';
   }
@@ -115,9 +118,13 @@ abstract final class ImageSaveUtils {
   static String? _imageExtension(Uint8List bytes) {
     // mime 尚未覆盖 AVIF；兼容静态 avif 与动画序列 avis。
     if (bytes.length >= 12 &&
-        bytes[4] == 0x66 && bytes[5] == 0x74 &&
-        bytes[6] == 0x79 && bytes[7] == 0x70 &&
-        bytes[8] == 0x61 && bytes[9] == 0x76 && bytes[10] == 0x69 &&
+        bytes[4] == 0x66 &&
+        bytes[5] == 0x74 &&
+        bytes[6] == 0x79 &&
+        bytes[7] == 0x70 &&
+        bytes[8] == 0x61 &&
+        bytes[9] == 0x76 &&
+        bytes[10] == 0x69 &&
         (bytes[11] == 0x66 || bytes[11] == 0x73)) {
       return 'avif';
     }

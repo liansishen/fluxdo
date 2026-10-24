@@ -12,6 +12,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 // ignore: depend_on_referenced_packages
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:m3e_ui/m3e_ui.dart';
+
 import '../models/topic.dart';
 import '../models/category.dart';
 import '../providers/discourse_providers.dart';
@@ -51,7 +52,9 @@ import '../widgets/layout/master_detail_layout.dart';
 import '../widgets/common/error_view.dart';
 import '../widgets/common/loading_dialog.dart';
 import '../widgets/common/fading_edge_scroll_view.dart';
+
 import 'package:common_ui/common_ui.dart';
+
 import '../widgets/offline_indicator.dart';
 import '../l10n/s.dart';
 import '../models/shortcut_binding.dart';
@@ -889,9 +892,8 @@ class _TopicsPageState extends ConsumerState<TopicsPage>
   }
 
   Future<void> _goToLogin() async {
-    final result = await Navigator.of(
-      context,
-    ).push<bool>(MaterialPageRoute(builder: (_) => const LoginPage()));
+    final result = await Navigator.of(context)
+        .push<bool>(MaterialPageRoute(builder: (_) => const LoginPage()));
     if (result == true && mounted) {
       final loading = LoadingDialog.show(
         context,
@@ -1227,9 +1229,8 @@ class _TopicsPageState extends ConsumerState<TopicsPage>
         child: ScrollConfiguration(
           // 禁用自动 Scrollbar（TabBarView 多 ScrollPosition 下 Scrollbar
           // 会报错）与 overscroll indicator，保持既有视觉行为
-          behavior: ScrollConfiguration.of(
-            context,
-          ).copyWith(scrollbars: false, overscroll: false),
+          behavior: ScrollConfiguration.of(context)
+              .copyWith(scrollbars: false, overscroll: false),
           child: Stack(
             children: [
               // 列表区全屏，顶部让出常驻区（状态栏 + 紧凑工具栏）的恒定
@@ -3101,7 +3102,33 @@ class _TopicListState extends ConsumerState<_TopicList>
   }
 
   @override
+  void initState() {
+    super.initState();
+    widget.scrollController.addListener(_onScrollForTopicUpdates);
+  }
+
+  @override
+  void didUpdateWidget(_TopicList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.scrollController, widget.scrollController)) {
+      oldWidget.scrollController.removeListener(_onScrollForTopicUpdates);
+      widget.scrollController.addListener(_onScrollForTopicUpdates);
+    }
+  }
+
+  /// 回到顶部时把攒着的新话题自动载入（开关打开时）
+  void _onScrollForTopicUpdates() {
+    final controller = widget.scrollController;
+    if (controller.hasClients &&
+        controller.positions.length == 1 &&
+        controller.position.pixels <= 1) {
+      scheduleAutoApplyTopicUpdates();
+    }
+  }
+
+  @override
   void dispose() {
+    widget.scrollController.removeListener(_onScrollForTopicUpdates);
     if (PlatformUtils.isDesktop) {
       _listShortcutBinding.disposeDeferred();
     }
@@ -3552,20 +3579,34 @@ class _TopicListState extends ConsumerState<_TopicList>
       filter: topicUpdates.query!.filter,
       newNewView: newNewViewEnabled,
       loading: isLoadingTopicUpdates,
-      onTap: () async {
-        final insertedIds = await loadTopicUpdates(
-          (ids) =>
-              ref.read(topicListProvider(providerKey).notifier).loadBefore(ids),
-        );
-        if (!mounted || insertedIds.isEmpty) return;
-        setState(() => _highlightedTopicIds.addAll(insertedIds));
-        final idsToRemove = insertedIds.toSet();
-        Future.delayed(const Duration(milliseconds: 2500), () {
-          if (!mounted) return;
-          setState(() => _highlightedTopicIds.removeAll(idsToRemove));
-        });
-        scrollToTop();
-      },
+      onTap: () => _loadTopicUpdatesInto(providerKey),
     );
   }
+
+  /// 把攒着的新话题插到列表顶部、短暂高亮并回到顶部（点提示条与自动载入共用）
+  Future<void> _loadTopicUpdatesInto(int? providerKey) async {
+    final insertedIds = await loadTopicUpdates(
+      (ids) =>
+          ref.read(topicListProvider(providerKey).notifier).loadBefore(ids),
+    );
+    if (!mounted || insertedIds.isEmpty) return;
+    setState(() => _highlightedTopicIds.addAll(insertedIds));
+    final idsToRemove = insertedIds.toSet();
+    Future.delayed(const Duration(milliseconds: 2500), () {
+      if (!mounted) return;
+      setState(() => _highlightedTopicIds.removeAll(idsToRemove));
+    });
+    scrollToTop();
+  }
+
+  // 列表的 provider key 就是 categoryId（见 build）
+  @override
+  bool get canAutoApplyTopicUpdates =>
+      widget.parentActive &&
+      ref.read(currentTabCategoryIdProvider) == widget.categoryId &&
+      !ref.read(topicListProvider(widget.categoryId)).isLoading &&
+      TopicListUpdatesMixin.scrolledToTop(_scrollController);
+
+  @override
+  Future<void> applyTopicUpdates() => _loadTopicUpdatesInto(widget.categoryId);
 }

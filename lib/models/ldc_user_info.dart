@@ -15,7 +15,8 @@ class LdcUserInfo {
   final bool isAdmin;
   final String remainQuota;
   final int payLevel;
-  /// null 表示服务端未设置每日限额。
+
+  /// null 表示不限额，与 LDC 接口保持一致。
   final int? dailyLimit;
 
   LdcUserInfo({
@@ -40,8 +41,10 @@ class LdcUserInfo {
 
   factory LdcUserInfo.fromJson(Map<String, dynamic> json) {
     return LdcUserInfo(
-      // 服务端返回字符串 ID，旧版本地缓存仍使用整数。
-      id: json['id'] is int ? json['id'] as int : int.parse(json['id'] as String),
+      // 上游以字符串返回 ID，同时兼容旧接口和本地缓存中的整数。
+      id: json['id'] is String
+          ? int.parse(json['id'] as String)
+          : json['id'] as int,
       username: json['username'] as String,
       nickname: json['nickname'] as String,
       trustLevel: json['trust_level'] as int,

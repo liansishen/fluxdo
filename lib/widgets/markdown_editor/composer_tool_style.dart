@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:m3e_ui/m3e_ui.dart';
+
 import '../../theme/mojian_theme.dart';
 
 /// 通过填色表达状态，沿用原生圆形反馈，点击区域始终保持 48dp。
@@ -32,18 +33,23 @@ class ComposerEditingControls extends StatelessWidget {
   final List<Widget> children;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(right: 4),
-    child: DecoratedBox(
-      decoration: BoxDecoration(
-        // 墨笺的工具组平铺在纸面上，不额外叠加胶囊底色。
-        color: Theme.of(context).extension<MojianTokens>() != null
-            ? Colors.transparent
-            : Theme.of(context).colorScheme.surfaceContainerHighest
-                .withValues(alpha: .42),
-        borderRadius: BorderRadius.circular(22),
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    // 墨笺：工具平铺在纸面上，不要分组底色
+    final mojian = theme.extension<MojianTokens>() != null;
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: mojian
+              ? Colors.transparent
+              : theme.colorScheme.surfaceContainerHighest.withValues(
+                  alpha: .42,
+                ),
+          borderRadius: BorderRadius.circular(22),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: children),
       ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: children),
-    ),
-  );
+    );
+  }
 }

@@ -24,6 +24,8 @@ class _FakeCurrentUser extends CurrentUserNotifier {
   @override
   Future<User?> build() async =>
       User(id: _currentUserId, username: 'me', trustLevel: 1);
+
+  void switchTo(User? user) => state = AsyncData(user);
 }
 
 MessageBusMessage _msg(
@@ -133,12 +135,12 @@ void main() {
     expect(stateOf().incomingTopicIds, isEmpty);
   });
 
-  test('clearIncoming 清空全部提示', () {
+  test('clearIncoming 确认完整快照后撤销已有提示', () {
     send(_msg('unread', topicId: 10));
     send(_msg('unread', topicId: 11));
     expect(stateOf().incomingCount, 2);
 
-    notifier().clearIncoming();
+    notifier().clearIncoming(topicIds: stateOf().incomingTopicIds);
     expect(stateOf().hasIncoming, isFalse);
   });
 
@@ -155,5 +157,24 @@ void main() {
     send(_msg('unread', topicId: 11));
     notifier().markRead(10);
     expect(stateOf().incomingTopicIds, {11});
+  });
+
+  test('空快照不会撤销随后收到的提示', () {
+    final pending = stateOf().incomingTopicIds;
+    send(_msg('unread', topicId: 10));
+    notifier().clearIncoming(topicIds: pending);
+    expect(stateOf().incomingTopicIds, {10});
+  });
+
+  test('切换账号会更新私信会话代际并清空旧会话提示', () async {
+    await container.read(currentUserProvider.future);
+    final tracking = notifier();
+    final generation = tracking.sessionGeneration;
+    send(_msg('unread', topicId: 10));
+    (container.read(currentUserProvider.notifier) as _FakeCurrentUser).switchTo(
+      User(id: 99, username: 'other', trustLevel: 1),
+    );
+    expect(stateOf().incomingTopicIds, isEmpty);
+    expect(tracking.sessionGeneration, greaterThan(generation));
   });
 }

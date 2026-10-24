@@ -3,6 +3,7 @@ import 'package:app_icons/app_icons.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
+
 import '../../models/topic.dart';
 import '../../services/topic_preview_preloader.dart';
 import '../../models/category.dart';
@@ -78,6 +79,7 @@ class TopicPreviewDialog extends ConsumerStatefulWidget {
     WidgetBuilder? customActionPanelBuilder,
     Future<String?> Function()? firstPostLoader,
     BuildContext? sourceContext,
+
     Color? anchorColor,
     double anchorRadius = 10,
   }) {
@@ -86,6 +88,7 @@ class TopicPreviewDialog extends ConsumerStatefulWidget {
     return showMorphingPreviewDialog(
       context,
       sourceContext: sourceContext,
+
       anchorColor: anchorColor,
       anchorRadius: anchorRadius,
       builder: (context) => TopicPreviewDialog(

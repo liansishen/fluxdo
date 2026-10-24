@@ -73,11 +73,11 @@ class _ComposerDesktopWorkbenchState extends State<ComposerDesktopWorkbench>
     _reduced =
         MediaQuery.disableAnimationsOf(context) ||
         !M3eFlags.of(context).enabled;
-    if (_presenting && !TickerMode.of(context)) {
+    if (_presenting && !TickerMode.valuesOf(context).enabled) {
       // 切换预览时编辑器会 Offstage。结束被暂停的退场，不能留下
       // 未完成的工具会话，等回到编辑页才突然继续播放。
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || TickerMode.of(context) || !_presenting) {
+        if (!mounted || TickerMode.valuesOf(context).enabled || !_presenting) {
           return;
         }
         widget.anchor?.dismiss();

@@ -19,8 +19,12 @@
   "error_fileTooBigLimit": "File too large: the site allows up to {limit}, this file is {size}",
   "@error_fileTooBigLimit": {
     "placeholders": {
-      "limit": {"type": "String"},
-      "size": {"type": "String"}
+      "limit": {
+        "type": "String"
+      },
+      "size": {
+        "type": "String"
+      }
     }
   },
   "error_imageTooBig": "Image too large, please compress and retry",

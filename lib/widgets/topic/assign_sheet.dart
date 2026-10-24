@@ -19,8 +19,7 @@ import '../../services/preloaded_data_service.dart';
 /// 随预加载 siteSettings 下发(官方 Web 端就是读
 /// siteSettings.assign_statuses.split("|")),这里同源读取,不硬编码。
 /// enable_assign_status 关闭时官方不显示状态下拉,同样照做。
-List<String> get _assignStatusOptions =>
-    PreloadedDataService().assignStatuses;
+List<String> get _assignStatusOptions => PreloadedDataService().assignStatuses;
 
 bool get _assignStatusEnabled =>
     PreloadedDataService().assignStatusEnabled &&
@@ -734,6 +733,8 @@ class _AssignNoteEditorPageState extends State<_AssignNoteEditorPage> {
           controller: _controller,
           hintText: '指定备注',
           expands: true,
+          // 简短备注字段，不需要预览
+          showPreviewButton: false,
         ),
       ),
     );

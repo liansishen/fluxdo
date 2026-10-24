@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../services/message_bus_service.dart';
 import '../../services/preloaded_data_service.dart';
 import '../discourse_providers.dart';

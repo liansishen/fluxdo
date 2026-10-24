@@ -45,9 +45,8 @@ void main() {
     test('进度去重与取消清理 $mode', () async {
       final dir = await Directory.systemTemp.createTemp('multipart-progress');
       addTearDown(() => dir.delete(recursive: true));
-      final file = await File(
-        '${dir.path}/small.bin',
-      ).writeAsBytes(List.filled(32, 1));
+      final file = await File('${dir.path}/small.bin')
+          .writeAsBytes(List.filled(32, 1));
       final token = CancelToken();
       final actions = <String>[];
       final progress = <UploadProgress>[];
@@ -146,9 +145,8 @@ void main() {
     final control = Dio()
       ..httpClientAdapter = _Adapter((o, s) async => fail('不应发送请求'));
     await expectLater(
-      S3MultipartUpload(
-        control,
-      ).upload(File('/missing'), 'missing', cancelToken: token),
+      S3MultipartUpload(control)
+          .upload(File('/missing'), 'missing', cancelToken: token),
       throwsA(
         isA<DioException>().having(
           (e) => e.type,
@@ -235,6 +233,7 @@ void main() {
         storage: storage,
       ).upload(file, 'image.jpg');
       if (fail) {
+        // 对象存储拒绝：分片放弃并包成 MultipartStorageException，上层改走普通上传
         await expectLater(
           future,
           throwsA(

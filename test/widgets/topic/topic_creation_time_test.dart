@@ -340,9 +340,8 @@ void main() {
         app(
           Builder(
             builder: (context) => MediaQuery(
-              data: MediaQuery.of(
-                context,
-              ).copyWith(textScaler: TextScaler.linear(scenario.scale)),
+              data: MediaQuery.of(context)
+                  .copyWith(textScaler: TextScaler.linear(scenario.scale)),
               child: Center(
                 child: SizedBox(
                   width: scenario.width,
@@ -424,7 +423,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('缓存随显示开关和主题更新，窗口改宽重新约束日期簇', (tester) async {
+  testWidgets('显示开关和主题更新后重新约束日期簇，窄窗口不溢出', (tester) async {
     final topic = _topic(createdAt: DateTime(2026, 2, 21));
     Future<TopicCardLayout> mount(ThemeData theme, double width) async {
       await tester.pumpWidget(
@@ -454,10 +453,8 @@ void main() {
     }
 
     final light = _theme('Claude', Brightness.light);
-    final first = await mount(light, 400);
-    _tick();
-    final nextMinute = await mount(light, 400);
-    expect(nextMinute, isNot(same(first)));
+    final visible = await mount(light, 400);
+    expect(visible.creationTime, isNotNull);
     final narrow = await mount(light, 240);
     expect(narrow.layoutWidth, 240);
     expect(
@@ -472,13 +469,11 @@ void main() {
         .read(preferencesProvider.notifier)
         .setShowTopicCreationTime(false);
     final hidden = await mount(light, 400);
-    expect(hidden, isNot(same(first)));
     expect(hidden.creationTime, isNull);
     await container
         .read(preferencesProvider.notifier)
         .setShowTopicCreationTime(true);
     final dark = await mount(_theme('墨笺', Brightness.dark), 240);
-    expect(dark, isNot(same(hidden)));
     expect(dark.creationTime, isNotNull);
     expect(dark.layoutWidth, 240);
     expect(

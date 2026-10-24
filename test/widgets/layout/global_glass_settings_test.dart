@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:common_ui/common_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -134,6 +136,24 @@ void main() {
       GlassEffectLevel.basic,
       reason: '关闭再开启应恢复原档位',
     );
+
+    await notifier.setGlassEffectLevel(GlassEffectLevel.full);
+    for (var i = 0; i < 50; i++) {
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      });
+      await tester.pump();
+      if (!ui.ImageFilter.isShaderFilterSupported ||
+          find.byType(BackdropFilter).evaluate().length == 4) {
+        break;
+      }
+    }
+    await tester.pumpAndSettle();
+    expect(
+      find.byType(BackdropFilter),
+      findsNWidgets(ui.ImageFilter.isShaderFilterSupported ? 4 : 2),
+    );
+    expect(surfaceSizes(tester), before);
     expect(
       container.read(preferencesProvider).dialogBlur,
       isFalse,

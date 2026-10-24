@@ -8,6 +8,8 @@
 
 ## 快速开始
 
+使用 `.fvmrc` 指定的 Flutter 3.47.7（Dart 3.13）。`pubspec.yaml` 要求 Dart 3.13 及 Flutter 3.47.4 以上；IDE 和命令行应指向同一份 SDK，避免旧 SDK 重新解析工作区依赖。
+
 1. 初始化 workspace：
 
    ```bash
@@ -104,8 +106,11 @@ just release -- patch --dry-run
 - Rust 原生产物需与 Dart FFI 同批构建，Windows 通过 `native:prepare windows --release` 暂存 DLL。内置公共 ECH 域名含 LINUX DO、静态资源和 IDCFlare，关闭开关同时关闭公共兜底，但不关闭原域名 HTTPS/ECH 查询；Selector 覆盖范围独立，不随公共 ECH 域名扩展。
 - PM、勿扰与分类变更订阅由登录后启动项统一持有和释放；MessageBus 轮询、延迟队列和私信请求均检查会话或请求代际。列表事件按版本消费，静音不阻断已读与删除恢复同步。
 - 首页刷新按钮偏好独立于 FAB，标签与话题共用通知级别面板；预览入口必须使用 `MorphingDialogAnchor` 捕获真实来源，不再传旧的 `anchorRect`。
+- 「阅读设置 → 自动载入新话题」默认关闭，持久化键为 `pref_auto_load_topic_updates`。启用后仅前台、可见、停在顶部且未拖动的列表自动消费更新；2 秒攒批、请求最小间隔 30 秒。关闭、离开页面或切换筛选时取消旧定时器，插入话题时保留开头的置顶行。
+- CF 验证轮次收到 `/challenge` 的源站 404 后，先等待 3 秒；若始终没有新 Cookie，才采纳 WebView 现值。现值也必须通过权威闸门并确认写入 jar，不放宽主站/双站 Cookie 准入。
 - Windows 工作区回归使用 `dart tool/project_tasks.dart test:all --no-pub`，运行前将 `build\windows\x64\runner\Release` 加入进程 `PATH`，供 `flutter_js` 加载 `quickjs_c_bridge.dll`；测试命令同时覆盖 `fluxdo_render` 等含测试目录的包。
 - Windows 界面验收需连接运行应用的桌面会话；RDP 断开时 `ImageGrab` 可能失败、`PrintWindow` 可能只得到黑色客户区，此时只能据日志确认启动与请求成功，不能将其作为视觉通过证据。
+- Flutter 3.47.7 的 Windows `ListView + Tooltip` 在切换悬停提示时仍可触发 `Failed to update ui::AXTree`。已用不含项目代码的纯 Flutter 最小程序复现，对应 [Flutter #182444](https://github.com/flutter/flutter/issues/182444)；不通过关闭无障碍或删除正常提示掩盖。普通画面与交互通过不代表 Windows 读屏链路已通过。
 
 
 ## 话题列表时间

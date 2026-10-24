@@ -35,6 +35,16 @@ Finder _cardOf(_BookmarkSeed seed) {
   return find.byKey(ValueKey(bookmarkTopicIdentity(seed.toTopic())));
 }
 
+Future<void> _pumpList(WidgetTester tester, Widget widget) async {
+  // 即使断言失败也卸载卡片，释放监听器并完成延迟清理。
+  addTearDown(() async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.pumpAndSettle();
+  });
+  await tester.pumpWidget(widget);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late SharedPreferences prefs;
@@ -49,12 +59,11 @@ void main() {
     prefs = await SharedPreferences.getInstance();
   });
 
-  tearDownAll(
-    () => RelativeTimeClock.instance.removeListener(keepClockAlive),
-  );
+  tearDownAll(() => RelativeTimeClock.instance.removeListener(keepClockAlive));
 
   testWidgets('汇总条只统计非空名称并按数量降序展示', (tester) async {
-    await tester.pumpWidget(
+    await _pumpList(
+      tester,
       ProviderScope(
         overrides: [
           sharedPreferencesProvider.overrideWithValue(prefs),
@@ -84,7 +93,8 @@ void main() {
     const beta = _BookmarkSeed(id: 2, title: 'Beta', bookmarkName: 'beta');
     const gamma = _BookmarkSeed(id: 3, title: 'Gamma', bookmarkName: 'codex');
 
-    await tester.pumpWidget(
+    await _pumpList(
+      tester,
       ProviderScope(
         overrides: [
           sharedPreferencesProvider.overrideWithValue(prefs),
@@ -113,10 +123,15 @@ void main() {
 
   testWidgets('点击未设置后只显示未命名书签', (tester) async {
     const alpha = _BookmarkSeed(id: 1, title: 'Alpha', bookmarkName: 'codex');
-    const noName1 = _BookmarkSeed(id: 2, title: 'No Name 1', bookmarkName: '   ');
+    const noName1 = _BookmarkSeed(
+      id: 2,
+      title: 'No Name 1',
+      bookmarkName: '   ',
+    );
     const noName2 = _BookmarkSeed(id: 3, title: 'No Name 2');
 
-    await tester.pumpWidget(
+    await _pumpList(
+      tester,
       ProviderScope(
         overrides: [
           sharedPreferencesProvider.overrideWithValue(prefs),
@@ -141,7 +156,8 @@ void main() {
     const beta = _BookmarkSeed(id: 2, title: 'Beta', bookmarkName: 'beta');
     const gamma = _BookmarkSeed(id: 3, title: 'Gamma', bookmarkName: 'codex');
 
-    await tester.pumpWidget(
+    await _pumpList(
+      tester,
       ProviderScope(
         overrides: [
           sharedPreferencesProvider.overrideWithValue(prefs),
@@ -180,7 +196,8 @@ void main() {
     PlatformUtils.debugDesktopOverride = true;
     addTearDown(() => PlatformUtils.debugDesktopOverride = null);
 
-    await tester.pumpWidget(
+    await _pumpList(
+      tester,
       ProviderScope(
         overrides: [
           sharedPreferencesProvider.overrideWithValue(prefs),
@@ -224,7 +241,8 @@ void main() {
     PlatformUtils.debugDesktopOverride = true;
     addTearDown(() => PlatformUtils.debugDesktopOverride = null);
 
-    await tester.pumpWidget(
+    await _pumpList(
+      tester,
       ProviderScope(
         overrides: [
           sharedPreferencesProvider.overrideWithValue(prefs),
@@ -288,7 +306,8 @@ void main() {
     const beta = _BookmarkSeed(id: 2, title: 'Beta', bookmarkName: 'beta');
     const gamma = _BookmarkSeed(id: 3, title: 'Gamma', bookmarkName: 'codex');
 
-    await tester.pumpWidget(
+    await _pumpList(
+      tester,
       ProviderScope(
         overrides: [
           sharedPreferencesProvider.overrideWithValue(prefs),
@@ -347,7 +366,8 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.binding.setSurfaceSize(const Size(320, 640));
 
-    await tester.pumpWidget(
+    await _pumpList(
+      tester,
       ProviderScope(
         overrides: [
           sharedPreferencesProvider.overrideWithValue(prefs),

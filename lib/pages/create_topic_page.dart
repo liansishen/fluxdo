@@ -50,10 +50,10 @@ import 'package:fluxdo/services/local_notification_service.dart'
 
 import '../constants.dart';
 import '../l10n/s.dart';
+import '../theme/mojian_theme.dart';
 import '../utils/dialog_utils.dart';
 import '../utils/discourse_url_parser.dart';
 import 'pending_posts_page.dart';
-import '../theme/mojian_theme.dart';
 
 class CreateTopicPage extends ConsumerStatefulWidget {
   final int? initialCategoryId;

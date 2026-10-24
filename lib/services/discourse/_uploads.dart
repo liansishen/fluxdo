@@ -393,8 +393,10 @@ mixin _UploadsMixin on _DiscourseServiceBase {
         }
 
         throw Exception(S.current.error_uploadNoUrl);
-      } on MultipartStorageException {
+      } on MultipartStorageException catch (e) {
         checkUploadCancelled(cancelToken);
+        // 对象存储直传失败且尚未合并时，重新走普通上传。
+        debugPrint('[DiscourseService] 分片直传失败，改用普通上传: $e');
         uploadTrace.event(
           'upload_route',
           fields: {'mode': 'standard', 'reason': 'multipart_storage_failed'},

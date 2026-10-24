@@ -182,14 +182,12 @@ class PmTrackingNotifier extends Notifier<PmIncomingState> {
   /// 当前私信已被本地阅读时，只撤销该话题的提示。
   void markRead(int topicId) => _removeIncoming(topicId);
 
-  /// 用户已查看收件箱后清空提示（供列表页在刷新后调用）
-  void clearIncoming({Set<int>? topicIds}) {
-    if (state.incomingTopicIds.isEmpty) return;
-    state = topicIds == null
-        ? const PmIncomingState()
-        : state.copyWith(
-            incomingTopicIds: {...state.incomingTopicIds}..removeAll(topicIds),
-          );
+  /// 刷新成功后只确认刷新前的提示快照，保留期间新到的其他私信。
+  void clearIncoming({required Set<int> topicIds}) {
+    if (state.incomingTopicIds.isEmpty || topicIds.isEmpty) return;
+    state = state.copyWith(
+      incomingTopicIds: {...state.incomingTopicIds}..removeAll(topicIds),
+    );
   }
 }
 

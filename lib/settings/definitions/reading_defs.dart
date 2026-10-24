@@ -86,6 +86,16 @@ List<SettingsGroup> buildReadingGroups(BuildContext context) {
               ref.read(preferencesProvider.notifier).setHideBarOnScroll(v),
         ),
         SwitchModel(
+          id: 'autoLoadTopicUpdates',
+          title: l10n.preferences_autoLoadTopicUpdates,
+          subtitle: l10n.preferences_autoLoadTopicUpdatesDesc,
+          icon: Symbols.autorenew_rounded,
+          getValue: (ref) =>
+              ref.watch(preferencesProvider).autoLoadTopicUpdates,
+          onChanged: (ref, v) =>
+              ref.read(preferencesProvider.notifier).setAutoLoadTopicUpdates(v),
+        ),
+        SwitchModel(
           id: 'openExternalLinksInAppBrowser',
           title: l10n.preferences_openLinksInApp,
           subtitle: l10n.preferences_openLinksInAppDesc,
@@ -474,10 +484,7 @@ void _showGestureActionPicker(
       final dialogWidth = math.min(screen.width - 48, 560.0);
       final dialogMaxHeight = math.min(screen.height * 0.85, 640.0);
       return Dialog(
-        insetPadding: const EdgeInsets.symmetric(
-          horizontal: 24,
-          vertical: 24,
-        ),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
         clipBehavior: Clip.antiAlias,
         child: ConstrainedBox(
           constraints: BoxConstraints(
@@ -500,13 +507,12 @@ void _showGestureActionPicker(
                 child: GridView.builder(
                   padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
                   shrinkWrap: true,
-                  gridDelegate:
-                      const SliverGridDelegateWithMaxCrossAxisExtent(
-                        maxCrossAxisExtent: 240,
-                        mainAxisExtent: 52,
-                        crossAxisSpacing: 4,
-                        mainAxisSpacing: 4,
-                      ),
+                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 240,
+                    mainAxisExtent: 52,
+                    crossAxisSpacing: 4,
+                    mainAxisSpacing: 4,
+                  ),
                   itemCount: ProgressGestureAction.values.length,
                   itemBuilder: (context, index) {
                     final action = ProgressGestureAction.values[index];

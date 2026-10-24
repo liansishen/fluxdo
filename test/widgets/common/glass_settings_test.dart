@@ -67,7 +67,6 @@ void main() {
       }
     }
   });
-
   testWidgets('高对比度下半透明色罩覆盖也强制实色', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(

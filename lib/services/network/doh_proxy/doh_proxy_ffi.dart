@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
+
 import 'proxy_leaf_trust.dart';
 import '../doh/ech_dns_policy.dart';
 
@@ -388,6 +389,7 @@ class DohProxyFfi {
   int Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, int, Pointer<Utf8>)?
   _dohProxyReportHostFailure;
   Pointer<Utf8> Function()? _dohProxyDnsCacheStats;
+  // 网络引擎计数（只读原子量，不阻塞），旧版本库没有。
   Pointer<Utf8> Function()? _dohProxyNetStats;
   Pointer<Utf8> Function()? _dohProxyDnsCacheRecords;
   Pointer<Utf8> Function()? _dohProxyGenerateCa;

@@ -403,6 +403,7 @@ class _GlassSurfaceState extends State<GlassSurface> {
 
     final settings = GlassSettingsScope.of(context);
     final solid = settings.solid;
+
     final highContrast = MediaQuery.maybeOf(context)?.highContrast ?? false;
     final enabled = settings.allowsBlur(
       highContrast: highContrast,

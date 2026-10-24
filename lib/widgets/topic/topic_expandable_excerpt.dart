@@ -8,6 +8,7 @@ import '../../models/topic.dart';
 import '../../pages/image_viewer_page.dart';
 import '../../providers/core_providers.dart';
 import '../../providers/preferences_provider.dart';
+import '../../theme/mojian_theme.dart';
 import '../../providers/topic_excerpt_provider.dart';
 import '../../services/topic_excerpt_service.dart';
 import '../../services/toast_service.dart';
@@ -108,12 +109,14 @@ class _TopicExpandableExcerptState
     final scale = ref.watch(
       preferencesProvider.select((p) => p.contentFontScale),
     );
+    final mj = theme.extension<MojianTokens>();
+    // 墨笺：摘要用 ink3、行距放宽（同原型 reader.css 的摘要行）
     final textStyle =
         widget.style ??
         theme.textTheme.bodyMedium?.copyWith(
-          fontSize: 13 * scale,
-          height: 1.45,
-          color: theme.colorScheme.onSurfaceVariant.withValues(
+          fontSize: (mj != null ? 13.5 : 13) * scale,
+          height: mj != null ? 1.72 : 1.45,
+          color: (mj?.ink3 ?? theme.colorScheme.onSurfaceVariant).withValues(
             alpha: widget.isFullyRead ? 0.7 : 1,
           ),
         );
@@ -209,6 +212,7 @@ class _TopicExpandableExcerptState
     List<String> images,
     double maxWidth,
   ) {
+    final mj = Theme.of(context).extension<MojianTokens>();
     final count = images.length.clamp(1, 3);
     final width = (maxWidth - (count - 1) * 6) / count;
     final height = count == 1 ? (maxWidth * 9 / 16).clamp(80.0, 144.0) : 104.0;
@@ -220,8 +224,11 @@ class _TopicExpandableExcerptState
             width: width,
             height: height,
             child: Material(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(8),
+              color:
+                  mj?.paper3 ??
+                  Theme.of(context).colorScheme.surfaceContainerHighest,
+              // 墨笺：小圆角，同原型缩略图
+              borderRadius: BorderRadius.circular(mj != null ? 4 : 8),
               clipBehavior: Clip.antiAlias,
               child: InkWell(
                 onTap: () => ImageViewerPage.open(

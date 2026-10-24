@@ -19,6 +19,8 @@ class GlassSolidStyle {
   const GlassSolidStyle({required this.fill, this.border});
 
   final Color fill;
+
+  /// 细描边色；null 不描边
   final Color? border;
 
   @override

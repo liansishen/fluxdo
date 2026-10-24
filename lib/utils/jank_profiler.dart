@@ -125,7 +125,7 @@ class JankProfiler {
     _captureInto(pending.$1, pending.$2);
   }
 
-  /// 使用同一单调时钟计算窗口，不与系统日志的墙上时钟混算。
+  /// 同一单调时钟计算窗口；墙上时钟只能与系统日志对齐，不能相减。
   @visibleForTesting
   static (int, int) frameWindow(FrameTiming timing) {
     final start = timing.timestampInMicroseconds(FramePhase.vsyncStart);

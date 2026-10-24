@@ -8,6 +8,7 @@ class StartupTimeline {
   static final Map<String, int> _marks = {};
   static bool _reported = false;
 
+  /// main() 第一行调用
   static void start() {
     if (!_watch.isRunning) _watch.start();
   }
@@ -18,6 +19,7 @@ class StartupTimeline {
     _marks.putIfAbsent(name, () => _watch.elapsedMilliseconds);
   }
 
+  /// 记最后一个节点并写日志
   static void finish(String name) {
     if (!_watch.isRunning || _reported) return;
     mark(name);

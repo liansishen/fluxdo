@@ -1,7 +1,9 @@
 import 'site_context.dart';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:html/parser.dart' as html_parser;
+
 import 'network/cf/cf_challenge_classifier.dart';
 import 'network/discourse_dio.dart';
 import 'oauth_session_client.dart';
@@ -20,7 +22,8 @@ class LdcOAuthService {
 
   LdcOAuthService({Dio? dio, OAuthSessionClient? sessionClient}) {
     _dio = dio ?? sessionClient?.dio ?? DiscourseDio.create();
-    _session = sessionClient ??
+    _session =
+        sessionClient ??
         OAuthSessionClient(dio: _dio, baseUrl: baseUrl, serviceName: 'LDC');
   }
 
@@ -105,7 +108,9 @@ class LdcOAuthService {
     }
 
     final document = html_parser.parse(response.data);
-    final approveLink = document.querySelector('a[href*="/oauth2/approve/"]')?.attributes['href'];
+    final approveLink = document
+        .querySelector('a[href*="/oauth2/approve/"]')
+        ?.attributes['href'];
 
     if (!context.mounted) return false;
     if (approveLink == null) {

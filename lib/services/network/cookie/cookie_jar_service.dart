@@ -962,6 +962,9 @@ class CookieJarService {
   }
 
   /// Windows：通过页面级 controller 的 CDP 将关键 cookie 直接写入 CookieJar。
+  ///
+  /// [admit]：按名字和值做最后一道放行判断（异步），返回 false 的不写。
+  /// 调用方用它让 CDP 快路径也过 cf_clearance 的在位值闸门。
   Future<int> syncCriticalCookiesFromController(
     InAppWebViewController controller, {
     String? currentUrl,

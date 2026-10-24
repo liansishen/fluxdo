@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -106,4 +108,30 @@ void main() {
     guard.dispose();
   });
 
+  test('生产页面清理脚本释放块并关闭端口，迟到消息不再写入', () async {
+    final source = File(
+      'lib/services/network/adapters/webview_http_adapter.dart',
+    ).readAsStringSync();
+    final start = source.indexOf(
+      'window.__fluxdoDiscardRequestBody = function',
+    );
+    final end = source.indexOf('          function ensureState', start);
+    final process = await Process.start('node', []);
+    final out = process.stdout.transform(utf8.decoder).join();
+    final err = process.stderr.transform(utf8.decoder).join();
+    process.stdin.write('''
+const window = {__fluxdoRequestBodyTransfers: new Map()};
+let closed = 0;
+const state = {chunks: [new Uint8Array(100)], body: new Blob(['data']), port: {close() {closed++;}}};
+window.__fluxdoRequestBodyTransfers.set('x', state);
+${source.substring(start, end)}
+window.__fluxdoDiscardRequestBody('x');
+window.__fluxdoDiscardRequestBody('x');
+if (closed !== 1 || state.chunks.length || state.body !== null || !state.discarded || window.__fluxdoRequestBodyTransfers.size) process.exit(1);
+''');
+    await process.stdin.close();
+    expect(await process.exitCode, 0, reason: await err);
+    await out;
+    expect(source, contains('if (state.discarded) return;'));
+  });
 }

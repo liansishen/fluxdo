@@ -76,7 +76,10 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   for (final isLdc in [true, false]) {
     final name = isLdc ? 'ldc' : 'cdk';
-    final cacheKey = '${name}_user_info';
+    final legacyCacheKey = '${name}_user_info';
+    final cacheKey = '${legacyCacheKey}_account_alice';
+    final otherAccountCacheKey = '${legacyCacheKey}_account_bob';
+    final otherSiteCacheKey = 'site:idcflare:$cacheKey';
     group(name, () {
       late ProviderContainer container;
       late SharedPreferences prefs;
@@ -86,7 +89,6 @@ void main() {
         SharedPreferences.setMockInitialValues({
           '${name}_enabled': true,
           cacheKey: jsonEncode(_userInfo),
-          '${cacheKey}_username': 'alice',
         });
         prefs = await SharedPreferences.getInstance();
         load = () async => _userInfo;
@@ -176,11 +178,15 @@ void main() {
 
       test('无归属键的旧缓存也不能展示其他账号余额', () async {
         await initialize();
-        await prefs.remove('${cacheKey}_username');
-        await prefs.setString(cacheKey, jsonEncode({..._userInfo, 'username': 'bob'}));
+        await prefs.remove(cacheKey);
+        await prefs.setString(
+          legacyCacheKey,
+          jsonEncode({..._userInfo, 'username': 'bob'}),
+        );
         load = () async => throw StateError('网络不可用');
         await expectLater(read(), throwsA(isA<StateError>()));
         expect(current().value, isNull);
+        expect(prefs.getString(legacyCacheKey), isNull);
         expect(prefs.getString(cacheKey), isNull);
       });
 
@@ -216,14 +222,90 @@ void main() {
         final oldRefresh = refresh();
         await entered.future;
         load = () async => {..._userInfo, 'username': 'bob', 'score': 34};
-        (container.read(currentUserProvider.notifier) as _CurrentUser).switchTo('bob');
+        (container.read(currentUserProvider.notifier) as _CurrentUser).switchTo(
+          'bob',
+        );
         pending.complete(_userInfo);
         await oldRefresh;
         await read();
-        final cached = jsonDecode(prefs.getString(cacheKey)!) as Map;
+        final cached =
+            jsonDecode(prefs.getString(otherAccountCacheKey)!) as Map;
         expect(cached['username'], 'bob');
-        expect(prefs.getString('${cacheKey}_username'), 'bob');
+        expect(
+          (jsonDecode(prefs.getString(cacheKey)!) as Map)['username'],
+          'alice',
+        );
+        expect(prefs.getString(legacyCacheKey), isNull);
         expect(current().hasError, isFalse);
+      });
+
+      test('旧版同账号缓存仍可兜底，成功后迁移到账号专属键', () async {
+        await initialize();
+        await prefs.remove(cacheKey);
+        await prefs.setString(legacyCacheKey, jsonEncode(_userInfo));
+        await prefs.setString('${legacyCacheKey}_username', 'alice');
+        load = () async => throw StateError('网络不可用');
+        final restored = await read();
+        expect(restored, isNotNull);
+        expect(prefs.getString(legacyCacheKey), isNotNull);
+        load = () async => _userInfo;
+        await refresh();
+        expect(prefs.getString(cacheKey), isNotNull);
+        expect(prefs.getString(legacyCacheKey), isNull);
+        expect(prefs.getString('${legacyCacheKey}_username'), isNull);
+      });
+
+      test('账号专属缓存也必须核对内容账号', () async {
+        await initialize();
+        await prefs.setString(
+          cacheKey,
+          jsonEncode({..._userInfo, 'username': 'bob'}),
+        );
+        load = () async => throw StateError('网络不可用');
+        await expectLater(read(), throwsA(isA<StateError>()));
+        expect(current().value, isNull);
+        expect(prefs.getString(cacheKey), isNull);
+      });
+
+      test('旧账号晚到的过期错误不能删除新账号缓存或恢复旧状态', () async {
+        await initialize();
+        await read();
+        final pending = Completer<Map<String, dynamic>>();
+        final entered = Completer<void>();
+        load = () {
+          entered.complete();
+          return pending.future;
+        };
+        final oldRefresh = refresh();
+        await entered.future;
+        load = () async => {..._userInfo, 'username': 'bob', 'score': 34};
+        (container.read(currentUserProvider.notifier) as _CurrentUser).switchTo(
+          'bob',
+        );
+        await read();
+        final cached = prefs.getString(otherAccountCacheKey);
+        pending.completeError(OAuthExpiredException(serviceName: name));
+        await oldRefresh;
+        expect(current().hasError, isFalse);
+        expect(prefs.getString(otherAccountCacheKey), cached);
+        expect(prefs.getString(cacheKey), isNotNull);
+      });
+
+      test('停用只移除当前站点当前账号缓存', () async {
+        await initialize();
+        await read();
+        final otherAccount = jsonEncode({..._userInfo, 'username': 'bob'});
+        final otherSite = jsonEncode({..._userInfo, 'available_balance': '99'});
+        await prefs.setString(otherAccountCacheKey, otherAccount);
+        await prefs.setString(otherSiteCacheKey, otherSite);
+        if (isLdc) {
+          await container.read(ldcUserInfoProvider.notifier).disable();
+        } else {
+          await container.read(cdkUserInfoProvider.notifier).disable();
+        }
+        expect(prefs.getString(cacheKey), isNull);
+        expect(prefs.getString(otherAccountCacheKey), otherAccount);
+        expect(prefs.getString(otherSiteCacheKey), otherSite);
       });
 
       test('停用服务后，晚到的刷新响应不能恢复余额或写回缓存', () async {

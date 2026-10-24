@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:app_icons/app_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../models/draft.dart';
 import '../navigation/nav_action_bus.dart';
 import '../providers/discourse_providers.dart';
@@ -27,6 +28,9 @@ import 'create_topic_page.dart';
 import 'topic_detail_page/topic_detail_page.dart';
 
 /// 草稿列表 Provider
+///
+/// 在线时以服务端为准，同时补上本机还没同步上去的草稿；断网或请求失败
+/// 时退回本机缓存。
 final draftsProvider = FutureProvider.autoDispose<List<Draft>>((ref) async {
   final service = ref.watch(discourseServiceProvider);
   final store = ref.watch(localDraftStoreProvider);

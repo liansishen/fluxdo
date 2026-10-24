@@ -18,142 +18,178 @@ final cdkUserInfoProvider =
 
 class CdkUserInfoNotifier extends AsyncNotifier<CdkUserInfo?> {
   static const String _cacheKey = 'cdk_user_info';
-  static const String _cdkEnabledKey = 'cdk_enabled';
+  static const String _enabledKey = 'cdk_enabled';
   static const String _cacheUserKey = 'cdk_user_info_username';
 
-  // 防止 build() 与 refresh() 在 notifier 首次创建时并发触发同接口，
-  // 复用同一个 in-flight future
+  // 首次加载与刷新共享同一账号的请求，不跨账号复用。
   Future<CdkUserInfo?>? _inFlightFetch;
+  String? _inFlightUsername;
   int _requestGeneration = 0;
+
+  String _accountCacheKey(String username) =>
+      SiteContext.storageKey('${_cacheKey}_account_$username');
+
+  bool _isCurrentRequest(int generation, String? username) =>
+      ref.mounted &&
+      generation == _requestGeneration &&
+      ref.read(currentUserProvider).value?.username == username;
 
   @override
   Future<CdkUserInfo?> build() async {
     if (!SiteContext.isLinuxDo) return null;
-    final generation = _requestGeneration;
+    final generation = ++_requestGeneration;
+    _inFlightFetch = null;
+    _inFlightUsername = null;
     final service = ref.read(cdkOAuthServiceProvider);
     ref.onDispose(() {
       _requestGeneration++;
       _inFlightFetch = null;
+      _inFlightUsername = null;
       service.cancelPendingRequests();
     });
-    // 只 watch username:currentUser 对象其他字段刷新时不应触发 CDK 接口的重新请求
+
+    // 用户资料的其他字段刷新不应重新请求余额。
     final currentUsername = ref.watch(
       currentUserProvider.select((value) => value.value?.username),
     );
+    final userFuture = currentUsername == null
+        ? ref.watch(currentUserProvider.future)
+        : null;
+    final username = currentUsername ?? (await userFuture!)?.username;
+    if (!_isCurrentRequest(generation, username)) return null;
     final prefs = await SharedPreferences.getInstance();
-    final username =
-        currentUsername ??
-        (await ref.watch(currentUserProvider.future))?.username;
-    if (!ref.mounted || generation != _requestGeneration) return null;
+    if (!_isCurrentRequest(generation, username)) return null;
     if (username == null) {
-      await _clearCache(prefs);
+      await _clearCache(prefs, null);
       return null;
     }
-    final enabled = prefs.getBool(_cdkEnabledKey) ?? false;
+    if (!(prefs.getBool(_enabledKey) ?? false)) return null;
 
-    if (!enabled) return null;
-
-    // 先读取缓存，用于网络失败时兜底
+    // 新缓存按站点和账号隔离；旧缓存必须同时通过归属键与内容校验。
     CdkUserInfo? cachedInfo;
-    final cached = prefs.getString(_cacheKey);
+    final accountCache = prefs.getString(_accountCacheKey(username));
+    final cached =
+        accountCache ?? prefs.getString(SiteContext.storageKey(_cacheKey));
     if (cached != null) {
       try {
-        final cachedUser = prefs.getString(_cacheUserKey);
-        if (cachedUser != null && cachedUser != username) {
-          await _clearCache(prefs);
+        final info = CdkUserInfo.fromJson(
+          jsonDecode(cached) as Map<String, dynamic>,
+        );
+        final isLegacy = accountCache == null;
+        final cachedUser = isLegacy
+            ? prefs.getString(SiteContext.storageKey(_cacheUserKey))
+            : null;
+        if (info.username == username &&
+            (cachedUser == null || cachedUser == username)) {
+          cachedInfo = info;
         } else {
-          cachedInfo = CdkUserInfo.fromJson(
-            jsonDecode(cached) as Map<String, dynamic>,
-          );
-          if (cachedInfo.username != username) {
-            cachedInfo = null;
-            await _clearCache(prefs);
-          }
+          await _clearCache(prefs, username);
         }
       } catch (_) {
-        // 缓存损坏，忽略
+        // 缓存损坏不影响重新请求。
       }
     }
+    if (!_isCurrentRequest(generation, username)) return null;
 
     try {
-      return await _fetchUserInfo();
+      return await _fetchUserInfo(username);
     } on OAuthExpiredException catch (_) {
-      if (!ref.mounted || generation != _requestGeneration) return null;
-      // 授权过期：清除缓存，让错误状态透传到 UI
-      await _clearCache(prefs);
+      if (!_isCurrentRequest(generation, username)) return null;
+      // 只有业务会话确认过期才清除当前账号的缓存。
+      await _clearCache(prefs, username);
       rethrow;
     } catch (e) {
-      if (!ref.mounted || generation != _requestGeneration) return null;
+      if (!_isCurrentRequest(generation, username) ||
+          !(prefs.getBool(_enabledKey) ?? false)) {
+        return null;
+      }
       if (OAuthErrorPolicy.isCfChallenge(e)) rethrow;
       if (cachedInfo != null) return cachedInfo;
       rethrow;
     }
   }
 
-  Future<CdkUserInfo?> _fetchUserInfo() {
-    if (_inFlightFetch != null) return _inFlightFetch!;
+  Future<CdkUserInfo?> _fetchUserInfo(String username) {
+    if (_inFlightFetch != null && _inFlightUsername == username) {
+      return _inFlightFetch!;
+    }
     late final Future<CdkUserInfo?> future;
-    future = _doFetchUserInfo().whenComplete(() {
-      if (identical(_inFlightFetch, future)) _inFlightFetch = null;
+    future = _doFetchUserInfo(username).whenComplete(() {
+      if (identical(_inFlightFetch, future)) {
+        _inFlightFetch = null;
+        _inFlightUsername = null;
+      }
     });
+    _inFlightUsername = username;
     return _inFlightFetch = future;
   }
 
-  Future<CdkUserInfo?> _doFetchUserInfo() async {
+  Future<CdkUserInfo?> _doFetchUserInfo(String username) async {
     if (!SiteContext.isLinuxDo) return null;
     final generation = _requestGeneration;
     final prefs = await SharedPreferences.getInstance();
-    if (!ref.mounted || generation != _requestGeneration) return null;
-    final enabled = prefs.getBool(_cdkEnabledKey) ?? false;
-
-    if (!enabled) return null;
-
-    final currentUser = await ref.read(currentUserProvider.future);
-    if (currentUser == null ||
-        !ref.mounted ||
-        generation != _requestGeneration) {
+    if (!_isCurrentRequest(generation, username) ||
+        !(prefs.getBool(_enabledKey) ?? false)) {
       return null;
     }
 
     final service = ref.read(cdkOAuthServiceProvider);
-    final userInfo = await service.getUserInfo(
-      expectedUsername: currentUser.username,
-    );
-    if (userInfo == null) return null;
-    // 缓存写回前再校验一次：停用/换号后迟到的响应不能落盘。
-    if (!ref.mounted ||
-        generation != _requestGeneration ||
-        !(prefs.getBool(_cdkEnabledKey) ?? false)) {
+    final userInfo = await service.getUserInfo(expectedUsername: username);
+    // 不依赖 provider 下一次重建：换号后即使旧请求先返回也不能回写。
+    if (!_isCurrentRequest(generation, username) ||
+        !(prefs.getBool(_enabledKey) ?? false)) {
       return null;
     }
-    await prefs.setString(_cacheKey, jsonEncode(userInfo.toJson()));
-    await prefs.setString(_cacheUserKey, userInfo.username);
-    return userInfo;
+    if (userInfo == null) return null;
+    if (userInfo.username != username) {
+      throw const OAuthExpiredException(serviceName: 'CDK');
+    }
+    await _clearLegacyCache(prefs);
+    if (!_isCurrentRequest(generation, username) ||
+        !(prefs.getBool(_enabledKey) ?? false)) {
+      return null;
+    }
+    await prefs.setString(
+      _accountCacheKey(username),
+      jsonEncode(userInfo.toJson()),
+    );
+    return _isCurrentRequest(generation, username) ? userInfo : null;
   }
 
   Future<void> refresh() async {
+    if (!SiteContext.isLinuxDo) return;
     final generation = _requestGeneration;
-    final previousData = state.value;
-    // ignore: invalid_use_of_internal_member
-    state = const AsyncLoading<CdkUserInfo?>().copyWithPrevious(state);
+    var username = ref.read(currentUserProvider).value?.username;
+    final previousData = state.value?.username == username ? state.value : null;
+    if (previousData == null) {
+      state = const AsyncLoading<CdkUserInfo?>();
+    } else {
+      // ignore: invalid_use_of_internal_member
+      state = const AsyncLoading<CdkUserInfo?>().copyWithPrevious(state);
+    }
     try {
-      final result = await _fetchUserInfo();
-      if (!ref.mounted || generation != _requestGeneration) return;
+      username ??= (await ref.read(currentUserProvider.future))?.username;
+      if (!_isCurrentRequest(generation, username)) return;
+      if (username == null) {
+        state = const AsyncValue.data(null);
+        return;
+      }
+      final result = await _fetchUserInfo(username);
+      if (!_isCurrentRequest(generation, username)) return;
       state = AsyncValue.data(result);
     } catch (e, st) {
-      if (!ref.mounted || generation != _requestGeneration) return;
+      if (!_isCurrentRequest(generation, username)) return;
       if (e is OAuthExpiredException) {
-        // 登录态过期：清除缓存并立即反映到 UI
         final prefs = await SharedPreferences.getInstance();
-        await _clearCache(prefs);
-        if (!ref.mounted || generation != _requestGeneration) return;
+        if (!_isCurrentRequest(generation, username)) return;
+        await _clearCache(prefs, username);
+        if (!_isCurrentRequest(generation, username)) return;
         state = AsyncValue.error(e, st);
       } else if (OAuthErrorPolicy.isCfChallenge(e)) {
-        // 需要验证时保留缓存，但不把旧数据伪装成本次请求成功。
+        // 挑战状态保留旧余额，但不能伪装成本次请求成功。
         // ignore: invalid_use_of_internal_member
         state = AsyncValue<CdkUserInfo?>.error(e, st).copyWithPrevious(state);
       } else if (previousData != null) {
-        // 网络错误等：保留旧数据
         state = AsyncValue.data(previousData);
       } else {
         state = AsyncValue.error(e, st);
@@ -166,33 +202,49 @@ class CdkUserInfoNotifier extends AsyncNotifier<CdkUserInfo?> {
     if (!SiteContext.isLinuxDo) return Future.value();
     _requestGeneration++;
     _inFlightFetch = null;
+    _inFlightUsername = null;
     ref.read(cdkOAuthServiceProvider).cancelPendingRequests();
     return refresh();
   }
 
   Future<void> clear() async {
     if (!SiteContext.isLinuxDo) return;
-    _requestGeneration++;
+    final username =
+        ref.read(currentUserProvider).value?.username ?? state.value?.username;
+    final generation = ++_requestGeneration;
     _inFlightFetch = null;
+    _inFlightUsername = null;
     ref.read(cdkOAuthServiceProvider).cancelPendingRequests();
     final prefs = await SharedPreferences.getInstance();
-    await _clearCache(prefs);
-    if (ref.mounted) state = const AsyncValue.data(null);
+    await _clearCache(prefs, username);
+    if (ref.mounted && generation == _requestGeneration) {
+      state = const AsyncValue.data(null);
+    }
   }
 
   Future<void> disable() async {
     if (!SiteContext.isLinuxDo) return;
-    _requestGeneration++;
+    final username =
+        ref.read(currentUserProvider).value?.username ?? state.value?.username;
+    final generation = ++_requestGeneration;
     _inFlightFetch = null;
+    _inFlightUsername = null;
     ref.read(cdkOAuthServiceProvider).cancelPendingRequests();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_cdkEnabledKey, false);
-    await _clearCache(prefs);
-    if (ref.mounted) state = const AsyncValue.data(null);
+    await prefs.setBool(_enabledKey, false);
+    await _clearCache(prefs, username);
+    if (ref.mounted && generation == _requestGeneration) {
+      state = const AsyncValue.data(null);
+    }
   }
 
-  Future<void> _clearCache(SharedPreferences prefs) async {
-    await prefs.remove(_cacheKey);
-    await prefs.remove(_cacheUserKey);
+  Future<void> _clearCache(SharedPreferences prefs, String? username) async {
+    if (username != null) await prefs.remove(_accountCacheKey(username));
+    await _clearLegacyCache(prefs);
+  }
+
+  Future<void> _clearLegacyCache(SharedPreferences prefs) async {
+    await prefs.remove(SiteContext.storageKey(_cacheKey));
+    await prefs.remove(SiteContext.storageKey(_cacheUserKey));
   }
 }

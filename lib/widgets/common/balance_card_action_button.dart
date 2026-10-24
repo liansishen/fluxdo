@@ -18,6 +18,7 @@ class BalanceCardActionButton extends StatelessWidget {
   final bool isLoading;
   final bool filled;
 
+  /// 墨笺账本卡用的细框按钮
   final bool outlined;
   @override
   Widget build(BuildContext context) {

@@ -141,9 +141,8 @@ Future<void> _pumpReply(
                 : TargetPlatform.android,
           ),
           builder: (context, child) => MediaQuery(
-            data: MediaQuery.of(
-              context,
-            ).copyWith(textScaler: TextScaler.linear(scale)),
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: TextScaler.linear(scale)),
             child: child!,
           ),
           home: Scaffold(
@@ -209,9 +208,8 @@ Future<void> _waitForRichDraft(WidgetTester tester, String text) async {
     await tester.pump(const Duration(milliseconds: 20));
     final editors = find.byType(FluxdoEditor).evaluate();
     if (editors.length == 1 &&
-        docToMarkdown(
-              (editors.single.widget as FluxdoEditor).state.blocks,
-            ).trim() ==
+        docToMarkdown((editors.single.widget as FluxdoEditor).state.blocks)
+                .trim() ==
             text) {
       return;
     }
@@ -220,22 +218,63 @@ Future<void> _waitForRichDraft(WidgetTester tester, String text) async {
 }
 
 void main() {
-  testWidgets(
-    'Windows 短回复的真实弹层外壳紧凑且保留下拉关闭',
-    (tester) async {
+  testWidgets('Windows 短回复的真实弹层外壳紧凑且保留下拉关闭', (tester) async {
+    await _pumpReply(
+      tester,
+      width: 1200,
+      height: 1080,
+      desktop: true,
+      presentAsSheet: true,
+    );
+    final field = find.descendant(
+      of: find.byType(MarkdownEditor),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(field, '简短回复');
+    await tester.pump();
+    final outer = tester.getRect(find.byType(BottomSheet));
+    final surface = tester.getRect(
+      find.descendant(
+        of: find.byType(ReplySheet),
+        matching: find.byType(Scaffold),
+      ),
+    );
+    // 必须约束真实路由外壳，不能仅把内部编辑器缩小后留下空白。
+    expect(outer.height, inInclusiveRange(500, 600));
+    expect(outer.bottom, 1080);
+    expect(surface.height, outer.height);
+    expect(surface.bottom, outer.bottom);
+    expect(
+      find.byKey(const ValueKey('composer-header-submit')).hitTestable(),
+      findsOneWidget,
+    );
+    expect(
+      find.byTooltip(S.current.composer_expandToolbar).hitTestable(),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+
+    await tester.flingFrom(
+      outer.topCenter + const Offset(0, 12),
+      const Offset(0, 700),
+      1400,
+    );
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byType(ReplySheet), findsNothing);
+    expect(find.byKey(const ValueKey('open-reply-sheet')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
+
+  for (final height in [760.0, 656.0]) {
+    testWidgets('Windows 普通窗口回复不遮满背景 height=$height', (tester) async {
       await _pumpReply(
         tester,
         width: 1200,
-        height: 1080,
+        height: height,
         desktop: true,
         presentAsSheet: true,
       );
-      final field = find.descendant(
-        of: find.byType(MarkdownEditor),
-        matching: find.byType(TextField),
-      );
-      await tester.enterText(field, '简短回复');
-      await tester.pump();
       final outer = tester.getRect(find.byType(BottomSheet));
       final surface = tester.getRect(
         find.descendant(
@@ -243,9 +282,8 @@ void main() {
           matching: find.byType(Scaffold),
         ),
       );
-      // 必须约束真实路由外壳，不能仅把内部编辑器缩小后留下空白。
-      expect(outer.height, inInclusiveRange(500, 600));
-      expect(outer.bottom, 1080);
+      expect(outer.height, lessThanOrEqualTo(height * 0.8));
+      expect(outer.bottom, height);
       expect(surface.height, outer.height);
       expect(surface.bottom, outer.bottom);
       expect(
@@ -257,152 +295,92 @@ void main() {
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);
-
-      await tester.flingFrom(
-        outer.topCenter + const Offset(0, 12),
-        const Offset(0, 700),
-        1400,
-      );
-      await tester.pump(const Duration(seconds: 1));
-      expect(find.byType(ReplySheet), findsNothing);
-      expect(find.byKey(const ValueKey('open-reply-sheet')), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(seconds: 1));
-    },
-    variant: TargetPlatformVariant.only(TargetPlatform.windows),
-  );
-
-  for (final height in [760.0, 656.0]) {
-    testWidgets(
-      'Windows 普通窗口回复不遮满背景 height=$height',
-      (tester) async {
-        await _pumpReply(
-          tester,
-          width: 1200,
-          height: height,
-          desktop: true,
-          presentAsSheet: true,
-        );
-        final outer = tester.getRect(find.byType(BottomSheet));
-        final surface = tester.getRect(
-          find.descendant(
-            of: find.byType(ReplySheet),
-            matching: find.byType(Scaffold),
-          ),
-        );
-        expect(outer.height, lessThanOrEqualTo(height * 0.8));
-        expect(outer.bottom, height);
-        expect(surface.height, outer.height);
-        expect(surface.bottom, outer.bottom);
-        expect(
-          find.byKey(const ValueKey('composer-header-submit')).hitTestable(),
-          findsOneWidget,
-        );
-        expect(
-          find.byTooltip(S.current.composer_expandToolbar).hitTestable(),
-          findsOneWidget,
-        );
-        expect(tester.takeException(), isNull);
-        await tester.pumpWidget(const SizedBox.shrink());
-        await tester.pump(const Duration(seconds: 1));
-      },
-      variant: TargetPlatformVariant.only(TargetPlatform.windows),
-    );
+    }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
   }
 
-  testWidgets(
-    'Windows 长回复与预览可滚动，窗口缩放不遮住发送和工具栏',
-    (tester) async {
-      await _pumpReply(
-        tester,
-        width: 1200,
-        height: 900,
-        desktop: true,
-        presentAsSheet: true,
-      );
-      final text = List.generate(
-        100,
-        (index) => '第 $index 行长回复内容',
-      ).join('\n\n');
-      final editor = find.byType(MarkdownEditor);
-      final field = find.descendant(
-        of: editor,
-        matching: find.byType(TextField),
-      );
-      await tester.enterText(field, text);
-      await tester.pump();
-      final controller = tester.widget<TextField>(field).controller!;
-      final sourceScroll = find.descendant(
-        of: editor,
-        matching: find.byType(CustomScrollView),
-      );
-      final sourcePosition = tester
-          .state<ScrollableState>(
-            find
-                .descendant(of: sourceScroll, matching: find.byType(Scrollable))
-                .first,
-          )
-          .position;
-      expect(sourcePosition.maxScrollExtent, greaterThan(0));
-      // 先回到开头再通过消费者手势滚动，避免光标自动滚到文末干扰断言。
-      sourcePosition.jumpTo(0);
-      await tester.pump();
-      await tester.drag(sourceScroll, const Offset(0, -200));
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(sourcePosition.pixels, greaterThan(0));
-      final send = find.byKey(const ValueKey('composer-header-submit'));
-      expect(send.hitTestable(), findsOneWidget);
+  testWidgets('Windows 长回复与预览可滚动，窗口缩放不遮住发送和工具栏', (tester) async {
+    await _pumpReply(
+      tester,
+      width: 1200,
+      height: 900,
+      desktop: true,
+      presentAsSheet: true,
+    );
+    final text = List.generate(100, (index) => '第 $index 行长回复内容').join('\n\n');
+    final editor = find.byType(MarkdownEditor);
+    final field = find.descendant(of: editor, matching: find.byType(TextField));
+    await tester.enterText(field, text);
+    await tester.pump();
+    final controller = tester.widget<TextField>(field).controller!;
+    final sourceScroll = find.descendant(
+      of: editor,
+      matching: find.byType(CustomScrollView),
+    );
+    final sourcePosition = tester
+        .state<ScrollableState>(
+          find
+              .descendant(of: sourceScroll, matching: find.byType(Scrollable))
+              .first,
+        )
+        .position;
+    expect(sourcePosition.maxScrollExtent, greaterThan(0));
+    // 先回到开头再通过消费者手势滚动，避免光标自动滚到文末干扰断言。
+    sourcePosition.jumpTo(0);
+    await tester.pump();
+    await tester.drag(sourceScroll, const Offset(0, -200));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(sourcePosition.pixels, greaterThan(0));
+    final send = find.byKey(const ValueKey('composer-header-submit'));
+    expect(send.hitTestable(), findsOneWidget);
 
-      await tester.tap(find.byType(ComposerPreviewButton));
-      await tester.pump(const Duration(milliseconds: 400));
-      final preview = find.byKey(const ValueKey('reply-preview'));
-      final previewPosition = tester
-          .state<ScrollableState>(
-            find
-                .descendant(of: preview, matching: find.byType(Scrollable))
-                .first,
-          )
-          .position;
-      expect(previewPosition.maxScrollExtent, greaterThan(0));
-      await tester.drag(preview, const Offset(0, -180));
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(previewPosition.pixels, greaterThan(0));
+    await tester.tap(find.byType(ComposerPreviewButton));
+    await tester.pump(const Duration(milliseconds: 400));
+    final preview = find.byKey(const ValueKey('reply-preview'));
+    final previewPosition = tester
+        .state<ScrollableState>(
+          find.descendant(of: preview, matching: find.byType(Scrollable)).first,
+        )
+        .position;
+    expect(previewPosition.maxScrollExtent, greaterThan(0));
+    await tester.drag(preview, const Offset(0, -180));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(previewPosition.pixels, greaterThan(0));
 
-      tester.view.physicalSize = const Size(640, 360);
-      await tester.pump(const Duration(milliseconds: 400));
-      final smallOuter = tester.getRect(find.byType(BottomSheet));
-      expect(smallOuter.height, lessThanOrEqualTo(360));
-      expect(smallOuter.top, greaterThanOrEqualTo(0));
-      expect(smallOuter.bottom, 360);
-      expect(send.hitTestable(), findsOneWidget);
-      expect(tester.takeException(), isNull);
+    tester.view.physicalSize = const Size(640, 360);
+    await tester.pump(const Duration(milliseconds: 400));
+    final smallOuter = tester.getRect(find.byType(BottomSheet));
+    expect(smallOuter.height, lessThanOrEqualTo(360));
+    expect(smallOuter.top, greaterThanOrEqualTo(0));
+    expect(smallOuter.bottom, 360);
+    expect(send.hitTestable(), findsOneWidget);
+    expect(tester.takeException(), isNull);
 
-      await tester.tap(find.byType(ComposerPreviewButton));
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(controller.text, text);
-      final toolbar = find.byKey(const ValueKey('composer-format-row'));
-      expect(toolbar.hitTestable(), findsOneWidget);
-      expect(
-        tester.getRect(toolbar).bottom,
-        lessThanOrEqualTo(smallOuter.bottom),
-      );
-      expect(send.hitTestable(), findsOneWidget);
-      expect(tester.takeException(), isNull);
+    await tester.tap(find.byType(ComposerPreviewButton));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(controller.text, text);
+    final toolbar = find.byKey(const ValueKey('composer-format-row'));
+    expect(toolbar.hitTestable(), findsOneWidget);
+    expect(
+      tester.getRect(toolbar).bottom,
+      lessThanOrEqualTo(smallOuter.bottom),
+    );
+    expect(send.hitTestable(), findsOneWidget);
+    expect(tester.takeException(), isNull);
 
-      tester.view.physicalSize = const Size(1200, 1080);
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(
-        tester.getSize(find.byType(BottomSheet)).height,
-        inInclusiveRange(500, 600),
-      );
-      expect(controller.text, text);
-      expect(send.hitTestable(), findsOneWidget);
-      expect(tester.takeException(), isNull);
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump(const Duration(seconds: 1));
-    },
-    variant: TargetPlatformVariant.only(TargetPlatform.windows),
-  );
+    tester.view.physicalSize = const Size(1200, 1080);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(
+      tester.getSize(find.byType(BottomSheet)).height,
+      inInclusiveRange(500, 600),
+    );
+    expect(controller.text, text);
+    expect(send.hitTestable(), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('手机真实回复弹层保留原有接近全屏高度', (tester) async {
     await _pumpReply(tester, width: 390, height: 760, presentAsSheet: true);
@@ -417,7 +395,6 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(seconds: 1));
   });
-
   for (final (width, scale, username) in [
     (320.0, 1.0, 'IG2018'),
     (390.0, 1.0, 'IG2018'),

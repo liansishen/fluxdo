@@ -3,8 +3,8 @@ import 'package:fluxdo/services/cf_verification_round.dart';
 
 import 'cf_round_fakes.dart';
 
-/// 一轮 CF 验证的契约：结果要么是「定稿值 V 已在 jar」，要么是带类型的
-/// 失败原因；所有完成信号走同一条定稿规则（新值稳定 1.5 秒）。
+/// 一轮 CF 验证的契约：结果要么是「目标值 V 已在 jar」，要么是带类型的
+/// 失败原因；新值稳定 1.5 秒，源站 404 无新值时等 3 秒再落 WebView 现值。
 void main() {
   late FakeRoundClock clock;
   late FakeRoundEnvironment env;
@@ -76,7 +76,20 @@ void main() {
       expect(env.jar, 'fresh');
     });
 
-    test('网络层确认通过却始终读不到新值 → notLanded，计一次失败并恢复旧值', () async {
+    test('普通完成迹象不能在 3 秒后采纳残留旧值', () async {
+      env.webView = 'old';
+      final (outcome, round) = await start();
+
+      round.completionHint('challenge-platform response, no markers');
+      await clock.advance(const Duration(seconds: 4));
+
+      expect(round.isDone, isFalse);
+      expect(env.landed, isEmpty, reason: '只有源站确认通过才允许现值回落');
+      round.giveUp(CfRoundFailure.cancelled, detail: 'test cleanup');
+      await outcome;
+    });
+
+    test('网络层确认通过却始终读不到新值或现值 → notLanded，计一次失败并恢复旧值', () async {
       final (outcome, round) = await start();
 
       round.completionHint('main frame /challenge 404', conclusive: true);
@@ -86,6 +99,69 @@ void main() {
       expect((result as CfRoundFailed).reason, CfRoundFailure.notLanded);
       expect(env.recordedFailures, [round.id]);
       expect(env.jar, 'old', reason: '失败要恢复备份，别让 jar 空着');
+    });
+
+    test('/challenge 直接 404、没有下发挑战 → 宽限后落 WebView 现有的值并通过', () async {
+      // WebView 里早就有一枚有效值（不算新值），jar 里是另一枚
+      env.webView = 'wv-live';
+      env.staleWebView = 'wv-live';
+      final (outcome, round) = await start();
+
+      round.completionHint('main frame /challenge 404', conclusive: true);
+      await clock.advance(const Duration(milliseconds: 2999));
+      expect(round.isDone, isFalse, reason: '3 秒宽限期内仍先等新值');
+      expect(env.landed, isEmpty);
+      await clock.advance(const Duration(milliseconds: 1));
+
+      final result = await outcome;
+      expect((result as CfRoundPassed).clearance, 'wv-live');
+      expect(env.jar, 'wv-live');
+      expect(env.recordedFailures, isEmpty, reason: '不再按 notLanded 计失败');
+      expect(env.landedAt.single, const Duration(seconds: 3));
+    });
+
+    test('源站 404 回落现值仍须通过闸门并确认入 jar', () async {
+      env.webView = 'wv-live';
+      env.staleWebView = 'wv-live';
+      env.gateAccepts = false;
+      final (outcome, round) = await start();
+
+      round.completionHint('main frame /challenge 404', conclusive: true);
+      await clock.advance(const Duration(seconds: 5));
+
+      expect((await outcome as CfRoundFailed).reason, CfRoundFailure.notLanded);
+      expect(env.landed, ['wv-live', 'wv-live', 'wv-live']);
+      expect(env.jar, 'old', reason: '落值失败恢复备份，不能把 404 当作已入 jar');
+      expect(env.recordedFailures, [round.id]);
+    });
+
+    test('WebView 现值就是 jar 原来那枚 → 照样落值通过，交给重放判断是否有效', () async {
+      env.webView = 'old';
+      final (outcome, round) = await start();
+
+      round.completionHint('main frame /challenge 404', conclusive: true);
+      await clock.advance(const Duration(seconds: 4));
+
+      final result = await outcome;
+      expect((result as CfRoundPassed).clearance, 'old');
+      expect(env.jar, 'old');
+      expect(env.recordedFailures, isEmpty);
+    });
+
+    test('宽限期内来了新值（跳转后第二枚）→ 落新值，不落旧值', () async {
+      env.webView = 'wv-live';
+      env.staleWebView = 'wv-live';
+      final (outcome, round) = await start();
+
+      round.completionHint('main frame /challenge 404', conclusive: true);
+      await clock.advance(const Duration(seconds: 1));
+      env.webView = 'fresh';
+      round.clearanceSeen('fresh', source: 'polling');
+      await clock.advance(const Duration(seconds: 3));
+
+      final result = await outcome;
+      expect((result as CfRoundPassed).clearance, 'fresh');
+      expect(env.landed, ['fresh']);
     });
 
     test('闸门始终不采纳定稿值 → 重试后 notLanded', () async {
@@ -101,8 +177,9 @@ void main() {
       expect(env.landed, hasLength(3), reason: '落值确认 3 次');
     });
 
-    test('落值期间再次签值时改落最新值，仍以目标值入 jar 才通过', () async {
+    test('定稿后站点又签一枚（第二枚晚到）→ 落值失败后改落最新值并通过', () async {
       env.landOnlyCurrentWebView = true;
+      // 定稿窗口已过、正在落 v1 时，/challenge 跳转又签了 v2
       env.onLand = (value) {
         if (value == 'v1') env.webView = 'v2';
       };

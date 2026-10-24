@@ -41,7 +41,7 @@ IdleTaskHandle scheduleIdleTask(
   return handle;
 }
 
-/// 取消尚未执行的探测计时器;重复取消安全,不影响其他任务。
+/// 取消尚未执行的探测计时器；重复取消安全，不影响其他任务。
 class IdleTaskHandle {
   Timer? _timer;
   bool _canceled = false;

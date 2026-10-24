@@ -19,8 +19,12 @@
   "error_fileTooBigLimit": "檔案過大：站點附件上限 {limit}，目前 {size}",
   "@error_fileTooBigLimit": {
     "placeholders": {
-      "limit": {"type": "String"},
-      "size": {"type": "String"}
+      "limit": {
+        "type": "String"
+      },
+      "size": {
+        "type": "String"
+      }
     }
   },
   "error_imageTooBig": "圖片檔案過大，請壓縮後重試",

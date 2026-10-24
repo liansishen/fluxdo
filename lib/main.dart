@@ -13,6 +13,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:native_animated_image/native_animated_image.dart'
     show NativeAnimatedImageProvider;
+
 import 'pages/appearance_page.dart';
 import 'pages/topics_page.dart';
 import 'pages/data_management_page.dart';
@@ -29,10 +30,12 @@ import 'widgets/common/notification_icon_button.dart';
 import 'widgets/common/anchor_guard_sliver.dart';
 import 'widgets/common/fullscreen_swipe_back.dart';
 import 'widgets/common/app_glass_settings.dart';
+
 import 'package:common_ui/common_ui.dart';
 import 'package:flutter_displaymode/flutter_displaymode.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+
 import 'services/network/cookie/csrf_token_service.dart';
 import 'services/network/system_proxy_service.dart';
 import 'services/network/cookie/cookie_devtools_extension.dart';
@@ -45,7 +48,9 @@ import 'services/discourse_cache_manager.dart';
 import 'services/linux_webview_render_service.dart';
 import 'services/render_backend_service.dart';
 import 'services/toast_service.dart';
+
 import 'package:m3e_ui/m3e_ui.dart';
+
 import 'l10n/s.dart';
 
 import 'pages/network_settings_page/widgets/cf_select_privacy_dialog.dart';
@@ -67,6 +72,7 @@ import 'services/site_context.dart';
 import 'config/forum_site.dart';
 import 'services/update_service.dart';
 import 'services/update_checker_helper.dart';
+
 import 'package:fluxdo_render/fluxdo_render.dart'
     show FlattenCache, FoldShiftHook, ParagraphLayoutCache;
 
@@ -106,11 +112,14 @@ import 'utils/time_utils.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ai_model_manager/ai_model_manager.dart';
+
 import 'services/app_logger.dart';
 import 'services/network/adapters/platform_adapter.dart';
 import 'providers/preferences_provider.dart';
 import 'providers/theme_provider.dart';
+
 import 'package:dynamic_color/dynamic_color.dart';
+
 import 'widgets/preheat_gate.dart';
 import 'widgets/onboarding_gate.dart';
 import 'widgets/layout/adaptive_scaffold.dart';
@@ -452,6 +461,12 @@ Future<void> main(List<String> args) async {
     'event': 'app_start',
     'message': '应用启动',
   });
+
+  unawaited(
+    WidgetsBinding.instance.waitUntilFirstFrameRasterized.then(
+      (_) => StartupTimeline.mark('first_frame'),
+    ),
+  );
 
   // 启动后台维护:迁移 trash 目录清扫(v7/v8 rename 出来的待删区)+
   // blob 缓存过期扫描(24h 节流)。都在首帧渲染完 + 60s 空闲后跑,
@@ -1028,6 +1043,7 @@ class _MessageBusChannels implements PostLoginStart {
         ref.listenManual<void>(notificationAlertChannelProvider, (_, _) {}),
         ref.listenManual<void>(chatNotificationAlertProvider, (_, _) {}),
         ref.listenManual<void>(logoutChannelProvider, (_, _) {}),
+        // 私信实时追踪（上游 aaea4ae4）：收件箱停留时来新私信自动刷新
         ref.listenManual<PmIncomingState>(pmTrackingProvider, (_, _) {}),
         ref.listenManual<DateTime?>(doNotDisturbProvider, (_, _) {}),
         ref.listenManual<void>(categoryChangesProvider, (_, _) {}),
@@ -1583,9 +1599,8 @@ class _MainPageState extends ConsumerState<MainPage>
       navigatorKey.currentState?.popUntil((route) => route.isFirst);
     }
     if (mounted && action == _AuthErrorDialogAction.clearData) {
-      await Navigator.of(
-        context,
-      ).push(MaterialPageRoute(builder: (_) => const DataManagementPage()));
+      await Navigator.of(context)
+          .push(MaterialPageRoute(builder: (_) => const DataManagementPage()));
     }
   }
 

@@ -830,6 +830,7 @@ class _ToastShell extends StatelessWidget {
     final borderRadius = BorderRadius.circular(radius);
     if (mj == null) {
       return DecoratedBox(
+        // 浮在正文之上需要比导航更明显的落影
         decoration: ShapeDecoration(
           shape: RoundedRectangleBorder(borderRadius: borderRadius),
           shadows: [
@@ -1025,7 +1026,7 @@ class _StackSlot extends StatelessWidget {
 }
 
 /// 从徽章处的圆点横向展开：高度随内容，宽度在 [高度, 内容宽] 之间插值。
-/// 未展开的部分由外层玻璃的圆角裁切。
+/// 未展开的部分由外壳的圆角裁切。
 class _WidthReveal extends SingleChildRenderObjectWidget {
   const _WidthReveal({required this.factor, required super.child});
 

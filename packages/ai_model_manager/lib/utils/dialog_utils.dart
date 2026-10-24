@@ -27,10 +27,26 @@ final ColorFilter _saturationFilter = () {
   const sg = (1 - s) * 0.7152;
   const sb = (1 - s) * 0.0722;
   return ColorFilter.matrix(<double>[
-    sr + s, sg,     sb,     0, 0,
-    sr,     sg + s, sb,     0, 0,
-    sr,     sg,     sb + s, 0, 0,
-    0,      0,      0,      1, 0,
+    sr + s,
+    sg,
+    sb,
+    0,
+    0,
+    sr,
+    sg + s,
+    sb,
+    0,
+    0,
+    sr,
+    sg,
+    sb + s,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
   ]);
 }();
 
@@ -73,8 +89,7 @@ Widget _buildAnimatedBlurBarrier({
       final filter = _createBlurFilter(sigma);
 
       // acrylic 模式下 NavigationRail 背景透明，需跳过并补底
-      final showRail =
-          hasAcrylicRail && MediaQuery.sizeOf(context).width > 600;
+      final showRail = hasAcrylicRail && MediaQuery.sizeOf(context).width > 600;
       if (showRail) {
         const railWidth = 72.0;
         return Stack(
@@ -135,8 +150,7 @@ Future<T?> showAppDialog<T>({
           (enableBlur
               ? _blurBarrierColor(Theme.of(context).brightness)
               : Colors.black54),
-      barrierLabel:
-          barrierLabel ??
+      barrierLabel: barrierLabel ??
           MaterialLocalizations.of(context).modalBarrierDismissLabel,
       transitionDuration: const Duration(milliseconds: 150),
       transitionBuilder: _buildMaterialDialogTransitions,
@@ -194,8 +208,7 @@ Future<T?> showAppBottomSheet<T>({
         to: navigator.context,
       ),
       isScrollControlled: isScrollControlled,
-      barrierLabel:
-          barrierLabel ??
+      barrierLabel: barrierLabel ??
           MaterialLocalizations.of(context).modalBarrierDismissLabel,
       modalBarrierColor: barrierColor ??
           (enableBlur
@@ -330,7 +343,7 @@ class _BlurRawDialogRoute<T> extends PopupRoute<T> {
     Widget child,
   ) {
     if (_transitionBuilder != null) {
-      return _transitionBuilder!(context, animation, secondaryAnimation, child);
+      return _transitionBuilder(context, animation, secondaryAnimation, child);
     }
     return FadeTransition(
       opacity: CurvedAnimation(parent: animation, curve: Curves.linear),

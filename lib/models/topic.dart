@@ -1,5 +1,6 @@
 // 帖子数据模型
 import 'package:flutter/foundation.dart' show listEquals;
+
 import '../l10n/s.dart';
 import '../utils/time_utils.dart';
 import '../utils/url_helper.dart';

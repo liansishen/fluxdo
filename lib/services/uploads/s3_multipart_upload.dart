@@ -8,7 +8,8 @@ import '../network/flux_request_spec.dart';
 import 'upload_trace.dart';
 import 'upload_progress.dart';
 
-/// 仅对象存储 PUT 失败可回退；此时合并请求尚未发出。
+/// 分片 PUT 到对象存储失败（重试用尽）。此时合并请求还没发出、分片上传已
+/// 放弃，换普通上传重来不会产生重复附件。
 class MultipartStorageException implements Exception {
   const MultipartStorageException(this.cause);
 
@@ -27,6 +28,7 @@ class S3MultipartUpload {
           debugStorageFactory?.call() ??
           Dio(BaseOptions(connectTimeout: const Duration(seconds: 30)));
 
+  /// 测试用：替换签名 PUT 的客户端（上层 uploadFile 无法逐次注入）。
   @visibleForTesting
   static Dio Function()? debugStorageFactory;
 
@@ -291,6 +293,7 @@ class S3MultipartUpload {
         checkUploadCancelled(cancelToken);
         if (error is! DioException || CancelToken.isCancel(error)) rethrow;
         final status = error.response?.statusCode;
+
         final retryable =
             error.type == DioExceptionType.connectionError ||
             error.type == DioExceptionType.connectionTimeout ||
