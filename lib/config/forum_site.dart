@@ -6,6 +6,7 @@ enum ForumSite {
     baseUrl: 'https://linux.do',
     host: 'linux.do',
     logoAsset: 'assets/images/sites/linuxdo.png',
+    cfVerificationPath: '/challenge',
   ),
   idcFlare(
     id: 'idcflare',
@@ -13,6 +14,7 @@ enum ForumSite {
     baseUrl: 'https://idcflare.com',
     host: 'idcflare.com',
     logoAsset: 'assets/images/sites/idcflare.png',
+    cfVerificationPath: '/',
   );
 
   const ForumSite({
@@ -21,6 +23,7 @@ enum ForumSite {
     required this.baseUrl,
     required this.host,
     required this.logoAsset,
+    required this.cfVerificationPath,
   });
 
   final String id;
@@ -28,6 +31,9 @@ enum ForumSite {
   final String baseUrl;
   final String host;
   final String logoAsset;
+
+  /// 验证页必须访问本站受 CF 保护的入口，不能假定各站都有 /challenge。
+  final String cfVerificationPath;
 
   bool get isLinuxDo => this == linuxDo;
 

@@ -488,7 +488,11 @@ class PreloadedDataService {
   ///
   /// 适用于登录 WebView 已经拿到完整页面的场景，避免重复请求首页。
   /// 返回是否成功解析到 data-preloaded。
-  Future<bool> hydrateFromHtml(String html) async {
+  /// 启动预加载可接受访客首页；登录收口仍要求快照包含当前用户。
+  Future<bool> hydrateFromHtml(
+    String html, {
+    bool allowAnonymous = false,
+  }) async {
     _clearCachedData();
     final parsed = await _parsePreloadedDataFromHtml(html);
     if (!parsed) {
@@ -496,7 +500,7 @@ class PreloadedDataService {
       return false;
     }
 
-    if (!_hasReusableBootstrapData()) {
+    if (!_hasReusableBootstrapData(allowAnonymous: allowAnonymous)) {
       debugPrint(
         '[PreloadedData] HTML 快照缺少完整引导数据: '
         'hasSetup=$_hasDiscourseSetup, '
@@ -755,9 +759,9 @@ class PreloadedDataService {
     }());
   }
 
-  bool _hasReusableBootstrapData() {
+  bool _hasReusableBootstrapData({required bool allowAnonymous}) {
     return _hasDiscourseSetup &&
-        _currentUser != null &&
+        (allowAnonymous || _currentUser != null) &&
         _siteSettings != null &&
         _site != null;
   }

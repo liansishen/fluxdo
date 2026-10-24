@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' hide Category;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart' show SpringDescription, SpringSimulation;
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:app_icons/app_icons.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -78,6 +79,9 @@ final scrollToTopProvider = StateNotifierProvider<ScrollToTopNotifier, int>((
 
 /// 顶栏/底栏可见性进度（0.0 = 完全隐藏, 1.0 = 完全显示）
 final barVisibilityProvider = StateProvider<double>((ref) => 1.0);
+
+/// 用户朝列表顶部滚动时，主 FAB 切换为刷新入口。
+final fabRefreshModeProvider = StateProvider<bool>((ref) => false);
 
 /// FAB 触发刷新信号
 final fabRefreshSignalProvider =
@@ -853,6 +857,7 @@ class _TopicsPageState extends ConsumerState<TopicsPage>
   void _handleTabChange() {
     if (_tabController.indexIsChanging) return;
     if (_currentTabIndex == _tabController.index) return;
+    ref.read(fabRefreshModeProvider.notifier).state = false;
     setState(() {
       _currentTabIndex = _tabController.index;
     });
@@ -1180,6 +1185,7 @@ class _TopicsPageState extends ConsumerState<TopicsPage>
     // 监听滚动到顶部的通知：动画展开头部；列表回顶由 _TopicListState
     // 各自监听同一信号处理（overlay 头部与列表滚动已解耦）
     ref.listen(scrollToTopProvider, (previous, next) {
+      ref.read(fabRefreshModeProvider.notifier).state = false;
       _headerController.expand();
     });
 
@@ -1606,6 +1612,19 @@ class _TopicsPageState extends ConsumerState<TopicsPage>
       }
       // 发布"距顶进度"到 NavActionBus，底栏据此做动态图标切换
       _publishHomeScrollProgress(metrics.pixels);
+      if (widget.isActive && metrics.pixels <= metrics.minScrollExtent) {
+        ref.read(fabRefreshModeProvider.notifier).state = false;
+      }
+    }
+
+    // 只跟随用户方向，不让惯性、回弹或程序回顶把加号误切成刷新。
+    if (widget.isActive && notification is UserScrollNotification) {
+      if (notification.metrics.pixels <= notification.metrics.minScrollExtent ||
+          notification.direction == ScrollDirection.reverse) {
+        ref.read(fabRefreshModeProvider.notifier).state = false;
+      } else if (notification.direction == ScrollDirection.forward) {
+        ref.read(fabRefreshModeProvider.notifier).state = true;
+      }
     }
 
     // 拖拽滚动开始时，清理 pointer scroll 的状态，避免影响松手吸附;

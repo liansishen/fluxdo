@@ -10,9 +10,10 @@ import '../../models/shortcut_binding.dart';
 import '../../providers/shortcut_provider.dart';
 import '../../providers/preferences_provider.dart';
 import '../../utils/responsive.dart';
-import '../../pages/topics_page.dart' show barVisibilityProvider;
+import '../../pages/topics_page.dart'
+    show barVisibilityProvider, fabRefreshModeProvider;
 
-/// 首页固定创作入口与独立刷新工具。菜单不使用遮罩或背景模糊。
+/// 首页创作菜单与刷新工具，朝顶部滚动时主按钮切换为刷新。
 class TopicsFab extends ConsumerStatefulWidget {
   const TopicsFab({
     super.key,
@@ -208,15 +209,21 @@ class _TopicsFabState extends ConsumerState<TopicsFab>
     action();
   }
 
+  void _refreshTopics() {
+    ref.read(fabRefreshModeProvider.notifier).state = false;
+    widget.onRefresh();
+  }
+
   @override
   Widget build(BuildContext context) {
     final barVisibility = ref.watch(barVisibilityProvider).clamp(0.0, 1.0);
     final hideBarOnScroll = ref.watch(
       preferencesProvider.select((p) => p.hideBarOnScroll),
     );
-    final showRefresh = ref.watch(
-      preferencesProvider.select((p) => p.homeRefreshButton),
-    );
+    final refreshMode = widget.canCreate && ref.watch(fabRefreshModeProvider);
+    final showRefresh =
+        ref.watch(preferencesProvider.select((p) => p.homeRefreshButton)) &&
+        !refreshMode;
     // 与底栏使用相同规则和同一逐帧进度，不再叠加延迟动画。
     // 宽屏使用 NavigationRail，没有滚动隐藏的底栏，FAB 保持可见。
     final visibility =
@@ -225,7 +232,7 @@ class _TopicsFabState extends ConsumerState<TopicsFab>
         ? barVisibility
         : 1.0;
     _scrollVisibility = visibility;
-    if (_expanded && visibility < 1) _queueHiddenMenuClose();
+    if (_expanded && (visibility < 1 || refreshMode)) _queueHiddenMenuClose();
     final media = MediaQuery.of(context);
     final barHeight = (media.padding.bottom - media.viewPadding.bottom).clamp(
       0.0,
@@ -271,7 +278,7 @@ class _TopicsFabState extends ConsumerState<TopicsFab>
                                 foregroundColor: scheme.onSurfaceVariant,
                                 minimumSize: const Size(48, 48),
                               ),
-                              onPressed: widget.onRefresh,
+                              onPressed: _refreshTopics,
                               icon: const Icon(Symbols.refresh_rounded),
                             ),
                           ),
@@ -307,6 +314,8 @@ class _TopicsFabState extends ConsumerState<TopicsFab>
                               focusNode: _triggerFocus,
                               tooltip: _expanded
                                   ? context.l10n.common_close
+                                  : refreshMode
+                                  ? context.l10n.common_refresh
                                   : context.l10n.topicsScreen_createTopic,
                               elevation: _expanded ? 0 : 3,
                               // 墨笺：墨色圆形钮，展开时也不变色（见 mojian_theme 的
@@ -332,10 +341,12 @@ class _TopicsFabState extends ConsumerState<TopicsFab>
                                       scheme.onPrimary,
                                       t,
                                     ),
-                              onPressed: _toggle,
+                              onPressed: refreshMode ? _refreshTopics : _toggle,
                               child: Transform.rotate(
-                                angle: t * 0.7853981633974483,
-                                child: const Icon(Symbols.add_rounded),
+                                angle: refreshMode ? 0 : t * 0.7853981633974483,
+                                child: refreshMode
+                                    ? const Icon(Symbols.refresh_rounded)
+                                    : const Icon(Symbols.add_rounded),
                               ),
                             ),
                           );

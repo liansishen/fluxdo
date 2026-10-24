@@ -647,7 +647,7 @@ class BrowserTrustCoordinator {
       final hydrated =
           html != null &&
           html.isNotEmpty &&
-          await _preload.hydrateFromHtml(html);
+          await _preload.hydrateFromHtml(html, allowAnonymous: true);
       if (cancellation.isCancelled) return false;
       _log(
         'startup WebView snapshot html=${html != null && html.isNotEmpty} hydrated=$hydrated reason=$reason',

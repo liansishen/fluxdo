@@ -16,6 +16,7 @@ import 'cf_challenge_logger.dart';
 import 'cf_clearance_authority.dart';
 import 'cf_clearance_refresh_service.dart';
 import 'cf_verification_round.dart';
+import 'site_context.dart';
 import 'embedded_browser_controller_pool.dart';
 import 'toast_service.dart';
 import 'webview_settings.dart';
@@ -461,7 +462,9 @@ class CfChallengeService {
     return showManualVerify(context, forceForeground);
   }
 
-  static String get _verifyUrl => '${AppConstants.baseUrl}/challenge';
+  static String get _verifyUrl => Uri.parse(
+    AppConstants.baseUrl,
+  ).resolve(SiteContext.current.cfVerificationPath).toString();
 
   /// 每一轮验证页的展示状态（overlay、页面 key、收尾动作）。
   final Map<int, _VerifyPresentation> _presentations = {};

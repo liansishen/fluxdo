@@ -1,3 +1,4 @@
+import 'package:app_icons/app_icons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,7 +11,8 @@ import 'package:fluxdo/providers/preferences_provider.dart';
 import 'package:fluxdo/utils/platform_utils.dart';
 import 'package:fluxdo/widgets/keyboard_shortcut_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:fluxdo/pages/topics_page.dart' show barVisibilityProvider;
+import 'package:fluxdo/pages/topics_page.dart'
+    show barVisibilityProvider, fabRefreshModeProvider;
 import 'package:fluxdo/widgets/topics/topics_fab.dart';
 
 void main() {
@@ -118,6 +120,64 @@ void main() {
     expect(find.byType(BackdropFilter), findsNothing);
     expect(find.byType(ModalBarrier), findsNWidgets(barrierCount));
     expect(tester.takeException(), isNull);
+  });
+
+  for (final auxiliaryRefresh in [false, true]) {
+    testWidgets('朝顶部滚动后主按钮刷新，刷新后恢复加号：独立刷新=$auxiliaryRefresh', (tester) async {
+      await container
+          .read(preferencesProvider.notifier)
+          .setHomeRefreshButton(auxiliaryRefresh);
+      await pumpFab(tester, screen: const Size(1000, 800));
+      final center = tester.getCenter(trigger);
+      container.read(fabRefreshModeProvider.notifier).state = true;
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(
+          of: trigger,
+          matching: find.byIcon(Symbols.refresh_rounded),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.getCenter(trigger), center);
+      expect(refresh, findsNothing, reason: '主按钮已用于刷新，不重复显示辅助刷新');
+      await tester.tap(trigger);
+      await tester.pumpAndSettle();
+      expect(refreshCount, 1);
+      expect(createCount, 0);
+      expect(items, findsNothing);
+      expect(
+        find.descendant(
+          of: trigger,
+          matching: find.byIcon(Symbols.add_rounded),
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(trigger);
+      await tester.pumpAndSettle();
+      await tester.tap(items.last);
+      await tester.pumpAndSettle();
+      expect(createCount, 1);
+      expect(refreshCount, 1);
+    });
+  }
+
+  testWidgets('切换刷新模式收起创作菜单，恢复加号后菜单不自行展开', (tester) async {
+    await pumpFab(tester);
+    await tester.tap(trigger);
+    await tester.pumpAndSettle();
+    expect(items, findsNWidgets(2));
+    container.read(fabRefreshModeProvider.notifier).state = true;
+    await tester.pumpAndSettle();
+    expect(items, findsNothing);
+    container.read(fabRefreshModeProvider.notifier).state = false;
+    await tester.pumpAndSettle();
+    expect(items, findsNothing);
+    await tester.tap(trigger);
+    await tester.pumpAndSettle();
+    await tester.tap(items.first);
+    await tester.pumpAndSettle();
+    expect(draftsCount, 1);
+    expect(refreshCount, 0);
   });
 
   testWidgets('菜单整块可点击且右对齐，发帖和草稿各触发一次', (tester) async {

@@ -105,7 +105,7 @@ just release -- patch --dry-run
 - 启动时并行读取网络签名，代理启动前补种签名并处理 VPN 压制；Windows 保持系统代理 → `NetworkSettingsService` → 后台 UA → WebView Environment 顺序。rhttp 未启用时不在冷启动初始化运行时。
 - Rust 原生产物需与 Dart FFI 同批构建，Windows 通过 `native:prepare windows --release` 暂存 DLL。内置公共 ECH 域名含 LINUX DO、静态资源和 IDCFlare，关闭开关同时关闭公共兜底，但不关闭原域名 HTTPS/ECH 查询；Selector 覆盖范围独立，不随公共 ECH 域名扩展。
 - PM、勿扰与分类变更订阅由登录后启动项统一持有和释放；MessageBus 轮询、延迟队列和私信请求均检查会话或请求代际。列表事件按版本消费，静音不阻断已读与删除恢复同步。
-- 首页刷新按钮偏好独立于 FAB，标签与话题共用通知级别面板；预览入口必须使用 `MorphingDialogAnchor` 捕获真实来源，不再传旧的 `anchorRect`。
+- 首页辅助刷新按钮偏好独立于主 FAB；主 FAB 朝列表顶部滚动时切换为刷新，点击后回顶刷新并恢复加号，向下浏览、到达顶部或切换分类也恢复创作模式。切换刷新模式会收起创作菜单，避免透明菜单残留；辅助刷新开关不禁用主 FAB 的滚动刷新功能。标签与话题共用通知级别面板；预览入口必须使用 `MorphingDialogAnchor` 捕获真实来源，不再传旧的 `anchorRect`。
 - 「阅读设置 → 自动载入新话题」默认关闭，持久化键为 `pref_auto_load_topic_updates`。启用后仅前台、可见、停在顶部且未拖动的列表自动消费更新；2 秒攒批、请求最小间隔 30 秒。关闭、离开页面或切换筛选时取消旧定时器，插入话题时保留开头的置顶行。
 - CF 验证轮次收到 `/challenge` 的源站 404 后，先等待 3 秒；若始终没有新 Cookie，才采纳 WebView 现值。现值也必须通过权威闸门并确认写入 jar，不放宽主站/双站 Cookie 准入。
 - Windows 工作区回归使用 `dart tool/project_tasks.dart test:all --no-pub`，运行前将 `build\windows\x64\runner\Release` 加入进程 `PATH`，供 `flutter_js` 加载 `quickjs_c_bridge.dll`；测试命令同时覆盖 `fluxdo_render` 等含测试目录的包。
