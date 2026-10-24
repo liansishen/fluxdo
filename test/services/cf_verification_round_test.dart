@@ -54,8 +54,14 @@ void main() {
       );
       expect(env.recordedFailures, isEmpty);
       expect(env.resets, 1);
-      expect(env.calls, containsAllInOrder(['stopRefresh', 'backup', 'prime', 'present']));
-      expect(env.calls, containsAllInOrder(['land', 'passed', 'dismiss', 'restartRefresh']));
+      expect(
+        env.calls,
+        containsAllInOrder(['stopRefresh', 'backup', 'prime', 'present']),
+      );
+      expect(
+        env.calls,
+        containsAllInOrder(['land', 'passed', 'dismiss', 'restartRefresh']),
+      );
     });
 
     test('轮次自己读 WebView：只收到完成迹象也能定稿', () async {
@@ -93,6 +99,32 @@ void main() {
       final result = await outcome;
       expect((result as CfRoundFailed).reason, CfRoundFailure.notLanded);
       expect(env.landed, hasLength(3), reason: '落值确认 3 次');
+    });
+
+    test('落值期间再次签值时改落最新值，仍以目标值入 jar 才通过', () async {
+      env.landOnlyCurrentWebView = true;
+      env.onLand = (value) {
+        if (value == 'v1') env.webView = 'v2';
+      };
+      final (outcome, round) = await start();
+      env.webView = 'v1';
+      round.clearanceSeen('v1', source: 'polling');
+      await clock.advance(const Duration(seconds: 3));
+      expect((await outcome as CfRoundPassed).clearance, 'v2');
+      expect(env.jar, 'v2');
+      expect(env.landed, ['v1', 'v2']);
+    });
+
+    test('落值最多换一次新值，不追逐持续变化的值', () async {
+      env.landOnlyCurrentWebView = true;
+      env.onLand = (value) => env.webView = value == 'v1' ? 'v2' : 'v3';
+      final (outcome, round) = await start();
+      env.webView = 'v1';
+      round.clearanceSeen('v1', source: 'polling');
+      await clock.advance(const Duration(seconds: 5));
+      expect((await outcome as CfRoundFailed).reason, CfRoundFailure.notLanded);
+      expect(env.landed, ['v1', 'v2', 'v2', 'v2']);
+      expect(env.jar, 'old');
     });
 
     test('值一直在变、稳定不下来 → 不落值，按超时收口', () async {

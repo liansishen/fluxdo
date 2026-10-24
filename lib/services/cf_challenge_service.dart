@@ -70,7 +70,9 @@ class CfChallengeService {
   }
 
   /// 同 [waitForActiveVerification]，但给出完整结果（超时按 timeout 失败）。
-  Future<CfRoundOutcome?> waitForActiveRound({required Duration timeout}) async {
+  Future<CfRoundOutcome?> waitForActiveRound({
+    required Duration timeout,
+  }) async {
     final round = _rounds.active;
     if (round == null) return null;
     return round.outcome.timeout(
@@ -173,6 +175,7 @@ class CfChallengeService {
   BuildContext? _context;
   static DateTime? _lastToastAt;
   Future<bool>? _activeSessionCompatPrompt;
+
   /// 上次拒绝「切兼容」的时刻;超过 [_sessionCompatDeclineTtl] 后可再问。
   DateTime? _sessionCompatDeclinedAt;
   Completer<BuildContext>? _contextReadyCompleter;
@@ -342,10 +345,7 @@ class CfChallengeService {
         // 关掉自动过盾后不必再问兼容模式 —— 后续撞盾会静默 reject 并由
         // ErrorView 给出手动验证入口,不再走到本询问。
         _sessionCompatDeclinedAt = DateTime.now();
-        showGlobalMessage(
-          S.current.cf_autoVerifyDisabledHint,
-          isError: false,
-        );
+        showGlobalMessage(S.current.cf_autoVerifyDisabledHint, isError: false);
         CfChallengeLogger.log(
           '[PROMPT] User disabled auto verify from compat prompt',
         );
@@ -489,9 +489,7 @@ class CfChallengeService {
       _contextReadyCompleter ??= Completer<BuildContext>();
       debugPrint('[CfChallenge] Waiting for context to be ready...');
       try {
-        ctx = await _contextReadyCompleter!.future.timeout(
-          _contextWaitTimeout,
-        );
+        ctx = await _contextReadyCompleter!.future.timeout(_contextWaitTimeout);
       } on TimeoutException {
         debugPrint(
           '[CfChallenge] 等待 context 超时 '
@@ -939,6 +937,7 @@ class _CfChallengePageState extends State<CfChallengePage> {
   bool _hideOriginFallbackPage = false;
   bool _checkingOriginFallback = false;
   bool _originFallbackNeedsAction = false;
+
   /// 已把完成交给验证轮次定稿（页面盖住 WebView、停掉自己的探测，等轮次
   /// 收口后被撤下）。
   bool _handedOff = false;
@@ -968,9 +967,8 @@ class _CfChallengePageState extends State<CfChallengePage> {
   static const _completionProbeTimeout = Duration(seconds: 8);
   static const _noChallengeProbeTimeout = Duration(milliseconds: 1800);
 
-  /// 验证页面加载时 WebView 中的 cf_clearance 快照
-  /// 用于区分「旧值残留」和「验证后新设的值」
-  String? _initialCfClearance;
+  /// 验证开始前的旧值集合：jar 备份与 WebView 可能各残留不同的值。
+  final Set<String> _initialCfClearances = {};
 
   int get _activeMaxCheckCount => _isBackground
       ? (widget.foregroundAfter?.inSeconds ?? _backgroundMaxCheckCount)
@@ -1001,31 +999,21 @@ class _CfChallengePageState extends State<CfChallengePage> {
     return _isFreshClearance(value) ? value : null;
   }
 
-  /// 记录验证开始时的旧 cf_clearance 值
-  /// 优先使用 showManualVerify 传入的备份值（可靠），WebView 读取作为补充
-  /// 解决 Windows 上 initState 时 controller 为 null 导致 _initialCfClearance
-  /// 为 null，进而无法过滤残留旧值、误判为验证成功的问题
+  /// 同步记录备份旧值，再补充读取 WebView；慢快照可能已是新值，不能收录。
   Future<void> _snapshotInitialClearance() async {
-    // 优先使用从 showManualVerify 传入的备份旧值（最可靠）
-    if (widget.oldCfClearanceValue != null &&
-        widget.oldCfClearanceValue!.isNotEmpty) {
-      _initialCfClearance = widget.oldCfClearanceValue;
-      debugPrint(
-        '[CfChallenge] 使用备份的旧 cf_clearance 作为初始快照 '
-        '(${_initialCfClearance!.length} chars)',
-      );
-      return;
+    final backup = widget.oldCfClearanceValue;
+    if (backup != null && backup.isNotEmpty) {
+      _initialCfClearances.add(backup);
     }
-
-    // 兜底：从 WebView 读取（可能不可靠，但聊胜于无）
     try {
+      final stopwatch = Stopwatch()..start();
       final cookieValue = await _readCookieValue('cf_clearance');
-      _initialCfClearance = cookieValue;
-      if (_initialCfClearance != null && _initialCfClearance!.isNotEmpty) {
-        debugPrint(
-          '[CfChallenge] ⚠️ 验证页加载时 WebView 仍存在旧 cf_clearance '
-          '(${_initialCfClearance!.length} chars)，将忽略该值',
-        );
+      if (stopwatch.elapsed > const Duration(seconds: 2)) {
+        debugPrint('[CfChallenge] 快照读取过慢，不记录 WebView 中的 cf_clearance');
+        return;
+      }
+      if (cookieValue != null && cookieValue.isNotEmpty) {
+        _initialCfClearances.add(cookieValue);
       }
     } catch (e) {
       debugPrint('[CfChallenge] 快照 cf_clearance 失败: $e');
@@ -1448,7 +1436,10 @@ class _CfChallengePageState extends State<CfChallengePage> {
               '$_activeMaxCheckCount seconds, giving up without prompting',
             );
             timer.cancel();
-            _giveUp(CfRoundFailure.timeout, detail: 'silent background timeout');
+            _giveUp(
+              CfRoundFailure.timeout,
+              detail: 'silent background timeout',
+            );
             return;
           }
           CfChallengeLogger.log(
@@ -1506,9 +1497,7 @@ class _CfChallengePageState extends State<CfChallengePage> {
 
       try {
         final hasChallenge = await _hasVisibleChallenge(controller);
-        if (_hasPopped ||
-            _handedOff ||
-            generation != _loadGeneration) {
+        if (_hasPopped || _handedOff || generation != _loadGeneration) {
           return;
         }
         if (hasChallenge) {
@@ -1570,7 +1559,10 @@ class _CfChallengePageState extends State<CfChallengePage> {
             '[VERIFY] Completion signal: '
             '${reason ?? 'fresh cf_clearance during completion probe'}',
           );
-          widget.signals.clearanceSeen(cookieValue!, source: 'completion probe');
+          widget.signals.clearanceSeen(
+            cookieValue!,
+            source: 'completion probe',
+          );
           widget.signals.completionHint(reason ?? 'completion probe');
           _handOff('完成探测读到新值');
           return;
@@ -1772,12 +1764,7 @@ class _CfChallengePageState extends State<CfChallengePage> {
 
   bool _isFreshClearance(String? cookieValue) {
     if (cookieValue == null || cookieValue.isEmpty) return false;
-    if (_initialCfClearance != null &&
-        _initialCfClearance!.isNotEmpty &&
-        cookieValue == _initialCfClearance) {
-      return false;
-    }
-    return true;
+    return !_initialCfClearances.contains(cookieValue);
   }
 
   bool _isVerifyUrl(WebUri? url) {
@@ -1920,10 +1907,7 @@ class _CfChallengePageState extends State<CfChallengePage> {
   int _revealStateWatchGeneration = 0;
 
   void _revealChallengeWebView() {
-    if (_hasPopped ||
-        !mounted ||
-        _handedOff ||
-        _challengeWebViewVisible) {
+    if (_hasPopped || !mounted || _handedOff || _challengeWebViewVisible) {
       return;
     }
     _hasSeenChallenge = true;
@@ -2230,10 +2214,7 @@ class _CfChallengePageState extends State<CfChallengePage> {
     }
     _loadStopFallbackTimer ??= Timer(_loadStopFallbackDelay, () {
       _loadStopFallbackTimer = null;
-      if (_hasMarkedPageReady ||
-          _hasPopped ||
-          _handedOff ||
-          _progress < 0.95) {
+      if (_hasMarkedPageReady || _hasPopped || _handedOff || _progress < 0.95) {
         return;
       }
       _handlePageReady(controller, reason: 'progress fallback');

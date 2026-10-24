@@ -9,6 +9,26 @@ import '../proxy/proxy_settings_service.dart';
 import '../rhttp/rhttp_settings_service.dart';
 import '../system_proxy_service.dart';
 
+/// 首次使用时才初始化 Rust 运行时；失败后本进程改用其他网络引擎。
+class RhttpRuntime {
+  RhttpRuntime._();
+
+  static Future<bool>? _init;
+
+  static Future<bool> ensureInitialized() {
+    return _init ??= () async {
+      try {
+        await rhttp.Rhttp.init().timeout(const Duration(seconds: 5));
+        return true;
+      } catch (e) {
+        debugPrint('[rhttp] 初始化超时或失败: $e');
+        await RhttpSettingsService.instance.forceDisable();
+        return false;
+      }
+    }();
+  }
+}
+
 /// 基于 rhttp (Rust reqwest) 的 Dio 适配器
 ///
 /// 支持 HTTP/2 多路复用、DOH DNS 解析（请求前静态注入）、
@@ -263,6 +283,9 @@ class RhttpAdapter implements HttpClientAdapter {
   }
 
   Future<rhttp.RhttpClient> _createClient(_PreparedClientConfig config) async {
+    if (!await RhttpRuntime.ensureInitialized()) {
+      throw StateError('rhttp runtime is unavailable');
+    }
     final ns = _networkSettings.current;
     final ps = _proxySettings.current;
 

@@ -277,7 +277,7 @@ mixin _UploadsMixin on _DiscourseServiceBase {
     checkUploadCancelled(cancelToken);
     onProgress?.call(const UploadProgress(phase: UploadPhase.preparing));
     final uploadTrace = UploadTrace();
-    final direct = await waitForUpload(
+    var direct = await waitForUpload(
       UploadSettings.shouldUseMultipart(
         trace: uploadTrace,
         loadSiteSettings: PreloadedDataService().getSiteSettings,
@@ -285,11 +285,32 @@ mixin _UploadsMixin on _DiscourseServiceBase {
       cancelToken,
     );
     const maxRetries = 3;
+    // 同时兼容 Windows 路径与其他平台的路径分隔符。
+    final fileName =
+        filenameOverride ?? filePath.replaceAll('\\', '/').split('/').last;
+    final isImage = _imageExtensions.contains(
+      fileName.split('.').last.toLowerCase(),
+    );
+    if (!isImage && filenameOverride == null) {
+      final maxBytes = await waitForUpload(
+        MediaUploadLimits.load(),
+        cancelToken,
+      );
+      final size = await File(filePath).length();
+      checkUploadCancelled(cancelToken);
+      if (maxBytes != null && size > maxBytes) {
+        throw Exception(
+          S.current.error_fileTooBigLimit(
+            UploadResult.formatFileSize(maxBytes),
+            UploadResult.formatFileSize(size),
+          ),
+        );
+      }
+    }
 
     for (int attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         checkUploadCancelled(cancelToken);
-        final fileName = filenameOverride ?? filePath.split('/').last;
 
         dynamic data;
         if (direct) {
@@ -372,6 +393,16 @@ mixin _UploadsMixin on _DiscourseServiceBase {
         }
 
         throw Exception(S.current.error_uploadNoUrl);
+      } on MultipartStorageException {
+        checkUploadCancelled(cancelToken);
+        uploadTrace.event(
+          'upload_route',
+          fields: {'mode': 'standard', 'reason': 'multipart_storage_failed'},
+        );
+        direct = false;
+        // 回退不消耗普通上传自己的限流重试次数。
+        attempt = -1;
+        continue;
       } on DioException catch (e) {
         checkUploadCancelled(cancelToken);
         if (CancelToken.isCancel(e)) rethrow;
@@ -396,7 +427,9 @@ mixin _UploadsMixin on _DiscourseServiceBase {
         }
 
         if (e.response?.statusCode == 413) {
-          throw Exception(S.current.error_imageTooBig);
+          throw Exception(
+            isImage ? S.current.error_imageTooBig : S.current.error_fileTooBig,
+          );
         }
         if (e.response?.statusCode == 422) {
           final data = e.response?.data;
@@ -415,6 +448,22 @@ mixin _UploadsMixin on _DiscourseServiceBase {
     // 不可达，但编译器需要
     throw Exception(S.current.error_uploadNoUrl);
   }
+
+  static const Set<String> _imageExtensions = {
+    'jpg',
+    'jpeg',
+    'png',
+    'gif',
+    'webp',
+    'avif',
+    'heic',
+    'heif',
+    'bmp',
+    'ico',
+    'svg',
+    'tif',
+    'tiff',
+  };
 
   /// 上传图片（uploadFile 的别名，保持向后兼容）
   Future<UploadResult> uploadImage(
@@ -443,7 +492,7 @@ mixin _UploadsMixin on _DiscourseServiceBase {
         '请先压缩后再上传',
       );
     }
-    final base = filePath.split('/').last;
+    final base = filePath.replaceAll('\\', '/').split('/').last;
     final dot = base.lastIndexOf('.');
     final stem = dot > 0 ? base.substring(0, dot) : base;
     final xzName = '$stem.xz';

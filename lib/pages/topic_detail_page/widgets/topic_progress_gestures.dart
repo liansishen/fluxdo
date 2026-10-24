@@ -117,8 +117,7 @@ class _TopicProgressGesturesState extends ConsumerState<TopicProgressGestures>
 
     final box = context.findRenderObject() as RenderBox?;
     if (box == null || !box.hasSize) return;
-    final widgetTopLeft = box.localToGlobal(Offset.zero);
-    final widgetTopCenter = widgetTopLeft + Offset(box.size.width / 2, 0);
+    final pressArea = box.localToGlobal(Offset.zero) & box.size;
 
     final items = [
       for (final action in actions)
@@ -132,16 +131,26 @@ class _TopicProgressGesturesState extends ConsumerState<TopicProgressGestures>
         }(),
     ];
 
+    // 经典的悬浮条居中，菜单总是完整半圆；墨笺阅读条的楼层数字贴着右边缘，
+    // 按屏幕边界收窄扇形、必要时加大半径，右侧的项不再出屏，也不折到底栏里
+    final mq = MediaQuery.of(context);
+    final placement = RadialMenuPlacement.fit(
+      anchor: pressArea,
+      itemCount: items.length,
+      screenSize: mq.size,
+      safePadding: mq.padding,
+      maxTilt: math.pi / 2,
+      allowShift: true,
+    );
     _menuSession.open(
       context: context,
-      center: widgetTopCenter,
-      pressArea: Rect.fromLTWH(
-        widgetTopLeft.dx,
-        widgetTopLeft.dy,
-        box.size.width,
-        box.size.height,
-      ),
+      center: placement.center,
+      pressArea: pressArea,
       items: items,
+      direction: placement.direction,
+      radius: placement.radius,
+      sweepStart: placement.sweepStart,
+      sweepEnd: placement.sweepEnd,
     );
 
     // 长按触发，让进度环继续走到 1（视觉上"环走完=菜单完全展开"）
@@ -269,9 +278,7 @@ class _TopicProgressGesturesState extends ConsumerState<TopicProgressGestures>
       direction: _swipeDirection,
       action: _swipeAction,
       triggerable: _swipeTriggerable,
-      delta: (_swipeStart == null)
-          ? Offset.zero
-          : _swipeCurrent - _swipeStart!,
+      delta: (_swipeStart == null) ? Offset.zero : _swipeCurrent - _swipeStart!,
       triggerDistance: _kSwipeTriggerDistance,
     );
   }
@@ -297,8 +304,8 @@ class _TopicProgressGesturesState extends ConsumerState<TopicProgressGestures>
               GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
                 () => LongPressGestureRecognizer(duration: _longPressTimeout),
                 (instance) {
-                  instance.onLongPressStart =
-                      (d) => _handleLongPressStart(d, prefs);
+                  instance.onLongPressStart = (d) =>
+                      _handleLongPressStart(d, prefs);
                   instance.onLongPressMoveUpdate = _handleLongPressMoveUpdate;
                   instance.onLongPressEnd = _handleLongPressEnd;
                   instance.onLongPressCancel = _handleLongPressCancel;
@@ -448,8 +455,11 @@ class _SwipePreviewOverlay extends StatelessWidget {
       return const IgnorePointer(child: SizedBox.shrink());
     }
     final meta = progressGestureActionMeta(context, action!);
-    final progress = (math.max(delta.dx.abs(), delta.dy.abs()) / triggerDistance)
-        .clamp(0.0, 1.0);
+    final progress =
+        (math.max(delta.dx.abs(), delta.dy.abs()) / triggerDistance).clamp(
+          0.0,
+          1.0,
+        );
 
     Offset pillOffset;
     switch (direction!) {
@@ -462,7 +472,7 @@ class _SwipePreviewOverlay extends StatelessWidget {
       case _SwipeDirection.up:
         final dy =
             (delta.dy * _pillFollowFactor).clamp(-_pillFollowMax, 0.0) -
-                _pillBaseOffset;
+            _pillBaseOffset;
         pillOffset = Offset(0, dy);
     }
 

@@ -2,6 +2,7 @@
 # 打 cfluxdo 的 Flatpak 单文件包（x86_64）
 # 用法: tool/flatpak_build.sh <输出 .flatpak 路径>
 # 依赖: flatpak、flatpak-builder、flathub 上的 org.gnome.Sdk//48 与 llvm20 扩展；
+# 可用 FLUTTER_ROOT 指定 SDK，CFX_BUILD_NAME / CFX_BUILD_NUMBER 覆盖测试包版本。
 #       WPE 预编译层已解压到 $WPE_LAYER_DIR（上游 flatpak-wpe-layer-gnome48-v2 资产）
 # 只打已提交的代码（git archive，含子模块），工作区里的改动不进包
 set -euo pipefail
@@ -11,13 +12,16 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 WORK=${FLATPAK_WORK:-/srv/flatpak}
 WPE_LAYER_DIR=${WPE_LAYER_DIR:-$WORK/wpe-layer}
 FLUTTER_ROOT=${FLUTTER_ROOT:-$(dirname "$(dirname "$(readlink -f "$(command -v flutter)")")")}
+# worktree SDK 的 .git 指向公共仓库，沙箱也必须能读取该目录。
+FLUTTER_GIT_DIR=$(cd "$FLUTTER_ROOT" && readlink -f "$(git rev-parse --git-common-dir)")
 PUB_CACHE=${PUB_CACHE:-$HOME/.pub-cache}
 CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}
 RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}
 
 version=$(sed -n 's/^version: *//p' "$ROOT/pubspec.yaml")
-BUILD_NAME=${version%%+*}
-BUILD_NUMBER=${version##*+}
+# 仅覆盖本次构建参数，不修改仓库里的发布版本。
+BUILD_NAME=${CFX_BUILD_NAME:-${version%%+*}}
+BUILD_NUMBER=${CFX_BUILD_NUMBER:-${version##*+}}
 
 # 1. 干净源码树
 SRC=$WORK/stage/source-tree
@@ -30,7 +34,8 @@ echo "==> 源码树 $(git -C "$ROOT" rev-parse --short HEAD) → $SRC（$BUILD_N
 # 2. 填清单占位符
 MANIFEST=$WORK/stage/com.github.molchuan.cfluxdo.yml
 sed -e "s#@WPE_LAYER_DIR@#$WPE_LAYER_DIR#g" -e "s#@SOURCE_TREE@#$SRC#g" \
-    -e "s#@FLUTTER_ROOT@#$FLUTTER_ROOT#g" -e "s#@PUB_CACHE@#$PUB_CACHE#g" \
+    -e "s#@FLUTTER_ROOT@#$FLUTTER_ROOT#g" -e "s#@FLUTTER_GIT_DIR@#$FLUTTER_GIT_DIR#g" \
+    -e "s#@PUB_CACHE@#$PUB_CACHE#g" \
     -e "s#@CARGO_HOME@#$CARGO_HOME#g" -e "s#@RUSTUP_HOME@#$RUSTUP_HOME#g" \
     -e "s#@BUILD_NAME@#$BUILD_NAME#g" -e "s#@BUILD_NUMBER@#$BUILD_NUMBER#g" \
     "$ROOT/flatpak/com.github.molchuan.cfluxdo.yml" > "$MANIFEST"

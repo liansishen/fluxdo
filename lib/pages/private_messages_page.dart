@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:app_icons/app_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import '../models/topic.dart';
 import '../navigation/nav_action_bus.dart';
+import '../providers/message_bus/pm_tracking_providers.dart';
 import '../providers/selected_topic_provider.dart';
 import '../providers/user_content_providers.dart';
 import '../providers/preferences_provider.dart';
@@ -234,6 +237,7 @@ class _PrivateMessageTabViewState extends ConsumerState<_PrivateMessageTabView>
     with AutomaticKeepAliveClientMixin {
   final ScrollController _scrollController = ScrollController();
   final LoadMoreCoordinator _loadMoreCoordinator = LoadMoreCoordinator();
+  bool _refreshingIncoming = false;
 
   @override
   bool get wantKeepAlive => true;
@@ -308,10 +312,35 @@ class _PrivateMessageTabViewState extends ConsumerState<_PrivateMessageTabView>
     await _readNotifier().refresh();
   }
 
+  /// 只确认本次拉取覆盖的提示，刷新期间抵达的新私信留给下一批。
+  Future<void> _refreshIncoming() async {
+    if (_refreshingIncoming) return;
+    final tracking = ref.read(pmTrackingProvider.notifier);
+    final generation = tracking.sessionGeneration;
+    _refreshingIncoming = true;
+    try {
+      while (mounted && tracking.sessionGeneration == generation) {
+        final pending = ref.read(pmTrackingProvider).incomingTopicIds;
+        if (pending.isEmpty) return;
+        await _onRefresh();
+        if (!mounted || tracking.sessionGeneration != generation) return;
+        if (_readMessagesAsync().hasError) return;
+        tracking.clearIncoming(topicIds: pending);
+      }
+    } catch (error) {
+      // 拉取失败不撤销提示，后续消息或手动刷新仍可重新拉取。
+      debugPrint('[PmTracking] 收件箱刷新失败: $error');
+    } finally {
+      _refreshingIncoming = false;
+    }
+  }
+
   void _onItemTap(Topic topic) {
     final canShowDetailPane = MasterDetailLayout.canShowBothPanesFor(context);
     if (canShowDetailPane) {
-      ref.read(selectedMessageProvider.notifier).select(
+      ref
+          .read(selectedMessageProvider.notifier)
+          .select(
             topicId: topic.id,
             initialTitle: topic.title,
             scrollToPostNumber: topic.lastReadPostNumber,
@@ -332,6 +361,15 @@ class _PrivateMessageTabViewState extends ConsumerState<_PrivateMessageTabView>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+
+    // 收件箱：MessageBus 推来新私信时自动拉一次，不再等用户手动下拉。
+    // 只给 inbox：已发送/归档两个 tab 不会因为收到新私信而变。
+    if (widget.filter == PrivateMessageFilter.inbox) {
+      ref.listen(pmTrackingProvider, (previous, next) {
+        if (!next.hasIncoming) return;
+        unawaited(_refreshIncoming());
+      });
+    }
 
     // 响应外层派发的快捷动作（只对当前激活 tab 生效：外层按 _tabController.index 派发）
     ref.listen(_pmTabEventProvider(widget.filter), (_, event) {
@@ -371,7 +409,11 @@ class _PrivateMessageTabViewState extends ConsumerState<_PrivateMessageTabView>
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Symbols.mail_rounded, size: 64, color: Colors.grey),
+                  const Icon(
+                    Symbols.mail_rounded,
+                    size: 64,
+                    color: Colors.grey,
+                  ),
                   const SizedBox(height: 16),
                   Text(
                     context.l10n.privateMessages_empty,
@@ -386,35 +428,37 @@ class _PrivateMessageTabViewState extends ConsumerState<_PrivateMessageTabView>
             topics: topics,
             messageStyle: true,
             child: ListView.builder(
-            controller: _scrollController,
-            // 底部让出 extendBody 注入的底栏高度
-            padding: EdgeInsets.fromLTRB(
-              12,
-              12,
-              12,
-              12 + MediaQuery.paddingOf(context).bottom,
-            ),
-            itemCount: topics.length + 1,
-            itemBuilder: (context, index) {
-              if (index == topics.length) {
-                return _buildPaginationFooter(notifier);
-              }
+              controller: _scrollController,
+              // 底部让出 extendBody 注入的底栏高度
+              padding: EdgeInsets.fromLTRB(
+                12,
+                12,
+                12,
+                12 + MediaQuery.paddingOf(context).bottom,
+              ),
+              itemCount: topics.length + 1,
+              itemBuilder: (context, index) {
+                if (index == topics.length) {
+                  return _buildPaginationFooter(notifier);
+                }
 
-              final topic = topics[index];
-              final enableLongPress = ref
-                  .watch(preferencesProvider)
-                  .longPressPreview;
-              final selectedTopicId = ref.watch(selectedMessageProvider).topicId;
-              return buildTopicItem(
-                context: context,
-                topic: topic,
-                isSelected: selectedTopicId == topic.id,
-                onTap: () => _onItemTap(topic),
-                enableLongPress: enableLongPress,
-                // 私信语义同邮件:发件人优先的 Gmail 式布局
-                messageStyle: true,
-              );
-            },
+                final topic = topics[index];
+                final enableLongPress = ref
+                    .watch(preferencesProvider)
+                    .longPressPreview;
+                final selectedTopicId = ref
+                    .watch(selectedMessageProvider)
+                    .topicId;
+                return buildTopicItem(
+                  context: context,
+                  topic: topic,
+                  isSelected: selectedTopicId == topic.id,
+                  onTap: () => _onItemTap(topic),
+                  enableLongPress: enableLongPress,
+                  // 私信语义同邮件:发件人优先的 Gmail 式布局
+                  messageStyle: true,
+                );
+              },
             ),
           );
         },

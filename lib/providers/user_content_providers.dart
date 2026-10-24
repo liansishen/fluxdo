@@ -235,10 +235,7 @@ class BookmarksNotifier extends AsyncNotifier<List<Topic>> {
       final records = await _repo.readByIds(accountId, ids);
       if (!ref.mounted) return;
       final current = state.value ?? const <Topic>[];
-      final merged = <Topic>[
-        ...current,
-        ...records.map((r) => r.topic),
-      ];
+      final merged = <Topic>[...current, ...records.map((r) => r.topic)];
       _loadedCount = merged.length;
       state = AsyncValue.data(List<Topic>.unmodifiable(merged));
     } catch (_) {
@@ -406,11 +403,18 @@ abstract class PrivateMessagesNotifier extends AsyncNotifier<List<Topic>>
     with PagedAsyncNotifierMixin<Topic> {
   Future<TopicListResponse> fetch(int page);
 
+  int _requestGeneration = 0;
+  int? _userId;
+
   @override
   Future<List<Topic>> build() async {
-    resetPagingState();
+    final generation = ++_requestGeneration;
+    ref.onDispose(() => _requestGeneration++);
+    _userId = ref.watch(currentUserProvider.select((user) => user.value?.id));
+    resetPagingState(hasMore: _userId != null);
+    if (_userId == null) return [];
     final response = await fetch(0);
-
+    if (!ref.mounted || generation != _requestGeneration) return [];
     final result = _topicPaginationHelper.processRefresh(
       PaginationResult(items: response.topics, moreUrl: response.moreTopicsUrl),
     );
@@ -418,41 +422,47 @@ abstract class PrivateMessagesNotifier extends AsyncNotifier<List<Topic>>
   }
 
   Future<void> refresh() async {
-    await runPagedRefresh(() async {
+    if (_userId == null) return;
+    final generation = ++_requestGeneration;
+    resetPagingState();
+    state = const AsyncLoading();
+    try {
       final response = await fetch(0);
-
+      if (!ref.mounted || generation != _requestGeneration) return;
       final result = _topicPaginationHelper.processRefresh(
         PaginationResult(
           items: response.topics,
           moreUrl: response.moreTopicsUrl,
         ),
       );
-      return PagedPage.fromPagination(result);
-    });
+      state = AsyncData(completePagedRefresh(PagedPage.fromPagination(result)));
+    } catch (error, stack) {
+      if (!ref.mounted || generation != _requestGeneration) return;
+      state = AsyncError(error, stack);
+    }
   }
 
   Future<void> loadMore() async {
+    if (_userId == null) return;
+    final generation = _requestGeneration;
     await runPagedLoadMore((currentList, nextPage) async {
       final response = await fetch(nextPage);
-
-      final currentState = PaginationState<Topic>(items: currentList);
-      final paginationResult = _topicPaginationHelper.processLoadMore(
-        currentState,
+      final result = _topicPaginationHelper.processLoadMore(
+        PaginationState<Topic>(items: currentList),
         PaginationResult(
           items: response.topics,
           moreUrl: response.moreTopicsUrl,
         ),
       );
-
       return PagedPage.fromPagination(
-        paginationResult,
+        result,
         advancePage: response.topics.isNotEmpty,
       );
-    });
+    }, canCommit: () => ref.mounted && generation == _requestGeneration);
   }
 
-  Future<void> retryLoadMore() {
-    return retryPagedLoadMore(loadMore);
+  Future<void> retryLoadMore() async {
+    await retryPagedLoadMore(loadMore);
   }
 }
 

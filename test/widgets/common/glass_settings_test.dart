@@ -38,6 +38,36 @@ void main() {
     }
   });
 
+  test('实底外观优先于所有玻璃开关与档位，并参与值比较', () {
+    const solid = GlassSolidStyle(fill: Colors.white, border: Colors.grey);
+    expect(
+      solid,
+      const GlassSolidStyle(fill: Colors.white, border: Colors.grey),
+    );
+    for (final level in GlassEffectLevel.values) {
+      for (final enabled in [false, true]) {
+        final settings = GlassSettings(
+          enabled: enabled,
+          level: level,
+          solid: solid,
+        );
+        expect(settings.allowsBlur(highContrast: false), isFalse);
+        expect(
+          settings.allowsOptics(shaderSupported: true, highContrast: false),
+          isFalse,
+        );
+        expect(settings, isNot(GlassSettings(enabled: enabled, level: level)));
+        final equivalent = GlassSettings(
+          enabled: enabled,
+          level: level,
+          solid: const GlassSolidStyle(fill: Colors.white, border: Colors.grey),
+        );
+        expect(settings, equivalent);
+        expect(settings.hashCode, equivalent.hashCode);
+      }
+    }
+  });
+
   testWidgets('高对比度下半透明色罩覆盖也强制实色', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(
@@ -121,6 +151,46 @@ void main() {
     expect(find.byType(BackdropFilter), findsNothing);
     await pump(const GlassSettings(), highContrast: true);
     expect(find.byType(BackdropFilter), findsNothing);
+    await pump(
+      const GlassSettings(
+        solid: GlassSolidStyle(fill: Colors.white, border: Colors.grey),
+      ),
+    );
+    expect(find.byType(BackdropFilter), findsNothing);
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is CustomPaint && widget.painter is GlassEdgePainter,
+      ),
+      findsNothing,
+    );
+    final decorations = tester
+        .widgetList<DecoratedBox>(
+          find.descendant(
+            of: find.byType(GlassSurfaceFrame),
+            matching: find.byType(DecoratedBox),
+          ),
+        )
+        .map((box) => box.decoration)
+        .whereType<ShapeDecoration>()
+        .toList();
+    expect(
+      decorations.every((decoration) => decoration.shadows == null),
+      isTrue,
+    );
+    expect(
+      decorations.any((decoration) => decoration.color == Colors.white),
+      isTrue,
+    );
+    expect(
+      decorations.any(
+        (decoration) =>
+            decoration.shape is RoundedRectangleBorder &&
+            (decoration.shape as RoundedRectangleBorder).side ==
+                const BorderSide(color: Colors.grey, width: 0.5),
+      ),
+      isTrue,
+    );
+    expect(mounts, 1);
     await pump(const GlassSettings());
     expect(
       find.byType(BackdropFilter),

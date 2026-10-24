@@ -12,6 +12,7 @@ import '../../../models/nested_reading_position.dart';
 import '../../../widgets/nested/nested_reading_scope.dart';
 import '../../../models/topic.dart';
 import '../../../providers/nested_topic_provider.dart';
+import '../../../theme/mojian_theme.dart';
 import '../../../utils/blocked_user_filter.dart';
 import '../../../utils/responsive.dart';
 import '../../../widgets/nested/nested_post_card.dart';
@@ -809,13 +810,23 @@ class _NestedPostListState extends ConsumerState<NestedPostList> {
   Widget _buildContextBanner(BuildContext context) {
     final theme = Theme.of(context);
     final ns = widget.nestedState;
+    final mj = theme.extension<MojianTokens>();
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 4, 16, 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(12),
-      ),
+      // 墨笺：纸色二级底与细线框，不用大圆角色块。
+      decoration: mj != null
+          ? BoxDecoration(
+              color: mj.paper2,
+              border: Border.all(color: mj.rule),
+              borderRadius: BorderRadius.circular(4),
+            )
+          : BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest.withValues(
+                alpha: 0.5,
+              ),
+              borderRadius: BorderRadius.circular(12),
+            ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -899,6 +910,38 @@ class _SortChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isActive = value == current;
+    final mj = theme.extension<MojianTokens>();
+    if (mj != null) {
+      // 墨笺：宋体文字页签，选中时显示强调色短横。
+      return InkWell(
+        onTap: isActive ? null : onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(4, 4, 4, 2),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontFamily: MojianTokens.serifFamily,
+                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                  color: isActive ? mj.ink : mj.ink3,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Container(
+                width: 14,
+                height: 2,
+                decoration: BoxDecoration(
+                  color: isActive ? mj.accent : Colors.transparent,
+                  borderRadius: BorderRadius.circular(1),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return GestureDetector(
       onTap: isActive ? null : onTap,
       child: Container(

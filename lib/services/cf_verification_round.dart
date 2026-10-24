@@ -249,7 +249,10 @@ class CfVerificationRound implements CfVerificationSignals {
   /// 宿主侧收口（没有 overlay、验证页被撤下等）。
   void abort(CfRoundFailure reason, {required String detail}) {
     if (isDone) return;
-    _complete(CfRoundFailed(round: id, reason: reason), detail: detail);
+    _complete(
+      CfRoundFailed(round: id, reason: reason),
+      detail: detail,
+    );
   }
 
   /// 测试钩子用：直接以给定结果收口（不经定稿）。
@@ -300,7 +303,8 @@ class CfVerificationRound implements CfVerificationSignals {
       if (now.difference(_firstSeenAt!) >= settleWindow + completionDeadline) {
         _complete(
           CfRoundFailed(round: id, reason: CfRoundFailure.timeout),
-          detail: 'cf_clearance kept changing for '
+          detail:
+              'cf_clearance kept changing for '
               '${now.difference(_firstSeenAt!).inMilliseconds}ms',
         );
         return;
@@ -315,7 +319,8 @@ class CfVerificationRound implements CfVerificationSignals {
       // 网络层已确认通过，却始终读不到新值：值没法交给请求用
       _complete(
         CfRoundFailed(round: id, reason: CfRoundFailure.notLanded),
-        detail: 'no fresh cf_clearance within '
+        detail:
+            'no fresh cf_clearance within '
             '${completionDeadline.inSeconds}s after conclusive pass',
       );
       return;
@@ -327,9 +332,11 @@ class CfVerificationRound implements CfVerificationSignals {
     }
   }
 
-  Future<void> _land(String value) async {
+  Future<void> _land(String settled) async {
     _landingInProgress = true;
     _cancelTicker();
+    var value = settled;
+    var switched = false;
     for (var attempt = 1; attempt <= landingAttempts; attempt++) {
       String? inJar;
       try {
@@ -350,6 +357,19 @@ class CfVerificationRound implements CfVerificationSignals {
         '(jar=${inJar?.length ?? 0} chars)',
         level: 'warning',
       );
+      // 站点可能在后续跳转再次签值；只允许换一次，且仍须确认目标值进入 jar。
+      if (!switched) {
+        final latest = await _readLatest();
+        if (isDone) return;
+        if (latest != null &&
+            !CfClearanceAuthority.isSameValue(latest, value)) {
+          switched = true;
+          value = latest;
+          _pendingValue = latest;
+          attempt = 0;
+          continue;
+        }
+      }
       if (attempt < landingAttempts) await _delay(landingRetryDelay);
       if (isDone) return;
     }
@@ -357,6 +377,19 @@ class CfVerificationRound implements CfVerificationSignals {
       CfRoundFailed(round: id, reason: CfRoundFailure.notLanded),
       detail: 'settled value not confirmed in jar',
     );
+  }
+
+  /// 读取入口已过滤本轮旧值；读不到或读取失败时继续原目标的有限重试。
+  Future<String?> _readLatest() async {
+    final reader = _reader;
+    if (reader == null) return null;
+    try {
+      final value = (await reader())?.trim();
+      return value == null || value.isEmpty ? null : value;
+    } catch (e) {
+      debugPrint('[CfRound] 落值期间读取 WebView cf_clearance 失败: $e');
+      return null;
+    }
   }
 
   Future<void> _delay(Duration duration) {

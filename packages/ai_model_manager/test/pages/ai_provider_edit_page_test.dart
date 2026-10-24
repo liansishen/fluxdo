@@ -4,13 +4,13 @@ import 'package:ai_model_manager/ai_model_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_symbols_icons/symbols.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('models tab reorder callback persists duplicate model ids',
-      (tester) async {
+  testWidgets('重复模型 ID 仍可通过长按拖动排序并保存顺序', (tester) async {
     final provider = AiProvider(
       id: 'provider-1',
       name: 'Test Provider',
@@ -44,18 +44,29 @@ void main() {
     await tester.enterText(find.byType(TextField).at(2), 'test-key');
     await tester.pump();
 
-    await tester.tap(find.byIcon(Icons.layers_outlined));
+    await tester.tap(find.byIcon(Symbols.layers_rounded));
     await tester.pumpAndSettle();
 
     final modelAFinder = find.text('Model A');
     final modelCFinder = find.text('Model C');
     expect(modelAFinder, findsOneWidget);
     expect(modelCFinder, findsOneWidget);
-    expect(find.byType(ReorderableDelayedDragStartListener), findsNWidgets(3));
 
-    final reorderableList =
-        tester.widget<ReorderableListView>(find.byType(ReorderableListView));
-    reorderableList.onReorderItem!(2, 0);
+    final modelCCard = find.ancestor(
+      of: modelCFinder,
+      matching: find.byType(ReorderableDelayedDragStartListener),
+    );
+    final modelACard = find.ancestor(
+      of: modelAFinder,
+      matching: find.byType(ReorderableDelayedDragStartListener),
+    );
+    final target = tester.getCenter(modelACard);
+    final start = tester.getCenter(modelCCard);
+    final drag = await tester.startGesture(start);
+    await tester.pump(const Duration(milliseconds: 600));
+    await drag.moveTo(target);
+    await tester.pump(const Duration(milliseconds: 400));
+    await drag.up();
     await tester.pumpAndSettle();
 
     expect(
@@ -63,7 +74,7 @@ void main() {
       lessThan(tester.getTopLeft(modelAFinder).dy),
     );
 
-    await tester.tap(find.text('保存'));
+    await tester.tap(find.text(AiL10n.current.save));
     for (var i = 0; i < 10; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }

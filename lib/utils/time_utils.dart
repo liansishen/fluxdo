@@ -52,6 +52,31 @@ class TimeUtils {
       // 转换为本地时间
       return utcTime.toLocal();
     } catch (e) {
+      // ISO-8601 解不了时再试 HTTP-date（见 [parseHttpDate]）
+      return parseHttpDate(timeString);
+    }
+  }
+
+  // HTTP-date 固定用英文星期 / 月份缩写，锁死 en_US，不随设备区域变化
+  static final DateFormat _httpDateFormat = DateFormat(
+    'EEE, dd MMM yyyy HH:mm:ss',
+    'en_US',
+  );
+
+  /// 解析 RFC 7231 HTTP-date（形如 `Wed, 21 Oct 2015 07:28:00 GMT`），返回本地时间
+  ///
+  /// Discourse 少数接口用 Ruby 的 `httpdate` 输出时间（如 MessageBus
+  /// `/do-not-disturb/:id` 的 `ends_at`），`DateTime.parse` 解不了；当成 null
+  /// 会把勿扰误判为未开启、照常弹通知。（上游 d3e91680）
+  static DateTime? parseHttpDate(String? timeString) {
+    if (timeString == null || timeString.isEmpty) return null;
+    final trimmed = timeString.trim();
+    final withoutZone = trimmed.endsWith('GMT')
+        ? trimmed.substring(0, trimmed.length - 3).trim()
+        : trimmed;
+    try {
+      return _httpDateFormat.parseUtc(withoutZone).toLocal();
+    } catch (e) {
       return null;
     }
   }
@@ -156,8 +181,10 @@ class TimeUtils {
     if (diff.inMinutes < 60) return S.current.time_minutesAgo(diff.inMinutes);
     if (diff.inHours < 24) return S.current.time_hoursAgo(diff.inHours);
     if (diff.inDays < 7) return S.current.time_daysAgo(diff.inDays);
-    if (diff.inDays < 30) return S.current.time_weeksAgo((diff.inDays / 7).floor());
-    if (diff.inDays < 365) return S.current.time_monthsAgo((diff.inDays / 30).floor());
+    if (diff.inDays < 30)
+      return S.current.time_weeksAgo((diff.inDays / 7).floor());
+    if (diff.inDays < 365)
+      return S.current.time_monthsAgo((diff.inDays / 30).floor());
     return S.current.time_yearsAgo((diff.inDays / 365).floor());
   }
 
@@ -194,7 +221,14 @@ class TimeUtils {
     final hh = time.hour.toString().padLeft(2, '0');
     final mm = time.minute.toString().padLeft(2, '0');
     final ss = time.second.toString().padLeft(2, '0');
-    return S.current.time_tooltipTime(time.year, time.month, time.day, hh, mm, ss);
+    return S.current.time_tooltipTime(
+      time.year,
+      time.month,
+      time.day,
+      hh,
+      mm,
+      ss,
+    );
   }
 
   /// 格式化时间为智能日期标签
@@ -207,8 +241,10 @@ class TimeUtils {
     final date = DateTime(time.year, time.month, time.day);
 
     if (date == today) return S.current.time_today;
-    if (date == today.subtract(const Duration(days: 1))) return S.current.time_yesterday;
-    if (time.year == now.year) return S.current.time_shortDate(time.month, time.day);
+    if (date == today.subtract(const Duration(days: 1)))
+      return S.current.time_yesterday;
+    if (time.year == now.year)
+      return S.current.time_shortDate(time.month, time.day);
     return S.current.time_fullDate(time.year, time.month, time.day);
   }
 

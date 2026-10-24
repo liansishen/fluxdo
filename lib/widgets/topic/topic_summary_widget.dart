@@ -7,6 +7,7 @@ import '../../models/topic.dart';
 import '../../pages/topic_detail_page/topic_detail_page.dart';
 import '../../providers/discourse_providers.dart';
 import '../../providers/selected_topic_provider.dart';
+import '../../theme/mojian_theme.dart';
 import '../common/error_view.dart';
 import '../common/relative_time_text.dart';
 import '../markdown_editor/markdown_renderer.dart';
@@ -164,7 +165,7 @@ class TopicSummaryWidget extends ConsumerWidget {
         color: theme.colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: theme.colorScheme.outlineVariant.withValues(alpha:0.5),
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
           width: 0.5,
         ),
       ),
@@ -209,13 +210,18 @@ class TopicSummaryWidget extends ConsumerWidget {
               // 过期提示
               if (summary.outdated)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: theme.colorScheme.tertiaryContainer,
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
-                    S.current.topic_newRepliesSinceSummary(summary.newPostsSinceSummary),
+                    S.current.topic_newRepliesSinceSummary(
+                      summary.newPostsSinceSummary,
+                    ),
                     style: theme.textTheme.labelSmall?.copyWith(
                       color: theme.colorScheme.onTertiaryContainer,
                     ),
@@ -230,7 +236,9 @@ class TopicSummaryWidget extends ConsumerWidget {
             text: summary.summarizedText,
             isStreaming: summary.isStreaming,
             onInternalLinkTap: (linkTopicId, topicSlug, postNumber) {
-              if (linkTopicId == topicId && postNumber != null && onJumpToPost != null) {
+              if (linkTopicId == topicId &&
+                  postNumber != null &&
+                  onJumpToPost != null) {
                 // 当前话题链接 → 跳转到对应帖子
                 onJumpToPost!(postNumber);
               } else {
@@ -306,7 +314,7 @@ class _StreamingMarkdownBody extends StatefulWidget {
   final String text;
   final bool isStreaming;
   final void Function(int topicId, String? topicSlug, int? postNumber)?
-      onInternalLinkTap;
+  onInternalLinkTap;
 
   const _StreamingMarkdownBody({
     super.key,
@@ -316,8 +324,7 @@ class _StreamingMarkdownBody extends StatefulWidget {
   });
 
   @override
-  State<_StreamingMarkdownBody> createState() =>
-      _StreamingMarkdownBodyState();
+  State<_StreamingMarkdownBody> createState() => _StreamingMarkdownBodyState();
 }
 
 class _StreamingMarkdownBodyState extends State<_StreamingMarkdownBody> {
@@ -414,7 +421,8 @@ class _StreamingMarkdownBodyState extends State<_StreamingMarkdownBody> {
         if (nextLength < _targetText.length) {
           final currentCodeUnit = _targetText.codeUnitAt(nextLength - 1);
           final nextCodeUnit = _targetText.codeUnitAt(nextLength);
-          final splitsSurrogatePair = currentCodeUnit >= 0xD800 &&
+          final splitsSurrogatePair =
+              currentCodeUnit >= 0xD800 &&
               currentCodeUnit <= 0xDBFF &&
               nextCodeUnit >= 0xDC00 &&
               nextCodeUnit <= 0xDFFF;
@@ -447,7 +455,7 @@ class _StreamingMarkdownBodyState extends State<_StreamingMarkdownBody> {
 /// 可折叠的话题摘要组件（懒加载：点击时才请求）
 class CollapsibleTopicSummary extends ConsumerStatefulWidget {
   final int topicId;
-  final TopicDetail? topicDetail;  // 新增：传入话题详情以检查 summarizable
+  final TopicDetail? topicDetail; // 新增：传入话题详情以检查 summarizable
   final Widget? headerExtra; // 新增：头部额外组件（如订阅按钮）
   /// 跳转到当前话题的指定帖子
   final void Function(int postNumber)? onJumpToPost;
@@ -479,8 +487,13 @@ class _CollapsibleTopicSummaryState
   void initState() {
     super.initState();
     _controller = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 300));
-    _animation = CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic);
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _animation = CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeOutCubic,
+    );
   }
 
   @override
@@ -498,7 +511,7 @@ class _CollapsibleTopicSummaryState
     if (topicDetail != null && !topicDetail.summarizable) {
       // 即使不可摘要，如果有 headerExtra 也要显示 headerExtra
       if (widget.headerExtra != null) {
-         return widget.headerExtra!;
+        return widget.headerExtra!;
       }
       return const SizedBox.shrink();
     }
@@ -517,12 +530,14 @@ class _CollapsibleTopicSummaryState
       _scheduleFinishRegeneration();
     }
 
-    final isLoading = summaryAsync?.isLoading == true ||
+    final isLoading =
+        summaryAsync?.isLoading == true ||
         summaryAsync?.value?.isStreaming == true;
     final isOutdated = summaryAsync?.value?.outdated == true;
     final hasCachedSummary =
         (topicDetail?.hasCachedSummary ?? false) ||
         (summaryAsync?.value?.summarizedText.isNotEmpty ?? false);
+    final mj = theme.extension<MojianTokens>();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -532,13 +547,24 @@ class _CollapsibleTopicSummaryState
             // 摘要按钮
             InkWell(
               onTap: _toggleExpand,
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(mj != null ? 4 : 8),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.primaryContainer.withValues(alpha:0.3),
-                  borderRadius: BorderRadius.circular(8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
                 ),
+                // 墨笺使用细线描边与小圆角，与订阅胶囊保持一致。
+                decoration: mj != null
+                    ? BoxDecoration(
+                        border: Border.all(color: mj.rule),
+                        borderRadius: BorderRadius.circular(4),
+                      )
+                    : BoxDecoration(
+                        color: theme.colorScheme.primaryContainer.withValues(
+                          alpha: 0.3,
+                        ),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -549,7 +575,9 @@ class _CollapsibleTopicSummaryState
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      hasCachedSummary ? S.current.topic_aiSummary : S.current.topic_generateAiSummary,
+                      hasCachedSummary
+                          ? S.current.topic_aiSummary
+                          : S.current.topic_generateAiSummary,
                       style: theme.textTheme.labelMedium?.copyWith(
                         color: theme.colorScheme.primary,
                         fontWeight: FontWeight.w500,

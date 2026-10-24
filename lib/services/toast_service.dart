@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:m3e_ui/m3e_ui.dart';
 
+import '../theme/mojian_theme.dart';
 import 'local_notification_service.dart';
 
 /// Toast 类型
@@ -138,8 +139,7 @@ class DownloadToastHandle {
   final _ToastSession? _session;
   bool _finished = false;
 
-  bool get isActive =>
-      !_finished && _session != null && !_session.isClosed;
+  bool get isActive => !_finished && _session != null && !_session.isClosed;
 
   /// 更新下载进度（0.0~1.0，-1 为不确定进度）
   void updateProgress(double value) {
@@ -368,8 +368,7 @@ class ToastService {
 }
 
 /// 形态与动效沿用"灵动胶囊"：圆点展开成胶囊、花瓣徽章回弹、下载完成
-/// 原位变身；材质走全局玻璃，开关、档位与高对比度由 GlassSurface 统一
-/// 降级为实色，这里不再各自判断。
+/// 原位变身；经典与 Claude 走全局玻璃策略，墨笺保留纸色细线小圆角。
 class _ToastView extends StatefulWidget {
   const _ToastView({required this.session});
 
@@ -381,6 +380,7 @@ class _ToastView extends StatefulWidget {
 
 class _ToastViewState extends State<_ToastView> with TickerProviderStateMixin {
   static const _radius = 28.0;
+  static const _mojianRadius = 6.0;
   static const _enterDuration = Duration(milliseconds: 560);
   static const _exitDuration = Duration(milliseconds: 300);
   static const _settleDuration = Duration(milliseconds: 420);
@@ -416,21 +416,33 @@ class _ToastViewState extends State<_ToastView> with TickerProviderStateMixin {
   );
   static final _settleScale = TweenSequence<double>([
     TweenSequenceItem(
-      tween: Tween(begin: 0.86, end: 1.1).chain(CurveTween(curve: Curves.easeOut)),
+      tween: Tween(
+        begin: 0.86,
+        end: 1.1,
+      ).chain(CurveTween(curve: Curves.easeOut)),
       weight: 60,
     ),
     TweenSequenceItem(
-      tween: Tween(begin: 1.1, end: 1.0).chain(CurveTween(curve: Curves.easeInOut)),
+      tween: Tween(
+        begin: 1.1,
+        end: 1.0,
+      ).chain(CurveTween(curve: Curves.easeInOut)),
       weight: 40,
     ),
   ]);
   static final _settleTilt = TweenSequence<double>([
     TweenSequenceItem(
-      tween: Tween(begin: -0.14, end: 0.07).chain(CurveTween(curve: Curves.easeOut)),
+      tween: Tween(
+        begin: -0.14,
+        end: 0.07,
+      ).chain(CurveTween(curve: Curves.easeOut)),
       weight: 60,
     ),
     TweenSequenceItem(
-      tween: Tween(begin: 0.07, end: 0.0).chain(CurveTween(curve: Curves.easeInOut)),
+      tween: Tween(
+        begin: 0.07,
+        end: 0.0,
+      ).chain(CurveTween(curve: Curves.easeInOut)),
       weight: 40,
     ),
   ]);
@@ -438,11 +450,17 @@ class _ToastViewState extends State<_ToastView> with TickerProviderStateMixin {
   // 同一件事重复触发：徽章弹一下，不做整条胶囊的形变
   static final _pulseScale = TweenSequence<double>([
     TweenSequenceItem(
-      tween: Tween(begin: 1.0, end: 1.12).chain(CurveTween(curve: Curves.easeOut)),
+      tween: Tween(
+        begin: 1.0,
+        end: 1.12,
+      ).chain(CurveTween(curve: Curves.easeOut)),
       weight: 45,
     ),
     TweenSequenceItem(
-      tween: Tween(begin: 1.12, end: 1.0).chain(CurveTween(curve: Curves.easeInOut)),
+      tween: Tween(
+        begin: 1.12,
+        end: 1.0,
+      ).chain(CurveTween(curve: Curves.easeInOut)),
       weight: 55,
     ),
   ]);
@@ -567,6 +585,7 @@ class _ToastViewState extends State<_ToastView> with TickerProviderStateMixin {
   Widget _buildToast(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final mojian = theme.extension<MojianTokens>();
     final isDark = theme.brightness == Brightness.dark;
     // 减弱动效：只保留淡入淡出；M3E 关闭：保留位移，去掉形变与回弹
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
@@ -591,39 +610,28 @@ class _ToastViewState extends State<_ToastView> with TickerProviderStateMixin {
           child: Semantics(
             container: true,
             liveRegion: true,
-            child: DecoratedBox(
-              // 浮在正文之上需要比导航更明显的落影
-              decoration: ShapeDecoration(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(_radius),
-                ),
-                shadows: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: isDark ? 0.28 : 0.10),
-                    blurRadius: 24,
-                    spreadRadius: -6,
-                    offset: const Offset(0, 10),
-                  ),
-                ],
-              ),
-              child: GlassSurfaceFrame(
-                radius: _radius,
-                recipe: GlassRecipe.menu,
-                child: Material(
-                  type: MaterialType.transparency,
-                  child: _WidthReveal(
-                    factor: reveal,
-                    child: AnimatedSize(
-                      duration: const Duration(milliseconds: 480),
-                      curve: expressive ? _resizeSpring : Curves.easeOutCubic,
-                      alignment: Alignment.centerLeft,
-                      child: _buildContent(
-                        context,
-                        data,
-                        colorScheme,
-                        expressive: expressive,
-                        content: content,
-                      ),
+            child: _ToastShell(
+              key: const ValueKey('toast-shell'),
+              mojian: mojian,
+              radius: mojian == null
+                  ? _radius
+                  : lerpDouble(_radius, _mojianRadius, reveal)!,
+              isDark: isDark,
+              child: Material(
+                type: MaterialType.transparency,
+                child: _WidthReveal(
+                  factor: reveal,
+                  child: AnimatedSize(
+                    duration: const Duration(milliseconds: 480),
+                    curve: expressive ? _resizeSpring : Curves.easeOutCubic,
+                    alignment: Alignment.centerLeft,
+                    child: _buildContent(
+                      context,
+                      data,
+                      colorScheme,
+                      mojian,
+                      expressive: expressive,
+                      content: content,
                     ),
                   ),
                 ),
@@ -638,17 +646,20 @@ class _ToastViewState extends State<_ToastView> with TickerProviderStateMixin {
   Widget _buildContent(
     BuildContext context,
     _ToastData data,
-    ColorScheme colorScheme, {
+    ColorScheme colorScheme,
+    MojianTokens? mojian, {
     required bool expressive,
     required double content,
   }) {
     final theme = Theme.of(context);
+    final textColor = mojian?.ink ?? colorScheme.onSurface;
+    final mutedColor = mojian?.ink3 ?? colorScheme.onSurfaceVariant;
     final t = _enter.value;
     final settling = _settle.isAnimating;
     final s = _settle.value;
 
-    final (fromBg, fromFg) = _palette(colorScheme, _fromKind);
-    final (toBg, toFg) = _palette(colorScheme, data.kind);
+    final (fromBg, fromFg) = _palette(colorScheme, mojian, _fromKind);
+    final (toBg, toFg) = _palette(colorScheme, mojian, data.kind);
     final colorT = settling ? _settleColorCurve.transform(s) : 1.0;
     final badgeBg = Color.lerp(fromBg, toBg, colorT)!;
     final badgeFg = Color.lerp(fromFg, toFg, colorT)!;
@@ -691,7 +702,8 @@ class _ToastViewState extends State<_ToastView> with TickerProviderStateMixin {
             kind: data.kind,
             background: badgeBg,
             foreground: badgeFg,
-            petal: M3eFlags.of(context).enabled,
+            // 墨笺保留圆形徽章，不叠加花瓣轮廓。
+            petal: mojian == null && M3eFlags.of(context).enabled,
             scale: lerpDouble(0.72, 1, petalIn)! * popScale * pulseScale,
             tilt: lerpDouble(-0.72, 0, petalIn)! + popTilt + baseTilt,
             check: check,
@@ -703,7 +715,7 @@ class _ToastViewState extends State<_ToastView> with TickerProviderStateMixin {
               Text(
                 data.message,
                 style: theme.textTheme.bodyMedium?.copyWith(
-                  color: colorScheme.onSurface,
+                  color: textColor,
                   fontWeight: FontWeight.w500,
                   letterSpacing: 0.1,
                 ),
@@ -718,7 +730,7 @@ class _ToastViewState extends State<_ToastView> with TickerProviderStateMixin {
               Text(
                 '${(progress * 100).toInt()}%',
                 style: theme.textTheme.labelMedium?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
+                  color: mutedColor,
                   fontFeatures: const [FontFeature.tabularFigures()],
                 ),
               ),
@@ -738,7 +750,11 @@ class _ToastViewState extends State<_ToastView> with TickerProviderStateMixin {
                   minimumSize: const Size(0, 40),
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  shape: const StadiumBorder(),
+                  shape: mojian == null
+                      ? const StadiumBorder()
+                      : RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(4),
+                        ),
                   textStyle: theme.textTheme.labelLarge?.copyWith(
                     fontWeight: FontWeight.w600,
                   ),
@@ -752,28 +768,105 @@ class _ToastViewState extends State<_ToastView> with TickerProviderStateMixin {
     );
   }
 
-  static (Color, Color) _palette(ColorScheme colorScheme, _ToastKind kind) =>
-      switch (kind) {
-        _ToastKind.success => (
-          colorScheme.primaryContainer,
-          colorScheme.onPrimaryContainer,
-        ),
-        _ToastKind.error => (
-          colorScheme.errorContainer,
-          colorScheme.onErrorContainer,
-        ),
-        _ToastKind.info => (
-          colorScheme.secondaryContainer,
-          colorScheme.onSecondaryContainer,
-        ),
-        _ToastKind.download => (
-          colorScheme.tertiaryContainer,
-          colorScheme.onTertiaryContainer,
-        ),
-      };
+  static (Color, Color) _palette(
+    ColorScheme colorScheme,
+    MojianTokens? mojian,
+    _ToastKind kind,
+  ) => mojian != null
+      ? switch (kind) {
+          _ToastKind.success => (
+            mojian.jade.withValues(alpha: 0.14),
+            mojian.jade,
+          ),
+          _ToastKind.error => (
+            mojian.accent.withValues(alpha: 0.12),
+            mojian.accent,
+          ),
+          _ToastKind.info => (mojian.paper3, mojian.ink2),
+          _ToastKind.download => (mojian.paper3, mojian.ink2),
+        }
+      : switch (kind) {
+          _ToastKind.success => (
+            colorScheme.primaryContainer,
+            colorScheme.onPrimaryContainer,
+          ),
+          _ToastKind.error => (
+            colorScheme.errorContainer,
+            colorScheme.onErrorContainer,
+          ),
+          _ToastKind.info => (
+            colorScheme.secondaryContainer,
+            colorScheme.onSecondaryContainer,
+          ),
+          _ToastKind.download => (
+            colorScheme.tertiaryContainer,
+            colorScheme.onTertiaryContainer,
+          ),
+        };
 
   static double _baseTilt(_ToastKind kind) =>
       kind == _ToastKind.download ? math.pi / 8 : 0;
+}
+
+/// 经典与 Claude 使用玻璃胶囊，墨笺使用纸色细线与浅落影。
+/// 外壳负责裁切，收住尚未展开的内容。
+class _ToastShell extends StatelessWidget {
+  const _ToastShell({
+    super.key,
+    required this.mojian,
+    required this.radius,
+    required this.isDark,
+    required this.child,
+  });
+
+  final MojianTokens? mojian;
+  final double radius;
+  final bool isDark;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final mj = mojian;
+    final borderRadius = BorderRadius.circular(radius);
+    if (mj == null) {
+      return DecoratedBox(
+        decoration: ShapeDecoration(
+          shape: RoundedRectangleBorder(borderRadius: borderRadius),
+          shadows: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: isDark ? 0.28 : 0.10),
+              blurRadius: 24,
+              spreadRadius: -6,
+              offset: const Offset(0, 10),
+            ),
+          ],
+        ),
+        child: GlassSurfaceFrame(
+          radius: radius,
+          recipe: GlassRecipe.menu,
+          child: child,
+        ),
+      );
+    }
+    return DecoratedBox(
+      decoration: ShapeDecoration(
+        color: mj.paper,
+        shape: RoundedRectangleBorder(
+          borderRadius: borderRadius,
+          side: BorderSide(color: mj.ruleStrong, width: 0.5),
+        ),
+        shadows: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.24 : 0.06),
+            blurRadius: 16,
+            spreadRadius: -4,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: ClipRRect(borderRadius: borderRadius, child: child),
+    );
+  }
 }
 
 /// 状态徽章：花瓣底（M3E 关闭时为圆）+ 状态字形
@@ -991,10 +1084,7 @@ class _CheckmarkPainter extends CustomPainter {
   final double progress;
   final Color color;
 
-  _CheckmarkPainter({
-    required this.progress,
-    required this.color,
-  });
+  _CheckmarkPainter({required this.progress, required this.color});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1030,8 +1120,7 @@ class _CheckmarkPainter extends CustomPainter {
       path.lineTo(mid.dx, mid.dy);
       // Draw second segment (the long tail upwards)
       final remainingLength = currentLength - pathLength1;
-      final currentEnd =
-          Offset.lerp(mid, end, remainingLength / pathLength2)!;
+      final currentEnd = Offset.lerp(mid, end, remainingLength / pathLength2)!;
       path.lineTo(currentEnd.dx, currentEnd.dy);
     }
 

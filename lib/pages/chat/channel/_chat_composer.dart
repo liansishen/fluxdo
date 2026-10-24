@@ -1030,26 +1030,13 @@ class _SendIntent extends Intent {
   const _SendIntent();
 }
 
-/// 墨笺保留无阴影纸面，其余主题与编辑器共用玻璃策略。
+/// 与编辑器共用全局材质策略，墨笺纸面由 GlassSettingsScope 统一提供。
 class _ChatComposerSurface extends StatelessWidget {
   const _ChatComposerSurface({required this.child});
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    if (theme.extension<MojianTokens>() != null) {
-      return DecoratedBox(
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(
-            color: theme.colorScheme.outlineVariant.withValues(alpha: .4),
-          ),
-        ),
-        child: child,
-      );
-    }
     return GlassSurfaceFrame(
       key: const ValueKey('chat-composer-surface'),
       radius: 24,

@@ -81,6 +81,9 @@ android {
                 keyPassword = releaseKeyPassword
                 storeFile = releaseStoreFile
                 storePassword = releaseStorePassword
+                // 同时保留 v1/v2 签名，兼容只识别 META-INF 的安装器；证书选择不变。
+                enableV1Signing = true
+                enableV2Signing = true
             }
         }
     }

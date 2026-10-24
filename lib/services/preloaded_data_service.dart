@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show compute, visibleForTesting;
 import 'package:flutter/material.dart';
 import '../constants.dart';
+import 'app_logger.dart';
 import '../models/topic.dart';
 import '../models/category.dart';
 import 'network/discourse_dio.dart';
@@ -18,6 +19,8 @@ import 'cf_clearance_refresh_service.dart';
 /// （内容是原始 JSON），旧版为元素属性 `data-preloaded="..."`（HTML 实体转义），
 /// 两种形态都支持。
 class PreloadedDataService {
+  static final Set<String> _uploadSettingsLoggedSites = {};
+
   static final PreloadedDataService _instance =
       PreloadedDataService._internal();
   factory PreloadedDataService() => _instance;
@@ -819,6 +822,21 @@ class PreloadedDataService {
           debugPrint('[PreloadedData] reactions: $_enabledReactions');
         }
 
+        // 每个站点每进程记录一次，切站后不能沿用首个站点的诊断。
+        final site = Uri.parse(AppConstants.baseUrl).origin;
+        if (_uploadSettingsLoggedSites.add(site)) {
+          AppLogger.info(
+            'site upload settings',
+            tag: 'PreloadedData',
+            fields: {
+              'site': site,
+              'direct_s3': _siteSettings?['enable_direct_s3_uploads'],
+              'max_attachment_kb': _siteSettings?['max_attachment_size_kb'],
+              'max_image_kb': _siteSettings?['max_image_size_kb'],
+            },
+          );
+        }
+
         // 提取 MessageBus 长轮询独立域名
         final pollingUrl = _siteSettings?['long_polling_base_url'] as String?;
         if (pollingUrl != null && pollingUrl.isNotEmpty && pollingUrl != '/') {
@@ -969,7 +987,10 @@ class PreloadedDataService {
     final completer = Completer<List<Map<String, dynamic>>?>();
     _topicTrackingStatesCompleter = completer;
     try {
-      final decoded = await compute(_decodeTopicTrackingStatesInIsolate, rawJson);
+      final decoded = await compute(
+        _decodeTopicTrackingStatesInIsolate,
+        rawJson,
+      );
       _topicTrackingStates = decoded;
       _topicTrackingStatesRawJson = null;
       debugPrint(
@@ -1085,7 +1106,8 @@ String? _extractPluginCandidateAround(String html, int pluginIndex) {
   }
 
   var end = pluginIndex + '/plugins/'.length;
-  while (end < html.length && !_isPluginCandidateBoundary(html.codeUnitAt(end))) {
+  while (end < html.length &&
+      !_isPluginCandidateBoundary(html.codeUnitAt(end))) {
     end++;
   }
 

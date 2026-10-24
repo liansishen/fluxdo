@@ -2,7 +2,6 @@ import 'package:common_ui/common_ui.dart';
 import 'package:flutter/material.dart';
 
 import 'composer_tools_anchor.dart';
-import '../../theme/mojian_theme.dart';
 
 const double kComposerIslandRadius = 20;
 const double kComposerIslandInset = 8;
@@ -34,22 +33,6 @@ class ComposerIsland extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final mojian = theme.extension<MojianTokens>();
-    // 墨笺沿用纸面与顶边细线；两种编辑模式共用同一工作台外壳。
-    if (mojian != null) {
-      return Padding(
-        padding: padding,
-        child: DecoratedBox(
-          key: toolsAnchor?.surfaceKey,
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
-            border: Border(top: BorderSide(color: mojian.rule)),
-          ),
-          child: Material(color: Colors.transparent, child: child),
-        ),
-      );
-    }
     return Padding(
       padding: padding,
       child: KeyedSubtree(

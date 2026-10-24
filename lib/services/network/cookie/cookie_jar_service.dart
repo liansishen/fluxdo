@@ -179,7 +179,8 @@ class CookieJarService {
                   cookie.name == name &&
                   (cookie.normalizedDomain == baseHost ||
                       (cookie.normalizedDomain == null &&
-                          Uri.tryParse(cookie.originUrl ?? '')?.host == baseHost)),
+                          Uri.tryParse(cookie.originUrl ?? '')?.host ==
+                              baseHost)),
             )
             .toList(growable: false);
         if (candidates.isEmpty) continue;
@@ -942,7 +943,8 @@ class CookieJarService {
         controller,
         currentUrl: currentUrl,
       );
-      final requestHost = Uri.tryParse(currentUrl ?? AppConstants.baseUrl)?.host ?? appBaseHost;
+      final requestHost =
+          Uri.tryParse(currentUrl ?? AppConstants.baseUrl)?.host ?? appBaseHost;
       for (final raw in rawCookies) {
         final cookieName = raw['name']?.toString();
         final value = raw['value']?.toString() ?? '';
@@ -967,6 +969,7 @@ class CookieJarService {
     Set<String>? excludeCookieNames,
     Map<String, String>? acceptValues,
     bool trusted = false,
+    Future<bool> Function(String name, String value)? admit,
   }) async {
     if (!io.Platform.isWindows) return 0;
     if (!_initialized) await initialize();
@@ -979,7 +982,7 @@ class CookieJarService {
         controller,
         currentUrl: currentUrl,
       );
-      final filtered = rawCookies
+      var filtered = rawCookies
           .where((raw) {
             final name = raw['name']?.toString();
             final value = raw['value']?.toString() ?? '';
@@ -999,6 +1002,17 @@ class CookieJarService {
             return matchesAppHost(domain);
           })
           .toList(growable: false);
+
+      // 域名、名字和目标值过滤后，CDP 快路径也必须通过在位值准入。
+      if (admit != null && filtered.isNotEmpty) {
+        final admitted = <Map<String, dynamic>>[];
+        for (final raw in filtered) {
+          final name = raw['name']?.toString() ?? '';
+          final value = raw['value']?.toString() ?? '';
+          if (await admit(name, value)) admitted.add(raw);
+        }
+        filtered = admitted;
+      }
 
       if (filtered.isEmpty) return 0;
 

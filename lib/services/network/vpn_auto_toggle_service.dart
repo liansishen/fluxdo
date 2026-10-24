@@ -69,7 +69,6 @@ class VpnAutoToggleService {
   /// - 订阅 [SystemProxyService.version](其内部已有 10s 注册表节拍);
   /// - 低频异步兜底重检网卡。检测本身是异步枚举,不落在 UI 帧上,
   ///   与曾导致周期性卡顿的 3s 同步轮询不同。
-  Timer? _windowsFallbackTimer;
   static const _windowsFallbackInterval = Duration(seconds: 15);
   bool _windowsSignalWatchStarted = false;
 
@@ -77,10 +76,7 @@ class VpnAutoToggleService {
     if (_windowsSignalWatchStarted || !Platform.isWindows) return;
     _windowsSignalWatchStarted = true;
     SystemProxyService.instance.version.addListener(_redetectWindows);
-    _windowsFallbackTimer = Timer.periodic(
-      _windowsFallbackInterval,
-      (_) => _redetectWindows(),
-    );
+    Timer.periodic(_windowsFallbackInterval, (_) => _redetectWindows());
   }
 
   void _redetectWindows() {
@@ -234,7 +230,8 @@ class VpnAutoToggleService {
       resolveVpnActive(
         connectivityResults: _lastConnectivityResults,
         hasWindowsVpnAdapter: _lastHasWindowsVpnAdapter,
-        systemProxyEnabled: Platform.isWindows &&
+        systemProxyEnabled:
+            Platform.isWindows &&
             SystemProxyService.instance.effectiveProxyUrl != null,
       ),
       shouldSuppress: shouldAutoSuppress(_lastConnectivityResults),
@@ -252,7 +249,8 @@ class VpnAutoToggleService {
     final hasVpn = resolveVpnActive(
       connectivityResults: results,
       hasWindowsVpnAdapter: hasWindowsVpnAdapter,
-      systemProxyEnabled: Platform.isWindows &&
+      systemProxyEnabled:
+          Platform.isWindows &&
           SystemProxyService.instance.effectiveProxyUrl != null,
     );
     final mode = detectionMode;
@@ -282,10 +280,17 @@ class VpnAutoToggleService {
       final dohService = NetworkSettingsService.instance;
       final proxyService = ProxySettingsService.instance;
 
-      // 检查 DOH 是否开启，开启则压制
-      if (dohService.notifier.value.dohEnabled) {
+      // 起代理前直接改偏好，避免先启动再压制。
+      final dohEnabled = dohService.isInitialized
+          ? dohService.notifier.value.dohEnabled
+          : NetworkSettingsService.storedDohEnabled(_prefs);
+      if (dohEnabled) {
         await _prefs.setBool(_keySuppressedDoh, true);
-        await dohService.setDohEnabled(false);
+        if (dohService.isInitialized) {
+          await dohService.setDohEnabled(false);
+        } else {
+          await NetworkSettingsService.storeDohEnabled(_prefs, false);
+        }
         debugPrint('[VpnAutoToggle] 压制 DOH');
       }
 
@@ -307,10 +312,15 @@ class VpnAutoToggleService {
     _isSuppressing = true;
 
     try {
-      // 恢复 DOH
+      // 网络设置未初始化时直接恢复偏好。
       if (isDohSuppressed) {
         await _prefs.remove(_keySuppressedDoh);
-        await NetworkSettingsService.instance.setDohEnabled(true);
+        final dohService = NetworkSettingsService.instance;
+        if (dohService.isInitialized) {
+          await dohService.setDohEnabled(true);
+        } else {
+          await NetworkSettingsService.storeDohEnabled(_prefs, true);
+        }
         debugPrint('[VpnAutoToggle] 恢复 DOH');
       }
 

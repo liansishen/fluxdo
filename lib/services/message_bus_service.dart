@@ -82,7 +82,9 @@ class MessageBusService {
   static const Duration _minPollInterval = Duration(milliseconds: 100);
   static const Duration _maxPollInterval = Duration(minutes: 3);
   static const Duration _defaultCallbackInterval = Duration(seconds: 3);
-  static const Duration _defaultBackgroundCallbackInterval = Duration(seconds: 60);
+  static const Duration _defaultBackgroundCallbackInterval = Duration(
+    seconds: 60,
+  );
   static const Duration _firstChunkTimeout = Duration(seconds: 3);
   static const int _retryChunkedAfterRequests = 30;
   static const int _minRateLimitedSeconds = 15;
@@ -99,8 +101,8 @@ class MessageBusService {
   String get clientId => _clientId;
 
   MessageBusService._internal()
-      : _clientId = ClientIdGenerator.generate(),
-        _dio = _createPollingDio();
+    : _clientId = ClientIdGenerator.generate(),
+      _dio = _createPollingDio();
 
   /// 当前前台/后台轮询间隔(从 PreloadedDataService 读取站点设置)
   Duration get _callbackInterval {
@@ -137,12 +139,16 @@ class MessageBusService {
 
   /// 配置 MessageBus 独立域名(登录后从预加载数据获取)
   void configure({String? baseUrl, String? sharedSessionKey}) {
-    final changed = _baseUrl != baseUrl || _sharedSessionKey != sharedSessionKey;
+    final changed =
+        _baseUrl != baseUrl || _sharedSessionKey != sharedSessionKey;
     _baseUrl = baseUrl;
     _sharedSessionKey = sharedSessionKey;
 
     if (changed && baseUrl != null) {
-      _dio = _createPollingDio(baseUrl: baseUrl, sharedSessionKey: sharedSessionKey);
+      _dio = _createPollingDio(
+        baseUrl: baseUrl,
+        sharedSessionKey: sharedSessionKey,
+      );
       debugPrint('[MessageBus] 配置独立域名: $baseUrl');
     } else if (changed && baseUrl == null) {
       _dio = _createPollingDio(sharedSessionKey: sharedSessionKey);
@@ -150,10 +156,7 @@ class MessageBusService {
     }
   }
 
-  static Dio _createPollingDio({
-    String? baseUrl,
-    String? sharedSessionKey,
-  }) {
+  static Dio _createPollingDio({String? baseUrl, String? sharedSessionKey}) {
     return DiscourseDio.create(
       kind: DiscourseDioKind.longPoll,
       receiveTimeout: const Duration(seconds: 60),
@@ -191,7 +194,11 @@ class MessageBusService {
   }
 
   /// 订阅频道
-  void subscribe(String channel, MessageBusCallback callback, {int lastMessageId = -1}) {
+  void subscribe(
+    String channel,
+    MessageBusCallback callback, {
+    int lastMessageId = -1,
+  }) {
     if (!_subscriptions.containsKey(channel)) {
       _subscriptions[channel] = _ChannelSubscription(
         channel: channel,
@@ -228,7 +235,11 @@ class MessageBusService {
   }
 
   /// 使用指定的 messageId 订阅
-  void subscribeWithMessageId(String channel, MessageBusCallback callback, int messageId) {
+  void subscribeWithMessageId(
+    String channel,
+    MessageBusCallback callback,
+    int messageId,
+  ) {
     if (_subscriptions.containsKey(channel)) {
       _subscriptions[channel]!.callbacks.add(callback);
       if (messageId > _subscriptions[channel]!.lastMessageId) {
@@ -265,6 +276,9 @@ class MessageBusService {
     _restartPollTimer = null;
     _currentCancelToken?.cancel('[MessageBus] 停止轮询');
     _currentCancelToken = null;
+    _deferredDrainTimer?.cancel();
+    _deferredDrainTimer = null;
+    _deferredMessages.clear();
   }
 
   void _schedulePollingRefresh() {
@@ -313,7 +327,9 @@ class MessageBusService {
 
   /// 执行长轮询
   Future<void> _poll(int generation) async {
-    while (!_shouldStop && _subscriptions.isNotEmpty && generation == _pollGeneration) {
+    while (!_shouldStop &&
+        _subscriptions.isNotEmpty &&
+        generation == _pollGeneration) {
       _currentCancelToken = CancelToken();
       final cancelToken = _currentCancelToken!;
       final startedAt = DateTime.now();
@@ -343,9 +359,7 @@ class MessageBusService {
           '[MessageBus] 发起轮询 (seq=$_totalPollCalls, chunked=$useChunked, bg=$_backgroundMode): $payload',
         );
 
-        final extraHeaders = <String, dynamic>{
-          'X-SILENCE-LOGGER': 'true',
-        };
+        final extraHeaders = <String, dynamic>{'X-SILENCE-LOGGER': 'true'};
         if (_sharedSessionKey != null) {
           extraHeaders['X-Shared-Session-Key'] = _sharedSessionKey;
         }
@@ -369,20 +383,33 @@ class MessageBusService {
             },
           ),
         );
+        if (_shouldStop || generation != _pollGeneration) break;
 
         final responseContentType =
-            response.headers[Headers.contentTypeHeader]?.join(',').toLowerCase() ??
-                '';
+            response.headers[Headers.contentTypeHeader]
+                ?.join(',')
+                .toLowerCase() ??
+            '';
         final serverSaysJson = responseContentType.contains('application/json');
 
         if (useChunked && !serverSaysJson) {
-          gotData = await _readChunkedResponse(response, cancelToken);
+          gotData = await _readChunkedResponse(
+            response,
+            cancelToken,
+            generation,
+          );
         } else {
-          gotData = await _readWholeBodyResponse(response, cancelToken);
+          gotData = await _readWholeBodyResponse(
+            response,
+            cancelToken,
+            generation,
+          );
         }
 
+        if (_shouldStop || generation != _pollGeneration) break;
         _failureCount = 0;
       } on DioException catch (e) {
+        if (_shouldStop || generation != _pollGeneration) break;
         if (e.type == DioExceptionType.cancel) {
           abortedByClient = true;
         } else if (e.response?.statusCode == 429) {
@@ -400,12 +427,15 @@ class MessageBusService {
           debugPrint('[MessageBus] 轮询失败: ${e.type}, ${e.message}');
         }
       } catch (e, stack) {
+        if (_shouldStop || generation != _pollGeneration) break;
         requestFailed = true;
         _failureCount += 1;
         debugPrint('[MessageBus] 未知错误: $e');
         debugPrint('[MessageBus] $stack');
       } finally {
-        _currentCancelToken = null;
+        if (identical(_currentCancelToken, cancelToken)) {
+          _currentCancelToken = null;
+        }
       }
 
       if (_shouldStop || generation != _pollGeneration) break;
@@ -473,7 +503,9 @@ class MessageBusService {
   }) {
     if (rateLimited) {
       final raw = rateLimitedSeconds ?? _minRateLimitedSeconds;
-      final seconds = raw < _minRateLimitedSeconds ? _minRateLimitedSeconds : raw;
+      final seconds = raw < _minRateLimitedSeconds
+          ? _minRateLimitedSeconds
+          : raw;
       final candidate = Duration(seconds: seconds);
       return candidate < _minPollInterval ? _minPollInterval : candidate;
     }
@@ -491,7 +523,9 @@ class MessageBusService {
       return _minPollInterval;
     }
 
-    final target = inBackground ? _backgroundCallbackInterval : _callbackInterval;
+    final target = inBackground
+        ? _backgroundCallbackInterval
+        : _callbackInterval;
     final elapsed = DateTime.now().difference(startedAt);
     final remaining = target - elapsed;
     return remaining < _minPollInterval ? _minPollInterval : remaining;
@@ -504,6 +538,7 @@ class MessageBusService {
   Future<bool> _readChunkedResponse(
     Response<ResponseBody> response,
     CancelToken cancelToken,
+    int generation,
   ) async {
     var gotData = false;
     final buffer = StringBuffer();
@@ -520,7 +555,10 @@ class MessageBusService {
 
     try {
       await for (final chunk in response.data!.stream) {
-        if (cancelToken.isCancelled) break;
+        if (cancelToken.isCancelled ||
+            _shouldStop ||
+            generation != _pollGeneration)
+          break;
         receivedAnyChunk = true;
 
         try {
@@ -536,7 +574,7 @@ class MessageBusService {
           if (next == null) break;
           consumed = next.endOffset;
           if (next.payload.isNotEmpty) {
-            if (await _processChunk(next.payload)) gotData = true;
+            if (await _processChunk(next.payload, generation)) gotData = true;
           }
         }
 
@@ -552,8 +590,11 @@ class MessageBusService {
     // 流结束时如果还剩"完整 JSON 但缺末尾分隔符"的内容,作为一个块处理。
     // 服务端 long_polling 25s 超时无数据时,返回的是 `[]` 而不会带分隔符。
     final tail = buffer.toString().trim();
-    if (tail.isNotEmpty && !cancelToken.isCancelled) {
-      if (await _processChunk(tail)) gotData = true;
+    if (tail.isNotEmpty &&
+        !cancelToken.isCancelled &&
+        !_shouldStop &&
+        generation == _pollGeneration) {
+      if (await _processChunk(tail, generation)) gotData = true;
     }
 
     return gotData;
@@ -563,16 +604,20 @@ class MessageBusService {
   Future<bool> _readWholeBodyResponse(
     Response<ResponseBody> response,
     CancelToken cancelToken,
+    int generation,
   ) async {
     final bytes = <int>[];
     await for (final chunk in response.data!.stream) {
-      if (cancelToken.isCancelled) return false;
+      if (cancelToken.isCancelled ||
+          _shouldStop ||
+          generation != _pollGeneration)
+        return false;
       bytes.addAll(chunk);
     }
     if (bytes.isEmpty) return false;
     final body = utf8.decode(bytes, allowMalformed: true).trim();
     if (body.isEmpty) return false;
-    return _processChunk(body);
+    return _processChunk(body, generation);
   }
 
   /// 提取下一个 chunk 块,返回 `(payload, endOffset)`;无完整 chunk 时返回 null
@@ -610,7 +655,7 @@ class MessageBusService {
   static const int _isolateDecodeThreshold = 32 * 1024;
 
   /// 处理单个消息块,返回是否产生了实际的数据消息
-  Future<bool> _processChunk(String chunk) async {
+  Future<bool> _processChunk(String chunk, int generation) async {
     try {
       final parsed = chunk.length >= _isolateDecodeThreshold
           ? await compute(_decodeJsonChunk, chunk)
@@ -618,9 +663,12 @@ class MessageBusService {
               'MsgBusDecode',
               () => jsonDecode(chunk),
             );
+      // isolate 解码期间可能已经退出或切站，旧响应不得投递给新订阅。
+      if (_shouldStop || generation != _pollGeneration) return false;
       if (parsed is! List) return false;
       var got = false;
       for (final item in parsed) {
+        if (_shouldStop || generation != _pollGeneration) break;
         if (item is Map<String, dynamic>) {
           final message = MessageBusMessage.fromJson(item);
           _handleMessage(message);
@@ -646,7 +694,9 @@ class MessageBusService {
           final lastId = entry.value;
           if (_subscriptions.containsKey(channelName) && lastId is int) {
             _subscriptions[channelName]!.lastMessageId = lastId;
-            debugPrint('[MessageBus] 更新频道 $channelName 的 lastMessageId: $lastId');
+            debugPrint(
+              '[MessageBus] 更新频道 $channelName 的 lastMessageId: $lastId',
+            );
           }
         }
       }
@@ -694,7 +744,9 @@ class MessageBusService {
     }
     final batch = List<MessageBusMessage>.from(_deferredMessages);
     _deferredMessages.clear();
+    final generation = _pollGeneration;
     for (final message in batch) {
+      if (_shouldStop || generation != _pollGeneration) break;
       _deliverMessage(message);
     }
   }
@@ -751,9 +803,6 @@ class MessageBusService {
   /// 释放资源
   void dispose() {
     _stopPolling();
-    _restartPollTimer?.cancel();
-    _deferredDrainTimer?.cancel();
-    _deferredMessages.clear();
     _messageController.close();
   }
 }

@@ -3,17 +3,37 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxdo/services/local_notification_service.dart';
 import 'package:fluxdo/services/toast_service.dart';
+import 'package:fluxdo/theme/claude_theme.dart';
+import 'package:fluxdo/theme/mojian_theme.dart';
 
 /// 入场 560ms、退场 300ms，多给一点余量
 const _enter = Duration(milliseconds: 700);
 const _exit = Duration(milliseconds: 400);
 
-Future<void> _pumpHost(WidgetTester tester, {bool glass = true}) {
+Future<void> _pumpHost(
+  WidgetTester tester, {
+  bool glass = true,
+  UiStyle style = UiStyle.classic,
+}) {
+  final mojian = style == UiStyle.mojian
+      ? MojianTokens.of(Brightness.light, MojianAccent.cinnabar)
+      : null;
   return tester.pumpWidget(
     MaterialApp(
+      theme: ThemeData(
+        extensions: [
+          if (mojian != null) mojian,
+          if (style == UiStyle.claude) ClaudeTokens.of(Brightness.light),
+        ],
+      ),
       navigatorKey: navigatorKey,
       builder: (context, child) => GlassSettingsScope(
-        settings: GlassSettings(enabled: glass),
+        settings: GlassSettings(
+          enabled: glass,
+          solid: mojian == null
+              ? null
+              : GlassSolidStyle(fill: mojian.paper, border: mojian.ruleStrong),
+        ),
         child: child!,
       ),
       home: const Scaffold(body: SizedBox.expand()),
@@ -65,18 +85,22 @@ void main() {
     ToastService.showInfo('下载时也能看到');
     await tester.pump();
     await tester.pump(_enter);
-    final progressTop = tester.getTopLeft(
-      find.ancestor(
-        of: find.text('FluxDO.apk'),
-        matching: find.byType(GlassSurfaceFrame),
-      ),
-    ).dy;
-    final noticeTop = tester.getTopLeft(
-      find.ancestor(
-        of: find.text('下载时也能看到'),
-        matching: find.byType(GlassSurfaceFrame),
-      ),
-    ).dy;
+    final progressTop = tester
+        .getTopLeft(
+          find.ancestor(
+            of: find.text('FluxDO.apk'),
+            matching: find.byType(GlassSurfaceFrame),
+          ),
+        )
+        .dy;
+    final noticeTop = tester
+        .getTopLeft(
+          find.ancestor(
+            of: find.text('下载时也能看到'),
+            matching: find.byType(GlassSurfaceFrame),
+          ),
+        )
+        .dy;
     expect(noticeTop, greaterThan(progressTop + 40));
 
     // 让它按自己的时长消失，后面的断言只针对下载胶囊
@@ -165,6 +189,44 @@ void main() {
     await tester.pump(_exit);
   });
 
+  testWidgets('墨笺提示保留纸色细线小圆角，Claude 使用玻璃胶囊', (tester) async {
+    final mojian = MojianTokens.of(Brightness.light, MojianAccent.cinnabar);
+    for (final glass in [false, true]) {
+      await _pumpHost(tester, glass: glass, style: UiStyle.mojian);
+      ToastService.showSuccess('纸面提示');
+      await tester.pump();
+      await tester.pump(_enter);
+      expect(find.byType(BackdropFilter), findsNothing);
+      expect(find.byType(GlassSurfaceFrame), findsNothing);
+      final shell = tester.widget<DecoratedBox>(
+        find
+            .descendant(
+              of: find.byKey(const ValueKey('toast-shell')),
+              matching: find.byType(DecoratedBox),
+            )
+            .first,
+      );
+      final decoration = shell.decoration as ShapeDecoration;
+      final shape = decoration.shape as RoundedRectangleBorder;
+      expect(decoration.color, mojian.paper);
+      expect(shape.side, BorderSide(color: mojian.ruleStrong, width: 0.5));
+      expect(shape.borderRadius, BorderRadius.circular(6));
+      expect(tester.widget<Text>(find.text('纸面提示')).style?.color, mojian.ink);
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump(_exit);
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
+
+    await _pumpHost(tester, style: UiStyle.claude);
+    ToastService.showInfo('Claude 玻璃提示');
+    await tester.pump();
+    await tester.pump(_enter);
+    expect(find.byType(GlassSurfaceFrame), findsOneWidget);
+    expect(find.byType(BackdropFilter), findsWidgets);
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump(_exit);
+  });
+
   testWidgets('进度胶囊退场时插入新提示，排在下方且不重叠', (tester) async {
     await _pumpHost(tester);
 
@@ -178,18 +240,22 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     // 退场中的进度胶囊还在，新提示排在它下面 —— 重叠在同一位置才是 bug
-    final leavingTop = tester.getTopLeft(
-      find.ancestor(
-        of: find.text('a.apk'),
-        matching: find.byType(GlassSurfaceFrame),
-      ),
-    ).dy;
-    final arrivingTop = tester.getTopLeft(
-      find.ancestor(
-        of: find.text('下载失败'),
-        matching: find.byType(GlassSurfaceFrame),
-      ),
-    ).dy;
+    final leavingTop = tester
+        .getTopLeft(
+          find.ancestor(
+            of: find.text('a.apk'),
+            matching: find.byType(GlassSurfaceFrame),
+          ),
+        )
+        .dy;
+    final arrivingTop = tester
+        .getTopLeft(
+          find.ancestor(
+            of: find.text('下载失败'),
+            matching: find.byType(GlassSurfaceFrame),
+          ),
+        )
+        .dy;
     expect(arrivingTop, greaterThan(leavingTop + 40));
 
     // 退场结束：只剩新提示，并且升回顶部
@@ -197,12 +263,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(tester.widgetList(find.byType(GlassSurfaceFrame)).length, 1);
     expect(find.text('a.apk'), findsNothing);
-    final settledTop = tester.getTopLeft(
-      find.ancestor(
-        of: find.text('下载失败'),
-        matching: find.byType(GlassSurfaceFrame),
-      ),
-    ).dy;
+    final settledTop = tester
+        .getTopLeft(
+          find.ancestor(
+            of: find.text('下载失败'),
+            matching: find.byType(GlassSurfaceFrame),
+          ),
+        )
+        .dy;
     expect(settledTop, lessThan(arrivingTop));
 
     await tester.pump(const Duration(seconds: 5));
@@ -281,24 +349,28 @@ void main() {
     await tester.pump();
     await tester.pump(_enter);
     expect(tester.widgetList(find.byType(GlassSurfaceFrame)).length, 2);
-    final stackedTop = tester.getTopLeft(
-      find.ancestor(
-        of: find.text('下载中的提示'),
-        matching: find.byType(GlassSurfaceFrame),
-      ),
-    ).dy;
+    final stackedTop = tester
+        .getTopLeft(
+          find.ancestor(
+            of: find.text('下载中的提示'),
+            matching: find.byType(GlassSurfaceFrame),
+          ),
+        )
+        .dy;
 
     handle.dismiss();
     await tester.pump();
     await tester.pump(_exit); // 胶囊退场
     await tester.pump(const Duration(milliseconds: 400)); // 让位动画走完
     expect(tester.widgetList(find.byType(GlassSurfaceFrame)).length, 1);
-    final liftedTop = tester.getTopLeft(
-      find.ancestor(
-        of: find.text('下载中的提示'),
-        matching: find.byType(GlassSurfaceFrame),
-      ),
-    ).dy;
+    final liftedTop = tester
+        .getTopLeft(
+          find.ancestor(
+            of: find.text('下载中的提示'),
+            matching: find.byType(GlassSurfaceFrame),
+          ),
+        )
+        .dy;
     expect(liftedTop, lessThan(stackedTop));
 
     await tester.pump(const Duration(seconds: 3));
@@ -391,18 +463,22 @@ void main() {
     await tester.pump(_enter);
     expect(find.text('先来的提示'), findsOneWidget);
     expect(tester.widgetList(find.byType(GlassSurfaceFrame)).length, 2);
-    final noticeTop = tester.getTopLeft(
-      find.ancestor(
-        of: find.text('先来的提示'),
-        matching: find.byType(GlassSurfaceFrame),
-      ),
-    ).dy;
-    final progressTop = tester.getTopLeft(
-      find.ancestor(
-        of: find.text('a.apk'),
-        matching: find.byType(GlassSurfaceFrame),
-      ),
-    ).dy;
+    final noticeTop = tester
+        .getTopLeft(
+          find.ancestor(
+            of: find.text('先来的提示'),
+            matching: find.byType(GlassSurfaceFrame),
+          ),
+        )
+        .dy;
+    final progressTop = tester
+        .getTopLeft(
+          find.ancestor(
+            of: find.text('a.apk'),
+            matching: find.byType(GlassSurfaceFrame),
+          ),
+        )
+        .dy;
     expect(noticeTop, greaterThan(progressTop + 40));
 
     // 进度照常更新
@@ -416,12 +492,14 @@ void main() {
     await tester.pump(_exit);
     await tester.pump(const Duration(milliseconds: 400));
     expect(tester.widgetList(find.byType(GlassSurfaceFrame)).length, 1);
-    final liftedTop = tester.getTopLeft(
-      find.ancestor(
-        of: find.text('先来的提示'),
-        matching: find.byType(GlassSurfaceFrame),
-      ),
-    ).dy;
+    final liftedTop = tester
+        .getTopLeft(
+          find.ancestor(
+            of: find.text('先来的提示'),
+            matching: find.byType(GlassSurfaceFrame),
+          ),
+        )
+        .dy;
     expect(liftedTop, lessThan(noticeTop));
 
     await tester.pump(const Duration(seconds: 3));

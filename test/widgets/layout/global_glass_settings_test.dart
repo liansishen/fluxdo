@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxdo/providers/preferences_provider.dart';
 import 'package:fluxdo/providers/theme_provider.dart';
+import 'package:fluxdo/theme/claude_theme.dart';
+import 'package:fluxdo/theme/mojian_theme.dart';
 import 'package:fluxdo/widgets/common/app_glass_settings.dart';
 import 'package:fluxdo/widgets/layout/adaptive_navigation.dart';
 import 'package:fluxdo/widgets/markdown_editor/composer_island.dart';
@@ -14,11 +16,13 @@ void main() {
     WidgetTester tester, {
     bool highContrast = false,
     GlassEffectLevel level = GlassEffectLevel.basic,
+    UiStyle style = UiStyle.classic,
     ValueChanged<int>? onDestinationSelected,
     VoidCallback? onEditorPressed,
   }) async {
     SharedPreferences.setMockInitialValues({
       'pref_bottom_nav_floating': true,
+      'ui_style': style.name,
       'pref_bottom_nav_labelless': true,
       // 废弃的局部开关不能覆盖新的全局默认值。
       'pref_bottom_nav_floating_blur': false,
@@ -34,6 +38,13 @@ void main() {
       UncontrolledProviderScope(
         container: container,
         child: MaterialApp(
+          theme: ThemeData(
+            extensions: [
+              if (style == UiStyle.mojian)
+                MojianTokens.of(Brightness.light, MojianAccent.cinnabar),
+              if (style == UiStyle.claude) ClaudeTokens.of(Brightness.light),
+            ],
+          ),
           builder: (context, child) => MediaQuery(
             data: MediaQuery.of(context).copyWith(highContrast: highContrast),
             child: AppGlassSettings(child: child!),
@@ -148,5 +159,31 @@ void main() {
       GlassEffectLevel.full,
     );
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('只有墨笺强制纸面，Claude 保留全局玻璃开关', (tester) async {
+    for (final style in [UiStyle.mojian, UiStyle.claude]) {
+      final container = await pumpSurfaces(tester, style: style);
+      expect(find.byType(GlassSurface), findsNWidgets(2));
+      expect(
+        find.byType(BackdropFilter),
+        style == UiStyle.mojian ? findsNothing : findsNWidgets(2),
+      );
+      final settings = GlassSettingsScope.of(
+        tester.element(find.byType(ComposerIsland)),
+      );
+      expect(settings.solid != null, style == UiStyle.mojian);
+      final notifier = container.read(preferencesProvider.notifier);
+      await notifier.setGlassEnabled(false);
+      await tester.pumpAndSettle();
+      expect(find.byType(BackdropFilter), findsNothing);
+      await notifier.setGlassEnabled(true);
+      await tester.pumpAndSettle();
+      expect(
+        find.byType(BackdropFilter),
+        style == UiStyle.mojian ? findsNothing : findsNWidgets(2),
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
   });
 }

@@ -71,6 +71,10 @@ class FakeRoundEnvironment implements CfRoundEnvironment {
   /// 权威闸门是否采纳落值。
   bool gateAccepts = true;
 
+  /// 模拟只能落 WebView 当前值，以及落值中站点再次签值。
+  bool landOnlyCurrentWebView = false;
+  void Function(String value)? onLand;
+
   /// App 侧 jar 里的 cf_clearance。
   String? jar = 'old';
 
@@ -147,14 +151,16 @@ class FakeRoundEnvironment implements CfRoundEnvironment {
   Future<String?> land(CfVerificationRound round, String value) async {
     calls.add('land');
     landed.add(value);
+    onLand?.call(value);
     landedAt.add(clock.elapsed);
-    if (gateAccepts) jar = value;
+    if (gateAccepts && (!landOnlyCurrentWebView || webView == value)) {
+      jar = value;
+    }
     return jar;
   }
 
   @override
-  void onPassed(CfVerificationRound round, String value) =>
-      calls.add('passed');
+  void onPassed(CfVerificationRound round, String value) => calls.add('passed');
 
   @override
   bool isCoolingDown() => cooling;

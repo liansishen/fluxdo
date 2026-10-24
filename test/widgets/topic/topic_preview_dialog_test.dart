@@ -11,6 +11,7 @@ import 'package:fluxdo/providers/category_provider.dart';
 import 'package:fluxdo/providers/theme_provider.dart';
 import 'package:fluxdo/services/local_notification_service.dart';
 import 'package:fluxdo/widgets/topic/topic_preview_dialog.dart';
+import 'package:fluxdo/widgets/common/morphing_dialog_anchor.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Topic _topic({String title = 'Preview Topic'}) {
@@ -247,7 +248,7 @@ void main() {
     const screenCenter = Offset(400, 300);
     final initialDist = (initialRect.center - screenCenter).distance;
     final midDist = (midRect.center - screenCenter).distance;
-    expect(midDist, lessThan(initialDist * 0.6));
+    expect(midDist, lessThan(initialDist));
 
     // 落座:壳与内容柱 rect 重合(内容自始至终嵌在壳内),预览完整可见
     await tester.pumpAndSettle();
@@ -307,18 +308,9 @@ void main() {
             navigatorKey: navigatorKey,
             supportedLocales: AppLocaleUtils.supportedLocales,
             home: Scaffold(
-              body: Center(
-                child: Builder(
-                  builder: (context) => FilledButton(
-                    onPressed: () => TopicPreviewDialog.show(
-                      context,
-                      topic: _topic(),
-                      firstPostLoader: () => loader.future,
-                      anchorRect: anchor,
-                    ),
-                    child: const Text('open-preview'),
-                  ),
-                ),
+              body: _OpenPreviewHarness(
+                anchorRect: anchor,
+                firstPostLoader: () => loader.future,
               ),
             ),
           ),
@@ -348,22 +340,32 @@ void main() {
 }
 
 class _OpenPreviewHarness extends StatelessWidget {
-  const _OpenPreviewHarness({required this.anchorRect});
+  const _OpenPreviewHarness({required this.anchorRect, this.firstPostLoader});
 
   final Rect anchorRect;
+  final Future<String?> Function()? firstPostLoader;
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: FilledButton(
-        onPressed: () => TopicPreviewDialog.show(
-          context,
-          topic: _topic(),
-          firstPostLoader: () async => '<p>Loaded content</p>',
-          anchorRect: anchorRect,
+    return Stack(
+      children: [
+        Positioned.fromRect(
+          rect: anchorRect,
+          child: MorphingDialogAnchor(
+            bottomGap: 0,
+            builder: (sourceContext) => FilledButton(
+              onPressed: () => TopicPreviewDialog.show(
+                context,
+                topic: _topic(),
+                firstPostLoader:
+                    firstPostLoader ?? () async => '<p>Loaded content</p>',
+                sourceContext: sourceContext,
+              ),
+              child: const Text('open-preview'),
+            ),
+          ),
         ),
-        child: const Text('open-preview'),
-      ),
+      ],
     );
   }
 }

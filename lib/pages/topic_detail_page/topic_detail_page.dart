@@ -326,7 +326,8 @@ class _TopicDetailPageState extends ConsumerState<TopicDetailPage>
     _isParentActive = widget.parentActive;
     _providerPostNumber = widget.scrollToPostNumber;
     _nestedReadingStore = ref.read(nestedReadingStoreProvider);
-    _hadNestedSession = _nestedReadingStore.existingSession(_instanceId) != null;
+    _hadNestedSession =
+        _nestedReadingStore.existingSession(_instanceId) != null;
     _nestedReadingSession = _nestedReadingStore.session(_instanceId);
     if (!_hadNestedSession) {
       _nestedReadingSession.sort = _nestedReadingStore.sort;
@@ -343,7 +344,8 @@ class _TopicDetailPageState extends ConsumerState<TopicDetailPage>
     _nestedTargetPostNumber = _hadNestedSession
         ? _nestedReadingSession.contextTarget
         : (widget.scrollToPostNumber != null && widget.scrollToPostNumber! > 1
-            ? widget.scrollToPostNumber : null);
+              ? widget.scrollToPostNumber
+              : null);
     _searchFocusNode = FocusNode(onKeyEvent: _handleSearchKeyEvent);
 
     _expandController = AnimationController(
@@ -382,6 +384,11 @@ class _TopicDetailPageState extends ConsumerState<TopicDetailPage>
         container
             .read(topicSessionProvider(topicId).notifier)
             .markAsRead(postNumbers);
+        // 只清除此私信的实时提示，不影响其他私信的未读状态。
+        final detail = container.read(topicDetailProvider(_params)).value;
+        if (detail?.isPrivateMessage ?? false) {
+          container.read(pmTrackingProvider.notifier).markRead(topicId);
+        }
         // 先只更新一份全局追踪状态。之前在每个分类列表的 updateSeen 内
         // 重复写一次，还会因为 ref.read(notifier) 初始化从未打开过的
         // provider，导致一次阅读上报并发加载全部置顶分类。
@@ -721,9 +728,9 @@ class _TopicDetailPageState extends ConsumerState<TopicDetailPage>
     ref.invalidate(pmArchiveProvider);
   }
 
-  /// 离开当前私信页。不能复用 Esc 语义：后者会在搜索或 AI 页中只退出子
-  /// 模式，仍把这条私信留在屏幕上。
-  void _leavePrivateMessagePage() {
+  /// 退出当前话题页，兼容平行视界嵌入面板与普通路由。
+  /// 不能复用 Esc：搜索或 AI 子页面也必须连同话题一起退出。
+  void _leaveTopicPage() {
     if (!mounted) return;
     if (widget.embeddedMode) {
       widget.onEmbeddedBack?.call();
@@ -734,7 +741,14 @@ class _TopicDetailPageState extends ConsumerState<TopicDetailPage>
 
   void _closeRemovedPrivateMessage() {
     _invalidatePrivateMessageLists();
-    _leavePrivateMessagePage();
+    _leaveTopicPage();
+  }
+
+  /// 当前话题彻底销毁后提示并退出，只退当前一层。
+  void _handleTopicDestroyed() {
+    if (!mounted) return;
+    ToastService.showInfo(context.l10n.topicDetail_topicDestroyed);
+    _leaveTopicPage();
   }
 
   KeyEventResult _handleSearchKeyEvent(FocusNode _, KeyEvent event) {
@@ -1118,7 +1132,9 @@ class _TopicDetailPageState extends ConsumerState<TopicDetailPage>
       if (mounted &&
           _nestedTargetPostNumber == saved.postNumber &&
           data.sort != saved.sort) {
-        await ref.read(nestedTopicProvider(params).notifier).changeSort(saved.sort);
+        await ref
+            .read(nestedTopicProvider(params).notifier)
+            .changeSort(saved.sort);
       }
     } catch (_) {
       // 定位接口失败由树形视图的错误/平铺回落入口处理。
@@ -2424,6 +2440,18 @@ class _TopicDetailPageState extends ConsumerState<TopicDetailPage>
     // ref.read 可能作用在已失效的 widget 上而报错（表现为点头像/内部
     // 链接后卡死不响应——实测复现过）。整个回调包一层 try-catch：面板
     // 反正要没了，跳过这次更新是安全的，比让异常直接把交互链路搅死强。
+    // 销毁后话题频道不再发消息，必须监听全局销毁事件。
+    ref.listen(destroyedTopicsProvider, (previous, next) {
+      if (!context.mounted) return;
+      if (!next.contains(widget.topicId)) return;
+      if (previous?.contains(widget.topicId) ?? false) return;
+      try {
+        _handleTopicDestroyed();
+      } catch (e) {
+        debugPrint('[TopicDetail] 处理话题销毁失败: $e');
+      }
+    });
+
     ref.listen(topicChannelProvider(widget.topicId), (previous, next) {
       if (!context.mounted) return;
       try {
@@ -3227,18 +3255,22 @@ class _TopicDetailPageState extends ConsumerState<TopicDetailPage>
               : null,
           restorePosition: _nestedRestorePosition,
           fullTargetPostNumber: _nestedFullTarget,
-          active: _isRouteVisible &&
+          active:
+              _isRouteVisible &&
               _isParentActive &&
               !ref.read(topicSearchProvider(widget.topicId)).isSearchMode,
           onViewportPostChanged: (postNumber) {
             if (!_controller.isPositioned) _controller.markPositioned();
             _controller.updateViewportPostNumber(postNumber);
             ref
-                .read(detailScrollPositionProvider((
-                  topicId: widget.topicId,
-                  instanceId: _instanceId,
-                )).notifier)
-                .state = postNumber;
+                    .read(
+                      detailScrollPositionProvider((
+                        topicId: widget.topicId,
+                        instanceId: _instanceId,
+                      )).notifier,
+                    )
+                    .state =
+                postNumber;
           },
           onPositionChanged: (position) =>
               _nestedReadingStore.save(widget.topicId, position),

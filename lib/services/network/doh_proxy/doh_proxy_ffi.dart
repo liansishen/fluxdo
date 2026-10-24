@@ -388,12 +388,18 @@ class DohProxyFfi {
   int Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, int, Pointer<Utf8>)?
   _dohProxyReportHostFailure;
   Pointer<Utf8> Function()? _dohProxyDnsCacheStats;
+  Pointer<Utf8> Function()? _dohProxyNetStats;
   Pointer<Utf8> Function()? _dohProxyDnsCacheRecords;
   Pointer<Utf8> Function()? _dohProxyGenerateCa;
   Pointer<Utf8> Function()? _dohProxyGetEmbeddedCaPem;
   int Function()? _dohProxyTakeAuthRejected;
   Pointer<Utf8> Function()? _dohProxyTakeAccelUpdate;
-  Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>)?
+  Pointer<Utf8> Function(
+    Pointer<Utf8>,
+    Pointer<Utf8>,
+    Pointer<Utf8>,
+    Pointer<Utf8>,
+  )?
   _dohProxyAccelRequest;
   // 本地动态优选：网络变化通知 / 状态查询 / 手动重选 / 开关「帮助优选」，均为可选符号
   int Function(Pointer<Utf8>)? _dohProxyNetworkChanged;
@@ -420,9 +426,10 @@ class DohProxyFfi {
           .asFunction();
 
       _dohProxySetEchDnsPolicy = _lib!
-          .lookupFunction<Int32 Function(Pointer<Utf8>), int Function(Pointer<Utf8>)>(
-            'doh_proxy_set_ech_dns_policy_json',
-          );
+          .lookupFunction<
+            Int32 Function(Pointer<Utf8>),
+            int Function(Pointer<Utf8>)
+          >('doh_proxy_set_ech_dns_policy_json');
 
       _dohProxyStop = _lib!
           .lookup<NativeFunction<Void Function()>>('doh_proxy_stop')
@@ -523,6 +530,16 @@ class DohProxyFfi {
       }
 
       try {
+        _dohProxyNetStats = _lib!
+            .lookup<NativeFunction<Pointer<Utf8> Function()>>(
+              'doh_proxy_net_stats',
+            )
+            .asFunction();
+      } catch (_) {
+        _dohProxyNetStats = null;
+      }
+
+      try {
         _dohProxyDnsCacheRecords = _lib!
             .lookup<NativeFunction<Pointer<Utf8> Function()>>(
               'doh_proxy_dns_cache_records',
@@ -603,9 +620,7 @@ class DohProxyFfi {
 
       try {
         _dohProxySelectRerace = _lib!
-            .lookup<NativeFunction<Int32 Function()>>(
-              'doh_proxy_select_rerace',
-            )
+            .lookup<NativeFunction<Int32 Function()>>('doh_proxy_select_rerace')
             .asFunction();
       } catch (_) {
         _dohProxySelectRerace = null;
@@ -812,6 +827,7 @@ class DohProxyFfi {
     List<String> extraCoveredHosts = const [],
     String? appVersion,
     String? networkSig,
+    List<String> preconnectHosts = const [],
   }) {
     if (!_initialized && !initialize()) {
       return -1;
@@ -880,9 +896,13 @@ class DohProxyFfi {
       if (reportUrl != null && reportUrl.isNotEmpty) 'report_url': reportUrl,
       if (reportBearer != null && reportBearer.isNotEmpty)
         'report_bearer': reportBearer,
-      if (extraCoveredHosts.isNotEmpty) 'extra_covered_hosts': extraCoveredHosts,
-      if (appVersion != null && appVersion.isNotEmpty) 'app_version': appVersion,
-      if (networkSig != null && networkSig.isNotEmpty) 'network_sig': networkSig,
+      if (extraCoveredHosts.isNotEmpty)
+        'extra_covered_hosts': extraCoveredHosts,
+      if (appVersion != null && appVersion.isNotEmpty)
+        'app_version': appVersion,
+      if (networkSig != null && networkSig.isNotEmpty)
+        'network_sig': networkSig,
+      if (preconnectHosts.isNotEmpty) 'preconnect_hosts': preconnectHosts,
     });
     final configPtr = configJson.toNativeUtf8();
     try {
@@ -1080,7 +1100,9 @@ class DohProxyFfi {
 
     final map = jsonDecode(jsonStr) as Map<String, dynamic>;
     if (map['ok'] != true) {
-      debugPrint('[DOH FFI] takeAccelUpdate: ${map['error'] ?? 'unknown error'}');
+      debugPrint(
+        '[DOH FFI] takeAccelUpdate: ${map['error'] ?? 'unknown error'}',
+      );
       return null;
     }
     final routeTable = map['route_table'];
@@ -1132,7 +1154,9 @@ class DohProxyFfi {
       _dohProxyFreeString(resultPtr);
       final decoded = jsonDecode(jsonStr);
       if (decoded is! Map<String, dynamic> || decoded['ok'] != true) {
-        debugPrint('[DOH FFI] mitmLeafPem($host): ${decoded is Map ? decoded['error'] : decoded}');
+        debugPrint(
+          '[DOH FFI] mitmLeafPem($host): ${decoded is Map ? decoded['error'] : decoded}',
+        );
         return null;
       }
       return decoded['pem'] as String?;
@@ -1156,7 +1180,9 @@ class DohProxyFfi {
     final decoded = jsonDecode(jsonStr);
     if (decoded is! Map<String, dynamic>) return null;
     if (decoded['ok'] != true) {
-      debugPrint('[DOH FFI] selectStatus: ${decoded['error'] ?? 'unknown error'}');
+      debugPrint(
+        '[DOH FFI] selectStatus: ${decoded['error'] ?? 'unknown error'}',
+      );
       return null;
     }
     return DohSelectStatus.fromJson(decoded);
@@ -1233,6 +1259,21 @@ class DohProxyFfi {
         calloc.free(bodyPtr);
       }
     }
+  }
+
+  /// 只读原子计数，不阻塞主 isolate；旧库没有此符号时返回 null。
+  Map<String, dynamic>? netStats() {
+    if (!_initialized && !initialize()) return null;
+    final fn = _dohProxyNetStats;
+    if (fn == null) return null;
+    final resultPtr = fn();
+    if (resultPtr == nullptr) return null;
+    final jsonStr = resultPtr.toDartString();
+    _dohProxyFreeString(resultPtr);
+    final decoded = jsonDecode(jsonStr);
+    if (decoded is! Map<String, dynamic> || decoded['ok'] != true) return null;
+    final stats = decoded['stats'];
+    return stats is Map<String, dynamic> ? stats : null;
   }
 
   DohDnsCacheStats? dnsCacheStats() {

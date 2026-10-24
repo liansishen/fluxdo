@@ -153,26 +153,30 @@ class _TopicCardStyleSettingsPageState
           children: [
             // 墨笺的话题行头像固定在元信息行内,这个排布选项只对经典风格有效
             if (theme.extension<MojianTokens>() == null)
-            RadioGroup<TopicCardAvatarLayout>(
-              groupValue: style.avatarLayout,
-              onChanged: (v) {
-                if (v != null) _update(style.copyWith(avatarLayout: v));
-              },
-              child: Column(
-                children: [
-                  RadioListTile<TopicCardAvatarLayout>(
-                    title: Text(l10n.topicCardStyle_avatarLayoutInline),
-                    subtitle: Text(l10n.topicCardStyle_avatarLayoutInlineDesc),
-                    value: TopicCardAvatarLayout.inline,
-                  ),
-                  RadioListTile<TopicCardAvatarLayout>(
-                    title: Text(l10n.topicCardStyle_avatarLayoutColumn),
-                    subtitle: Text(l10n.topicCardStyle_avatarLayoutColumnDesc),
-                    value: TopicCardAvatarLayout.column,
-                  ),
-                ],
+              RadioGroup<TopicCardAvatarLayout>(
+                groupValue: style.avatarLayout,
+                onChanged: (v) {
+                  if (v != null) _update(style.copyWith(avatarLayout: v));
+                },
+                child: Column(
+                  children: [
+                    RadioListTile<TopicCardAvatarLayout>(
+                      title: Text(l10n.topicCardStyle_avatarLayoutInline),
+                      subtitle: Text(
+                        l10n.topicCardStyle_avatarLayoutInlineDesc,
+                      ),
+                      value: TopicCardAvatarLayout.inline,
+                    ),
+                    RadioListTile<TopicCardAvatarLayout>(
+                      title: Text(l10n.topicCardStyle_avatarLayoutColumn),
+                      subtitle: Text(
+                        l10n.topicCardStyle_avatarLayoutColumnDesc,
+                      ),
+                      value: TopicCardAvatarLayout.column,
+                    ),
+                  ],
+                ),
               ),
-            ),
             SwitchListTile(
               title: Text(l10n.topicCardStyle_animatedAvatar),
               subtitle: Text(l10n.topicCardStyle_animatedAvatarDesc),
@@ -305,8 +309,10 @@ class _TopicCardStyleSettingsPageState
         .clamp(0.0, Breakpoints.maxContentWidth - 32)
         .toDouble();
 
-    // 内容预览关闭时保留原有自绘预览和统计展示方式。
-    if (!style.showExcerpt && !style.showImages) {
+    final showContent = style.showExcerpt || style.showImages;
+    final mojian = Theme.of(context).extension<MojianTokens>() != null;
+    // 墨笺开启摘要/图片后仍使用与列表相同的自绘中段插槽。
+    if (!showContent || mojian) {
       final layout = TopicCardLayout.obtain(
         identity: 'style-preview:0',
         topic: _previewTopic!,
@@ -320,7 +326,17 @@ class _TopicCardStyleSettingsPageState
       return IgnorePointer(
         child: SizedBox(
           width: cardWidth,
-          child: PaintedTopicCard(layout: layout),
+          child: PaintedTopicCard(
+            layout: layout,
+            middle: showContent
+                ? TopicExpandableExcerpt(
+                    topic: _previewTopic!,
+                    showText: style.showExcerpt,
+                    showImages: style.showImages,
+                    maxCollapsedLines: style.maxCollapsedLines,
+                  )
+                : null,
+          ),
         ),
       );
     }

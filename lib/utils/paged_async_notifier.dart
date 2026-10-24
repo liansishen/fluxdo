@@ -74,7 +74,10 @@ mixin PagedAsyncNotifierMixin<T> on AsyncNotifier<List<T>> {
     });
   }
 
-  Future<void> runPagedLoadMore(PagedLoadMoreLoader<T> loadPage) async {
+  Future<void> runPagedLoadMore(
+    PagedLoadMoreLoader<T> loadPage, {
+    bool Function()? canCommit,
+  }) async {
     if (_isLoadMoreFailed || !_hasMore || state.isLoading) return;
     final currentItems = state.value;
     if (currentItems == null) return;
@@ -87,12 +90,14 @@ mixin PagedAsyncNotifierMixin<T> on AsyncNotifier<List<T>> {
 
     try {
       final page = await loadPage(currentItems, nextPage);
+      if (canCommit != null && !canCommit()) return;
       _hasMore = page.hasMore;
       if (page.advancePage) {
         _page = nextPage;
       }
       state = AsyncValue.data(page.items);
     } catch (_) {
+      if (canCommit != null && !canCommit()) return;
       _isLoadMoreFailed = true;
       state = AsyncValue.data(currentItems);
     }

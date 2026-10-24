@@ -45,8 +45,9 @@ void main() {
     test('进度去重与取消清理 $mode', () async {
       final dir = await Directory.systemTemp.createTemp('multipart-progress');
       addTearDown(() => dir.delete(recursive: true));
-      final file = await File('${dir.path}/small.bin')
-          .writeAsBytes(List.filled(32, 1));
+      final file = await File(
+        '${dir.path}/small.bin',
+      ).writeAsBytes(List.filled(32, 1));
       final token = CancelToken();
       final actions = <String>[];
       final progress = <UploadProgress>[];
@@ -145,8 +146,9 @@ void main() {
     final control = Dio()
       ..httpClientAdapter = _Adapter((o, s) async => fail('不应发送请求'));
     await expectLater(
-      S3MultipartUpload(control)
-          .upload(File('/missing'), 'missing', cancelToken: token),
+      S3MultipartUpload(
+        control,
+      ).upload(File('/missing'), 'missing', cancelToken: token),
       throwsA(
         isA<DioException>().having(
           (e) => e.type,
@@ -233,7 +235,16 @@ void main() {
         storage: storage,
       ).upload(file, 'image.jpg');
       if (fail) {
-        await expectLater(future, throwsA(isA<DioException>()));
+        await expectLater(
+          future,
+          throwsA(
+            isA<MultipartStorageException>().having(
+              (e) => e.cause.response?.statusCode,
+              '存储响应',
+              403,
+            ),
+          ),
+        );
         expect(actions.last, '/uploads/abort-multipart.json');
         expect(actions, isNot(contains('/uploads/complete-multipart.json')));
       } else {

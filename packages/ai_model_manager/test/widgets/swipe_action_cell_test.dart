@@ -1,27 +1,34 @@
 import 'package:ai_model_manager/ai_model_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   Future<void> pumpCell(
     WidgetTester tester, {
     required bool enableLongPressMenu,
   }) async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: SwipeActionCell(
-            enableLongPressMenu: enableLongPressMenu,
-            trailingActions: [
-              SwipeAction(
-                icon: Icons.delete_outline,
-                color: Colors.red,
-                label: '删除',
-                onPressed: () {},
+      ProviderScope(
+        overrides: [aiSharedPreferencesProvider.overrideWithValue(prefs)],
+        child: MaterialApp(
+          home: Scaffold(
+            body: SwipeActionCell(
+              enableLongPressMenu: enableLongPressMenu,
+              trailingActions: [
+                SwipeAction(
+                  icon: Icons.delete_outline,
+                  color: Colors.red,
+                  label: '删除',
+                  onPressed: () {},
+                ),
+              ],
+              child: const ListTile(
+                title: Text('供应商'),
               ),
-            ],
-            child: const ListTile(
-              title: Text('供应商'),
             ),
           ),
         ),

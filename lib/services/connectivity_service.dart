@@ -47,12 +47,13 @@ class ConnectivityService {
   /// 把 connectivity_plus 的结果集压成稳定签名：去掉 none、按名字去重排序后用 `|` 连接，
   /// 无网络返回空串。例如 `[wifi, vpn]` → `vpn|wifi`
   static String signatureOf(List<ConnectivityResult> results) {
-    final names = results
-        .where((r) => r != ConnectivityResult.none)
-        .map((r) => r.name)
-        .toSet()
-        .toList()
-      ..sort();
+    final names =
+        results
+            .where((r) => r != ConnectivityResult.none)
+            .map((r) => r.name)
+            .toSet()
+            .toList()
+          ..sort();
     return names.join('|');
   }
 
@@ -76,9 +77,7 @@ class ConnectivityService {
 
   static Future<List<ConnectivityResult>> safeCheckConnectivity() async {
     if (!_canUseConnectivityPlugin) {
-      debugPrint(
-        '[Connectivity] 没有系统总线，按已连接处理',
-      );
+      debugPrint('[Connectivity] 没有系统总线，按已连接处理');
       return const [ConnectivityResult.other];
     }
 
@@ -89,9 +88,19 @@ class ConnectivityService {
           ? await check.timeout(const Duration(seconds: 3))
           : await check;
     } catch (e) {
-      debugPrint('[Connectivity] checkConnectivity 失败，fallback to connected state: $e');
+      debugPrint(
+        '[Connectivity] checkConnectivity 失败，fallback to connected state: $e',
+      );
       return const [ConnectivityResult.other];
     }
+  }
+
+  /// 起代理前登记网络签名；未知或只有 none 时不种，晚到的初始结果不覆盖新签名。
+  void seedInitialSignature(List<ConnectivityResult> results) {
+    if (networkSignature.value != null) return;
+    final signature = signatureOf(results);
+    if (signature.isEmpty) return;
+    networkSignature.value = signature;
   }
 
   /// 初始化服务
@@ -111,7 +120,9 @@ class ConnectivityService {
     _connectivitySub = _connectivity.onConnectivityChanged.listen(
       _onConnectivityChanged,
       onError: (Object error, StackTrace stackTrace) {
-        debugPrint('[Connectivity] 监听网络状态失败，fallback to connected state: $error');
+        debugPrint(
+          '[Connectivity] 监听网络状态失败，fallback to connected state: $error',
+        );
         _setConnected(true);
       },
     );
@@ -133,7 +144,8 @@ class ConnectivityService {
     debugPrint('[Connectivity] onConnectivityChanged: $results');
     VpnAutoToggleService.instance.handleConnectivityChanged(results);
     networkSignature.value = signatureOf(results);
-    final hasNetwork = results.isNotEmpty &&
+    final hasNetwork =
+        results.isNotEmpty &&
         !results.every((r) => r == ConnectivityResult.none);
 
     if (!hasNetwork) {
@@ -211,13 +223,15 @@ class ConnectivityService {
       _retryInFlight = true;
       try {
         final result = await safeCheckConnectivity();
-        final hasNetwork = result.isNotEmpty &&
+        final hasNetwork =
+            result.isNotEmpty &&
             !result.every((r) => r == ConnectivityResult.none);
         if (hasNetwork) {
           networkSignature.value = signatureOf(result);
           if (enableServerPing) {
             final reachable = await pingServer();
-            if (reachable) _setConnected(true); // _setConnected(true) 内部会调用 _stopRetry
+            if (reachable)
+              _setConnected(true); // _setConnected(true) 内部会调用 _stopRetry
           } else {
             _setConnected(true);
           }
@@ -229,7 +243,10 @@ class ConnectivityService {
       }
       // 仍未恢复，增大退避间隔并继续重试
       if (!_isConnected) {
-        _retryBackoffSeconds = (_retryBackoffSeconds * 2).clamp(1, _maxRetryBackoffSeconds);
+        _retryBackoffSeconds = (_retryBackoffSeconds * 2).clamp(
+          1,
+          _maxRetryBackoffSeconds,
+        );
         _scheduleNextRetry();
       }
     });
@@ -250,7 +267,8 @@ class ConnectivityService {
     } else {
       final result = await safeCheckConnectivity();
       networkSignature.value = signatureOf(result);
-      final hasNetwork = result.isNotEmpty &&
+      final hasNetwork =
+          result.isNotEmpty &&
           !result.every((r) => r == ConnectivityResult.none);
       _setConnected(hasNetwork);
     }

@@ -2,10 +2,21 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../network/flux_request_spec.dart';
 import 'upload_trace.dart';
 import 'upload_progress.dart';
+
+/// 仅对象存储 PUT 失败可回退；此时合并请求尚未发出。
+class MultipartStorageException implements Exception {
+  const MultipartStorageException(this.cause);
+
+  final DioException cause;
+
+  @override
+  String toString() => 'MultipartStorageException: ${cause.type.name}';
+}
 
 /// 控制请求沿用站点客户端，签名 PUT 使用无站点凭据的独立客户端。
 class S3MultipartUpload {
@@ -13,7 +24,11 @@ class S3MultipartUpload {
     : trace = trace ?? UploadTrace(),
       storage =
           storage ??
+          debugStorageFactory?.call() ??
           Dio(BaseOptions(connectTimeout: const Duration(seconds: 30)));
+
+  @visibleForTesting
+  static Dio Function()? debugStorageFactory;
 
   final UploadTrace trace;
   final Dio control;
@@ -233,6 +248,8 @@ class S3MultipartUpload {
         'partNumber': partNumber,
         'attempt': attempt + 1,
         'bytes': bytes.length,
+        // 不记录签名路径或参数，仅记录用于定位网络链路的主机名。
+        'host': uri.host,
       };
       trace.event('multipart_part_start', fields: fields);
       try {
@@ -281,7 +298,9 @@ class S3MultipartUpload {
             error.type == DioExceptionType.receiveTimeout ||
             status == 429 ||
             (status != null && status >= 500);
-        if (!retryable || attempt >= 2) rethrow;
+        if (!retryable || attempt >= 2) {
+          throw MultipartStorageException(error);
+        }
         trace.event(
           'multipart_part_retry',
           fields: {...fields, 'delayMs': (attempt + 1) * 1000},

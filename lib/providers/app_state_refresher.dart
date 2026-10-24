@@ -11,8 +11,10 @@ import 'pinned_categories_provider.dart';
 import 'user_content_providers.dart';
 import 'category_provider.dart';
 import 'message_bus/notification_providers.dart';
+import 'message_bus/pm_tracking_providers.dart';
 import 'message_bus/session_channel_providers.dart';
 import 'message_bus/topic_tracking_providers.dart';
+import 'message_bus/topic_list_events.dart';
 import 'ldc_providers.dart';
 import 'cdk_providers.dart';
 
@@ -20,6 +22,7 @@ class AppStateRefresher {
   AppStateRefresher._();
 
   static DateTime? _lastRefreshTime;
+  static int _refreshGeneration = 0;
 
   /// 调用方用 [ProviderScope.containerOf] 取 container 后传入，
   /// 避免 [Future.delayed] 闭包持有的 [WidgetRef] 在延迟期间随 widget unmount 失效，
@@ -27,10 +30,12 @@ class AppStateRefresher {
   static void refreshAll(ProviderContainer container) {
     // 去抖：2 秒内重复调用直接跳过（如 authStateProvider listener + _goToLogin 同时触发）
     final now = DateTime.now();
-    if (_lastRefreshTime != null && now.difference(_lastRefreshTime!) < const Duration(seconds: 2)) {
+    if (_lastRefreshTime != null &&
+        now.difference(_lastRefreshTime!) < const Duration(seconds: 2)) {
       return;
     }
     _lastRefreshTime = now;
+    final generation = ++_refreshGeneration;
 
     // 第一批：主页渲染必需（用户信息 + 分类 + 话题列表）
     for (final refresh in _coreRefreshers) {
@@ -39,6 +44,7 @@ class AppStateRefresher {
     _refreshTopicTabs(container);
     // 第二批：延迟 1 秒执行，避免并发请求过多触发风控
     Future.delayed(const Duration(seconds: 1), () {
+      if (generation != _refreshGeneration) return;
       for (final refresh in _deferredRefreshers) {
         refresh(container);
       }
@@ -46,6 +52,8 @@ class AppStateRefresher {
   }
 
   static Future<void> resetForLogout(ProviderContainer container) async {
+    _refreshGeneration++;
+    _lastRefreshTime = null;
     container.read(currentUserProvider.notifier).clearCache();
     container.read(userSummaryProvider.notifier).clearCache();
     container.read(bookmarkNameSuggestionsProvider.notifier).clearCache();
@@ -59,8 +67,12 @@ class AppStateRefresher {
     }
     // 重置筛选/排序/标签（会通过 signal listener 触发话题列表刷新，
     // 无需再手动 invalidate 话题列表）
-    container.read(topicFilterProvider.notifier).setFilter(TopicListFilter.latest);
-    container.read(topicSortOrderProvider.notifier).setOrder(TopicSortOrder.defaultOrder);
+    container
+        .read(topicFilterProvider.notifier)
+        .setFilter(TopicListFilter.latest);
+    container
+        .read(topicSortOrderProvider.notifier)
+        .setOrder(TopicSortOrder.defaultOrder);
     container.read(topicSortAscendingProvider.notifier).setAscending(false);
     final pinnedIds = container.read(pinnedCategoriesProvider);
     container.read(tabTagsProvider(null).notifier).state = [];
@@ -91,16 +103,18 @@ class AppStateRefresher {
   /// 第一批：主页渲染必需的 provider
   /// 用户信息、分类列表（tab 栏依赖）
   static final List<void Function(ProviderContainer container)>
-      _coreRefreshers = [
+  _coreRefreshers = [
     (c) => c.invalidate(currentUserProvider),
     (c) => c.invalidate(categoriesProvider),
     (c) => c.invalidate(topicTrackingStateMetaProvider),
     (c) => c.invalidate(topicTrackingStateProvider),
+    (c) => c.invalidate(destroyedTopicsProvider),
+    (c) => c.invalidate(topicListEventsProvider),
   ];
 
   /// 第二批：非首屏必需，延迟执行以降低并发请求量
   static final List<void Function(ProviderContainer container)>
-      _deferredRefreshers = [
+  _deferredRefreshers = [
     (c) => c.invalidate(userSummaryProvider),
     (c) => c.invalidate(notificationListProvider),
     (c) => c.invalidate(tagsProvider),
@@ -118,7 +132,9 @@ class AppStateRefresher {
     (c) => c.invalidate(notificationChannelProvider),
     (c) => c.invalidate(notificationAlertChannelProvider),
     (c) => c.invalidate(logoutChannelProvider),
-    (c) => c.invalidate(latestChannelProvider),
+    (c) => c.invalidate(pmTrackingProvider),
+    (c) => c.invalidate(doNotDisturbProvider),
+    (c) => c.invalidate(categoryChangesProvider),
     (c) => c.invalidate(messageBusInitProvider),
     (c) => c.invalidate(ldcUserInfoProvider),
     (c) => c.invalidate(cdkUserInfoProvider),

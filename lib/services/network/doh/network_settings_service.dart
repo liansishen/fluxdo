@@ -467,12 +467,18 @@ class NetworkSettingsService {
   ];
 
   /// 内置服务器：cfluxdo 加速排第一，作为默认服务器
-  List<DohServer> get _builtInServers => [
-    ?_accelServer,
-    ..._defaultServers,
-  ];
+  List<DohServer> get _builtInServers => [?_accelServer, ..._defaultServers];
 
   String get _defaultServerUrl => _builtInServers.first.url;
+
+  /// 是否已读过网络偏好；启动 VPN 检查据此决定直接写偏好还是应用运行态设置。
+  bool get isInitialized => _prefs != null;
+
+  static bool storedDohEnabled(SharedPreferences prefs) =>
+      prefs.getBool(_dohEnabledKey) ?? true;
+
+  static Future<void> storeDohEnabled(SharedPreferences prefs, bool enabled) =>
+      prefs.setBool(_dohEnabledKey, enabled);
 
   Future<void> initialize(SharedPreferences prefs) async {
     if (_prefs != null) return;
@@ -547,8 +553,7 @@ class NetworkSettingsService {
     ConnectivityService().networkSignature.addListener(
       _handleNetworkSignatureChanged,
     );
-    await _applyProxyState();
-    await refreshDnsCacheStats();
+    await _applyProxyState(startup: true);
     _touch();
   }
 
@@ -822,7 +827,8 @@ class NetworkSettingsService {
     }
   }
 
-  Future<void> _applyProxyState() async {
+  /// 冷启动没有 Loading 界面，跳过一帧和最短展示时间，缓存统计也不阻塞首个请求。
+  Future<void> _applyProxyState({bool startup = false}) async {
     final startedAt = DateTime.now();
     _syncAccelPolling();
     _applyDepth++;
@@ -832,7 +838,9 @@ class NetworkSettingsService {
         isApplying.value = true;
       }
       // 给 UI 一帧时间渲染 Loading
-      await Future<void>.delayed(const Duration(milliseconds: 16));
+      if (!startup) {
+        await Future<void>.delayed(const Duration(milliseconds: 16));
+      }
     }
     if (!shouldRunLocalProxy) {
       try {
@@ -849,11 +857,15 @@ class NetworkSettingsService {
         if (_applyDepth == 0) {
           final elapsed = DateTime.now().difference(startedAt);
           const minDuration = Duration(milliseconds: 400);
-          if (elapsed < minDuration) {
+          if (!startup && elapsed < minDuration) {
             await Future<void>.delayed(minDuration - elapsed);
           }
           isApplying.value = false;
-          await refreshDnsCacheStats();
+          if (startup) {
+            unawaited(refreshDnsCacheStats());
+          } else {
+            await refreshDnsCacheStats();
+          }
         }
       }
       return;
@@ -992,6 +1004,10 @@ class NetworkSettingsService {
         extraCoveredHosts: const [_atlasHost, cfhubHost],
         appVersion: _appVersion,
         networkSig: ConnectivityService().networkSignature.value,
+        // 仅为当前站点中 Selector 已覆盖的主机预连，不扩大优选覆盖集合。
+        preconnectHosts: selectorEligible && SiteContext.isLinuxDo
+            ? const ['linux.do']
+            : const [],
       );
 
       if (!success) {
@@ -1039,11 +1055,15 @@ class NetworkSettingsService {
       if (_applyDepth == 0) {
         final elapsed = DateTime.now().difference(startedAt);
         const minDuration = Duration(milliseconds: 400);
-        if (elapsed < minDuration) {
+        if (!startup && elapsed < minDuration) {
           await Future<void>.delayed(minDuration - elapsed);
         }
         isApplying.value = false;
-        await refreshDnsCacheStats();
+        if (startup) {
+          unawaited(refreshDnsCacheStats());
+        } else {
+          await refreshDnsCacheStats();
+        }
         unawaited(refreshSelectStatus());
         _touch();
       }
@@ -1281,9 +1301,11 @@ class NetworkSettingsService {
         // 服务器地址变了时，下次解析会按签名自动清掉旧缓存
         _scheduleApplyProxyState();
       }
+      _touch();
+      return;
     }
-    // 只是提示文字变了也要刷新设置页
-    _touch();
+    // 提示变化只刷新设置页，不动版本号，避免回前台就重建所有 HTTP 连接。
+    notifier.value = notifier.value.copyWith();
   }
 
   /// 正在用加速服务器（专属或公共）时，定时问 Rust 代理：令牌有没有被拒、有没有新拉到路由表 / 节点列表
@@ -1340,7 +1362,9 @@ class NetworkSettingsService {
       await prefs.setString(_accelNodesKey, envelope);
     }
     final nodes = update.nodes;
-    if (nodes != null && nodes.isNotEmpty && _nodeStore.loadPayloadJson(nodes)) {
+    if (nodes != null &&
+        nodes.isNotEmpty &&
+        _nodeStore.loadPayloadJson(nodes)) {
       debugPrint(
         '[DOH] 加速节点列表已更新 serial=${_nodeStore.serial} '
         'hosts=${_nodeStore.hosts.join(", ")}',
@@ -2104,6 +2128,7 @@ String? accelRoutesUrlFor(String dohUrl) {
     path: accelRoutesPath,
   ).toString();
 }
+
 const int _accelSubdomainLength = 12;
 const String _accelSubdomainAlphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
 const List<String> accelDohBootstrapIps = [

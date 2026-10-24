@@ -393,9 +393,12 @@ List<SettingsGroup> buildAppearanceGroups(BuildContext context) {
     ),
 
     // ── 玻璃组件 ──────────────────────────────────────────────────
+    // 只有墨笺强制纸面；经典与 Claude 都保留玻璃设置。
     SettingsGroup(
       title: l10n.appearance_glass,
       icon: Symbols.blur_on_rounded,
+      visibleWhen: (ref) =>
+          ref.watch(themeProvider.select((state) => !state.isMojian)),
       items: [
         SwitchModel(
           id: 'glassEnabled',

@@ -131,7 +131,8 @@ class BoundarySyncService {
     for (final cookie in webViewCookies) {
       if (cookie.domain != null &&
           cookie.domain!.isNotEmpty &&
-          !CookieJarService.cookieDomainMatchesHost(cookie.domain, host)) continue;
+          !CookieJarService.cookieDomainMatchesHost(cookie.domain, host))
+        continue;
       final value = cookie.value?.toString() ?? '';
       if (cookie.name != name || value.isEmpty) continue;
       if (expectedValue != null && value != expectedValue) continue;
@@ -166,7 +167,8 @@ class BoundarySyncService {
     for (final cookie in webViewCookies) {
       if (cookie.domain != null &&
           cookie.domain!.isNotEmpty &&
-          !CookieJarService.cookieDomainMatchesHost(cookie.domain, host)) continue;
+          !CookieJarService.cookieDomainMatchesHost(cookie.domain, host))
+        continue;
       final value = cookie.value?.toString() ?? '';
       if (cookie.name != CfClearanceAuthority.cookieName || value.isEmpty) {
         continue;
@@ -254,6 +256,13 @@ class BoundarySyncService {
           excludeCookieNames: {...?excludeCookieNames, _sessionTokenName},
           trusted: trusted,
           acceptValues: acceptValues,
+          admit: (name, value) async {
+            if (name != CfClearanceAuthority.cookieName) return true;
+            final authority = CfClearanceAuthority.instance;
+            authority.noteWebViewValueObserved(value);
+            return await authority.evaluateReplacement(value) ==
+                CfClearanceReplaceDecision.allow;
+          },
         );
         if (synced > 0) {
           final syncedDetails = await _jar.getCookieDiagnosticsForRequest(
@@ -288,7 +297,8 @@ class BoundarySyncService {
       for (final wc in webViewCookies) {
         if (wc.domain != null &&
             wc.domain!.isNotEmpty &&
-            !CookieJarService.cookieDomainMatchesHost(wc.domain, host)) continue;
+            !CookieJarService.cookieDomainMatchesHost(wc.domain, host))
+          continue;
         final value = wc.value?.toString() ?? '';
         if (value.isEmpty) continue;
         if (wc.name == CfClearanceAuthority.cookieName) {
@@ -848,7 +858,9 @@ class BoundarySyncService {
     List<Cookie> cookies,
   ) {
     final valueHashes =
-        cookies.map((cookie) => (cookie.value?.toString() ?? '').hashCode).toList()
+        cookies
+            .map((cookie) => (cookie.value?.toString() ?? '').hashCode)
+            .toList()
           ..sort();
     return '$host|$name|${valueHashes.join(',')}';
   }

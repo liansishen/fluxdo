@@ -14,6 +14,7 @@ import '../services/discourse/discourse_service.dart';
 import '../services/log/log_writer.dart';
 import '../services/migration_service.dart';
 import '../services/startup/app_startup.dart';
+import '../services/startup/startup_timeline.dart';
 import '../services/startup_progress.dart';
 import '../utils/dialog_utils.dart';
 import '../widgets/common/ambient_background.dart';
@@ -67,11 +68,16 @@ class _PreheatGateState extends State<PreheatGate> {
       // 只等预加载（复用 main() 里启动序列已在进行的那次）；预热、会话判定
       // 与登录后启动项都由启动序列自己接着做，不在这里
       await AppStartup.instance.ensurePreloaded(reason: 'preheat_gate');
+      StartupTimeline.mark('preloaded');
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => StartupTimeline.finish('content'),
+      );
 
       _error = null;
       return true;
     } catch (e) {
       debugPrint('[PreheatGate] Preload failed: $e');
+      StartupTimeline.finish('preload_failed');
       _error = e;
       return false;
     }
@@ -520,11 +526,7 @@ class _PreheatFailed extends StatelessWidget {
               retryLabel: context.l10n.preheat_retryConnection,
             ),
             // 预加载失败时仍可切回另一站，无需退出或清理认证。
-            const Positioned(
-              top: 8,
-              left: 8,
-              child: SiteSwitchButton(),
-            ),
+            const Positioned(top: 8, left: 8, child: SiteSwitchButton()),
           ],
         ),
       ),

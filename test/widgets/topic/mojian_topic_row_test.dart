@@ -77,6 +77,12 @@ void main() {
       expect(l.catTagsOffset.dy, lessThan(l.titleOffset.dy));
       expect(l.avatarRect.width, 18);
       expect(l.avatarRect.top, greaterThan(l.titleOffset.dy));
+      expect(l.middleSplitY, isNotNull);
+      expect(
+        l.middleSplitY!,
+        greaterThanOrEqualTo(l.titleOffset.dy + l.title!.height),
+      );
+      expect(l.middleSplitY!, lessThan(l.avatarRect.top));
       // 时间紧跟署名之后
       expect(l.timeOffset.dx, greaterThan(l.authorOffset.dx));
       expect(l.cardHeight, greaterThan(60));
@@ -111,6 +117,7 @@ void main() {
       expect(l.bottomGap, 8);
       expect(l.separatorColor, isNull);
       expect(l.avatarRect.width, 32);
+      expect(l.middleSplitY, isNull);
     });
   });
 
@@ -135,5 +142,57 @@ void main() {
       expect(size.height, closeTo(l.cardHeight, 0.5));
       expect(tester.takeException(), isNull);
     }
+  });
+
+  testWidgets('墨笺中段插槽按内容高度撑开，点击由中段组件消费', (tester) async {
+    final theme = _mojianTheme(Brightness.light);
+    final layout = _layout(theme, _topic());
+    var expanded = false;
+    var cardTaps = 0;
+    var middleTaps = 0;
+    late StateSetter rebuild;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: theme,
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topCenter,
+            child: SizedBox(
+              width: 380,
+              child: StatefulBuilder(
+                builder: (context, setState) {
+                  rebuild = setState;
+                  return PaintedTopicCard(
+                    layout: layout,
+                    onTap: () => cardTaps++,
+                    middle: GestureDetector(
+                      key: const ValueKey('摘要插槽'),
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => middleTaps++,
+                      child: SizedBox(height: expanded ? 90 : 30),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    final middle = find.byKey(const ValueKey('摘要插槽'));
+    final card = find.byType(PaintedTopicCard);
+    expect(tester.getSize(card).height, closeTo(layout.cardHeight + 30, 0.5));
+    expect(
+      tester.getTopLeft(middle).dy - tester.getTopLeft(card).dy,
+      closeTo(layout.middleSplitY!, 0.5),
+    );
+    await tester.tap(middle);
+    await tester.pump();
+    expect(middleTaps, 1);
+    expect(cardTaps, 0);
+    rebuild(() => expanded = true);
+    await tester.pump();
+    expect(tester.getSize(card).height, closeTo(layout.cardHeight + 90, 0.5));
+    expect(tester.takeException(), isNull);
   });
 }

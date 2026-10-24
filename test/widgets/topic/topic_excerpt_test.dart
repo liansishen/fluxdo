@@ -14,6 +14,7 @@ import 'package:fluxdo/services/discourse/discourse_service.dart';
 import 'package:fluxdo/services/local_notification_service.dart';
 import 'package:fluxdo/services/topic_excerpt_service.dart';
 import 'package:fluxdo/utils/relative_time_clock.dart';
+import 'package:fluxdo/theme/mojian_theme.dart';
 import 'package:fluxdo/widgets/topic/painted_topic_card.dart';
 import 'package:fluxdo/widgets/common/cached_image.dart';
 import 'package:fluxdo/widgets/topic/topic_expandable_excerpt.dart';
@@ -67,32 +68,34 @@ void main() {
   });
   tearDown(() => TopicCardStyleScope.current = TopicCardStyle.defaults);
 
-  Widget app(Widget child, {double scale = 1}) => ProviderScope(
-    overrides: [
-      sharedPreferencesProvider.overrideWithValue(prefs),
-      discourseServiceProvider.overrideWithValue(api),
-    ],
-    child: TranslationProvider(
-      child: MaterialApp(
-        navigatorKey: navigatorKey,
-        locale: const Locale('zh'),
-        localizationsDelegates: const [
-          GlobalMaterialLocalizations.delegate,
-          GlobalWidgetsLocalizations.delegate,
-          GlobalCupertinoLocalizations.delegate,
+  Widget app(Widget child, {double scale = 1, ThemeData? theme}) =>
+      ProviderScope(
+        overrides: [
+          sharedPreferencesProvider.overrideWithValue(prefs),
+          discourseServiceProvider.overrideWithValue(api),
         ],
-        supportedLocales: AppLocaleUtils.supportedLocales,
-        builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(context).copyWith(
-            textScaler: TextScaler.linear(scale),
-            disableAnimations: true,
+        child: TranslationProvider(
+          child: MaterialApp(
+            theme: theme,
+            navigatorKey: navigatorKey,
+            locale: const Locale('zh'),
+            localizationsDelegates: const [
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            supportedLocales: AppLocaleUtils.supportedLocales,
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                textScaler: TextScaler.linear(scale),
+                disableAnimations: true,
+              ),
+              child: child!,
+            ),
+            home: Scaffold(body: SingleChildScrollView(child: child)),
           ),
-          child: child!,
         ),
-        home: Scaffold(body: SingleChildScrollView(child: child)),
-      ),
-    ),
-  );
+      );
 
   Widget card({bool messageStyle = false}) => Builder(
     builder: (context) => buildTopicItem(
@@ -202,6 +205,59 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('列表已有摘要'), findsOneWidget);
     expect(api.pending, isEmpty);
+  });
+
+  testWidgets('墨笺显示摘要仍使用自绘行，摘要位于卡内且不请求首楼', (tester) async {
+    const style = TopicCardStyle(showExcerpt: true, showImages: true);
+    TopicCardStyleScope.current = style;
+    final theme = MojianTheme.build(
+      scheme: MojianTheme.colorScheme(Brightness.light, MojianAccent.cinnabar),
+      accent: MojianAccent.cinnabar,
+      fontFamily: null,
+      pageTransitionsTheme: const PageTransitionsTheme(),
+      iconTheme: const IconThemeData(),
+      primaryIconTheme: const IconThemeData(),
+    );
+    await tester.pumpWidget(app(card(), theme: theme));
+    await tester.pumpAndSettle();
+    final painted = find.byType(PaintedTopicCard);
+    expect(painted, findsOneWidget);
+    expect(find.byType(TopicCard), findsNothing);
+    expect(
+      find.descendant(
+        of: painted,
+        matching: find.byType(TopicExpandableExcerpt),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('列表已有摘要'), findsOneWidget);
+    expect(api.pending, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('墨笺设置页开启摘要后预览仍保留自绘行', (tester) async {
+    const style = TopicCardStyle(showExcerpt: true);
+    await prefs.setString('pref_topic_card_style', style.toJsonString());
+    final theme = MojianTheme.build(
+      scheme: MojianTheme.colorScheme(Brightness.light, MojianAccent.cinnabar),
+      accent: MojianAccent.cinnabar,
+      fontFamily: null,
+      pageTransitionsTheme: const PageTransitionsTheme(),
+      iconTheme: const IconThemeData(),
+      primaryIconTheme: const IconThemeData(),
+    );
+    await tester.pumpWidget(
+      app(
+        const SizedBox(height: 500, child: TopicCardStyleSettingsPage()),
+        theme: theme,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(PaintedTopicCard), findsOneWidget);
+    expect(find.byType(TopicCard), findsNothing);
+    expect(find.byType(TopicExpandableExcerpt), findsOneWidget);
+    expect(api.pending, isEmpty);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('即使三个开关均开启，私信仍保持原布局且不请求首楼', (tester) async {
@@ -362,9 +418,9 @@ void main() {
     );
     await tester.pumpAndSettle();
     final toggle = find.widgetWithText(SwitchListTile, '允许额外请求');
-    bool savedValue() =>
-        TopicCardStyle.fromJsonString(prefs.getString('pref_topic_card_style'))
-            .allowExcerptFetch;
+    bool savedValue() => TopicCardStyle.fromJsonString(
+      prefs.getString('pref_topic_card_style'),
+    ).allowExcerptFetch;
 
     await revealSetting(tester, toggle);
     await tester.pumpAndSettle();

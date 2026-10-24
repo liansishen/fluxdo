@@ -108,6 +108,7 @@ class DohProxyService {
     List<String> extraCoveredHosts = const [],
     String? appVersion,
     String? networkSig,
+    List<String> preconnectHosts = const [],
   }) async {
     final authSignature = _buildAuthSignature(dohAuthToken, dohEchAuthToken);
     final bootstrapSignature = _buildBootstrapSignature(
@@ -189,6 +190,7 @@ class DohProxyService {
         extraCoveredHosts: extraCoveredHosts,
         appVersion: appVersion,
         networkSig: networkSig,
+        preconnectHosts: preconnectHosts,
       );
       // 桌面平台 FFI 加载失败时，回退到进程模式
       if (!result && DohProxyFfi.canFallbackToProcess) {
@@ -216,6 +218,7 @@ class DohProxyService {
           h2Mitm,
           dohRoutesUrl,
           selectMode: selectMode,
+          preconnectHosts: preconnectHosts,
         );
       }
       return result;
@@ -242,6 +245,7 @@ class DohProxyService {
         h2Mitm,
         dohRoutesUrl,
         selectMode: selectMode,
+        preconnectHosts: preconnectHosts,
       );
     }
   }
@@ -282,6 +286,7 @@ class DohProxyService {
     List<String> extraCoveredHosts = const [],
     String? appVersion,
     String? networkSig,
+    List<String> preconnectHosts = const [],
   }) async {
     try {
       return await _enqueueFfiOp(() async {
@@ -328,6 +333,7 @@ class DohProxyService {
           extraCoveredHosts: extraCoveredHosts,
           appVersion: appVersion,
           networkSig: networkSig,
+          preconnectHosts: preconnectHosts,
         );
         // 启动期间用户可能再次修改策略，独立查询不能被旧启动快照覆盖。
         if (!identical(policy, _echDnsPolicy)) {
@@ -404,6 +410,7 @@ class DohProxyService {
     String? dohRoutesUrl, {
     // 进程模式不做本地优选，只记下模式让 sameConfig 比较稳定
     String selectMode = 'off',
+    List<String> preconnectHosts = const [],
   }) async {
     try {
       final policyJson = jsonEncode(_echDnsPolicy.toJson());
@@ -428,6 +435,10 @@ class DohProxyService {
         if (!mitmConnect) '--tunnel-connect',
         if (h2Mitm) '--h2-mitm',
         if (preferIPv6) '--ipv6',
+        if (preconnectHosts.isNotEmpty) ...[
+          '--preconnect-hosts',
+          preconnectHosts.join(','),
+        ],
         if (dohServer != null && dohServer.isNotEmpty) ...['--doh', dohServer],
         if (dohServerEch != null && dohServerEch.isNotEmpty) ...[
           '--doh-server-ech',
@@ -932,10 +943,7 @@ class DohProxyService {
     return _enqueueFfiOp(() async {
       final sendPort = await _ensureFfiIsolate();
       final response = ReceivePort();
-      sendPort.send({
-        'cmd': 'take_accel_update',
-        'replyTo': response.sendPort,
-      });
+      sendPort.send({'cmd': 'take_accel_update', 'replyTo': response.sendPort});
       final result = await response.first;
       response.close();
       if (result is! Map || result['ok'] != true) return null;
@@ -976,10 +984,7 @@ class DohProxyService {
     return _enqueueFfiOp(() async {
       final sendPort = await _ensureFfiIsolate();
       final response = ReceivePort();
-      sendPort.send({
-        'cmd': 'select_status',
-        'replyTo': response.sendPort,
-      });
+      sendPort.send({'cmd': 'select_status', 'replyTo': response.sendPort});
       final result = await response.first;
       response.close();
       if (result is! Map || result['ok'] != true) return null;
@@ -995,10 +1000,7 @@ class DohProxyService {
     return _enqueueFfiOp(() async {
       final sendPort = await _ensureFfiIsolate();
       final response = ReceivePort();
-      sendPort.send({
-        'cmd': 'select_rerace',
-        'replyTo': response.sendPort,
-      });
+      sendPort.send({'cmd': 'select_rerace', 'replyTo': response.sendPort});
       final result = await response.first;
       response.close();
       return result is Map && result['ok'] == true && result['started'] == true;
@@ -1060,6 +1062,12 @@ class DohProxyService {
       return DohProxyFfi.instance.clearDnsCache();
     }
     return _enqueueFfiOp(_callFfiClearDnsCache);
+  }
+
+  /// 进程模式没有共享内存统计，不能误报另一个 FFI 实例的计数。
+  Map<String, dynamic>? netStats() {
+    if (!DohProxyFfi.isAvailable || _process != null) return null;
+    return DohProxyFfi.instance.netStats();
   }
 
   Future<DohDnsCacheStats?> dnsCacheStats() async {
@@ -1204,6 +1212,7 @@ class DohProxyService {
     List<String> extraCoveredHosts = const [],
     String? appVersion,
     String? networkSig,
+    List<String> preconnectHosts = const [],
   }) async {
     final sendPort = await _ensureFfiIsolate();
     final response = ReceivePort();
@@ -1244,6 +1253,7 @@ class DohProxyService {
       'extraCoveredHosts': extraCoveredHosts,
       'appVersion': appVersion,
       'networkSig': networkSig,
+      'preconnectHosts': preconnectHosts,
       'preferredPort': port,
       'replyTo': response.sendPort,
     });
@@ -1604,6 +1614,7 @@ void _ffiIsolateEntry(SendPort mainSendPort) {
           final extraCoveredHosts = _stringList(message['extraCoveredHosts']);
           final appVersion = message['appVersion'] as String?;
           final networkSig = message['networkSig'] as String?;
+          final preconnectHosts = _stringList(message['preconnectHosts']);
           var resultPort = DohProxyFfi.instance.start(
             port: portValue,
             enableDoh: enableDoh,
@@ -1640,6 +1651,7 @@ void _ffiIsolateEntry(SendPort mainSendPort) {
             extraCoveredHosts: extraCoveredHosts,
             appVersion: appVersion,
             networkSig: networkSig,
+            preconnectHosts: preconnectHosts,
           );
           if (resultPort <= 0 && preferredPort != 0) {
             resultPort = DohProxyFfi.instance.start(
@@ -1678,26 +1690,13 @@ void _ffiIsolateEntry(SendPort mainSendPort) {
               extraCoveredHosts: extraCoveredHosts,
               appVersion: appVersion,
               networkSig: networkSig,
+              preconnectHosts: preconnectHosts,
             );
           }
           if (resultPort <= 0) {
-            // Rust 内部只等 200ms 就检查端口，老设备可能不够
-            // 在 Dart 侧延迟重试，最多再等 1 秒
-            for (var i = 0; i < 5; i++) {
-              sleep(const Duration(milliseconds: 200));
-              if (DohProxyFfi.instance.isRunning()) {
-                final runningPort = DohProxyFfi.instance.getPort();
-                if (runningPort > 0) {
-                  replyTo.send({'ok': true, 'port': runningPort});
-                  return;
-                }
-              }
-            }
-            // 重试后仍失败，构建诊断信息
             final details = StringBuffer('Rust 代理启动返回 $resultPort');
             details.write('，端口=$portValue');
             if (dohServer != null) details.write('，DoH=$dohServer');
-            details.write('，延迟重试后仍未就绪');
             replyTo.send({'ok': false, 'error': details.toString()});
           } else {
             replyTo.send({'ok': true, 'port': resultPort});

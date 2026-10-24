@@ -9,6 +9,7 @@ import '../adapters/platform_adapter.dart';
 import '../cookie/csrf_token_service.dart';
 import '../doh/network_settings_service.dart';
 import '../doh_proxy/doh_proxy_ffi.dart' show DohPublicDohStat;
+import '../doh_proxy/doh_proxy_service.dart';
 import '../request_scheduler_config.dart';
 import '../webview/webview_adapter_settings_service.dart';
 
@@ -70,6 +71,7 @@ class NetworkHealthController {
   /// 便于在用户日志里把快照与前后事件对齐。
   void dumpToLog(String reason) {
     final snapshot = this.snapshot();
+    final netStats = DohProxyService.instance.netStats();
     LogWriter.instance.write({
       'timestamp': DateTime.now().toIso8601String(),
       'level': 'info',
@@ -78,6 +80,7 @@ class NetworkHealthController {
       'reason': reason,
       'message': snapshot.summary(),
       ...snapshot.toJson(),
+      'netStats': ?netStats,
     });
   }
 
@@ -198,9 +201,7 @@ class NetworkHealthSnapshot {
       'shield=${shield.name}',
     ];
     if (webViewCompatSession || webViewCompatPersistent) {
-      parts.add(
-        'compat=${webViewCompatPersistent ? "persistent" : "session"}',
-      );
+      parts.add('compat=${webViewCompatPersistent ? "persistent" : "session"}');
     }
     if (!cfAutoVerifyEnabled) parts.add('autoVerify=off');
     if (cfConsecutiveFailures > 0) {

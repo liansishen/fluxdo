@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxdo/l10n/s.dart';
 import 'package:fluxdo/providers/theme_provider.dart';
+import 'package:fluxdo/theme/claude_theme.dart';
+import 'package:fluxdo/theme/mojian_theme.dart';
 import 'package:fluxdo/settings/definitions/appearance_defs.dart';
 import 'package:fluxdo/settings/definitions/bottom_nav_defs.dart';
 import 'package:fluxdo/settings/settings_renderer.dart';
@@ -14,14 +16,22 @@ void main() {
   Future<SharedPreferences> pumpSettings(
     WidgetTester tester, {
     bool bottomNav = false,
+    UiStyle style = UiStyle.classic,
   }) async {
-    SharedPreferences.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({'ui_style': style.name});
     final prefs = await SharedPreferences.getInstance();
     await tester.pumpWidget(
       ProviderScope(
         overrides: [sharedPreferencesProvider.overrideWithValue(prefs)],
         child: TranslationProvider(
           child: MaterialApp(
+            theme: ThemeData(
+              extensions: [
+                if (style == UiStyle.mojian)
+                  MojianTokens.of(Brightness.light, MojianAccent.cinnabar),
+                if (style == UiStyle.claude) ClaudeTokens.of(Brightness.light),
+              ],
+            ),
             locale: const Locale('zh'),
             supportedLocales: AppLocaleUtils.supportedLocales,
             localizationsDelegates: const [
@@ -30,17 +40,19 @@ void main() {
               GlobalCupertinoLocalizations.delegate,
             ],
             home: Scaffold(
-              body: Builder(
-                builder: (context) {
+              body: Consumer(
+                builder: (context, ref, _) {
                   final group = bottomNav
                       ? buildBottomNavGroups(context).first
                       : buildAppearanceGroups(context).firstWhere(
-                          (group) => group.title == context.l10n.appearance_glass,
+                          (group) =>
+                              group.title == context.l10n.appearance_glass,
                         );
                   return ListView(
                     children: [
-                      for (final item in group.items)
-                        SettingsRenderer(model: item),
+                      if (group.isVisible(ref))
+                        for (final item in group.items)
+                          SettingsRenderer(model: item),
                     ],
                   );
                 },
@@ -72,9 +84,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(prefs.getBool('pref_glass_enabled'), isFalse);
     expect(
-      tester.widgetList<RadioListTile<GlassEffectLevel>>(choices).every(
-        (tile) => tile.enabled != true,
-      ),
+      tester
+          .widgetList<RadioListTile<GlassEffectLevel>>(choices)
+          .every((tile) => tile.enabled != true),
       isTrue,
     );
     await tester.tap(find.text('完整玻璃'));
@@ -89,9 +101,9 @@ void main() {
     await tester.tap(find.byType(SwitchListTile));
     await tester.pumpAndSettle();
     expect(
-      tester.widgetList<RadioListTile<GlassEffectLevel>>(choices).every(
-        (tile) => tile.enabled == true,
-      ),
+      tester
+          .widgetList<RadioListTile<GlassEffectLevel>>(choices)
+          .every((tile) => tile.enabled == true),
       isTrue,
     );
     expect(
@@ -108,10 +120,20 @@ void main() {
     await pumpSettings(tester, bottomNav: true);
     expect(find.byType(SwitchListTile), findsNWidgets(2));
     expect(find.text('玻璃效果'), findsOneWidget);
-    expect(
-      find.text('前往外观设置，统一调整底栏与编辑工具岛的玻璃效果。'),
-      findsOneWidget,
-    );
+    expect(find.text('前往外观设置，统一调整底栏与编辑工具岛的玻璃效果。'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('玻璃分组和底栏入口只在墨笺隐藏，Claude 仍可调整', (tester) async {
+    for (final style in UiStyle.values) {
+      for (final bottomNav in [false, true]) {
+        await pumpSettings(tester, style: style, bottomNav: bottomNav);
+        expect(
+          find.text(bottomNav ? '玻璃效果' : '启用玻璃效果'),
+          style == UiStyle.mojian ? findsNothing : findsOneWidget,
+        );
+        await tester.pumpWidget(const SizedBox.shrink());
+      }
+    }
   });
 }

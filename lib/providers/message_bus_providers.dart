@@ -1,5 +1,5 @@
 /// MessageBus Providers
-/// 
+///
 /// 这个文件重新导出所有 MessageBus 相关的 providers 和模型
 /// 保持向后兼容，其他文件可以继续使用 `import 'message_bus_providers.dart'`
 library;
@@ -21,3 +21,6 @@ export 'message_bus/topic_channel_provider.dart';
 
 // 导出会话与站点级频道 providers（/logout 等）
 export 'message_bus/session_channel_providers.dart';
+
+// 导出私信追踪 providers
+export 'message_bus/pm_tracking_providers.dart';

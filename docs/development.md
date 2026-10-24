@@ -94,9 +94,19 @@ just release -- patch --dry-run
 - 桌面回复弹层直接使用路由实际高度约束，默认取可用高度的 75% 并封顶 580 逻辑像素；正文与预览各自滚动，移动端保留原有 95% 高度。
 - 富文本导入、源码镜像和提交快照使用语义编解码链路。修改 `tools/discourse-cook-bundle/src/` 后，需按该目录脚本重新生成 `assets/cook/discourse-cook.js`，避免 Dart 与 cook token 协议不一致。
 - 草稿保留本地持久化、云端序列及冲突恢复状态；舍弃草稿会终止旧保存链路，上传任务开始后空草稿也能继续插入上传结果。
-- 上传按站点能力采用 S3 分片，可在网络设置中强制关闭；进度、取消与失败清理由统一任务控制器管理。媒体压缩遵循站点附件上限，并保留实测大小与格式回退反馈。
-- 玻璃材质由 `common_ui` 的全局开关和效果档位管理，shader 注册在该包的 `pubspec.yaml`；墨笺编辑器继续使用纸面、顶边细线与透明工具组。
+- 上传按站点能力采用 S3 分片，可在网络设置中强制关闭；普通附件与压缩媒体都遵循站点大小上限。仅对象存储 PUT 的非取消失败回退普通上传，创建、预签名、完成请求失败不回退；进度、取消与失败清理由统一任务控制器管理。上传配置诊断分站，存储诊断只保留主机名，不写签名 URL。
+- 玻璃材质由 `common_ui` 的全局开关、效果档位与 `GlassSolidStyle` 统一管理；仅墨笺使用纸色细线实底，Claude 与经典主题保留玻璃，shader 注册在该包的 `pubspec.yaml`。
 - Toast 使用统一胶囊队列和玻璃表面，下载与 Notion 同步的失败会结束进度提示并显示可读错误。
+
+## 网络启动与增量消息
+
+- 启动时并行读取网络签名，代理启动前补种签名并处理 VPN 压制；Windows 保持系统代理 → `NetworkSettingsService` → 后台 UA → WebView Environment 顺序。rhttp 未启用时不在冷启动初始化运行时。
+- Rust 原生产物需与 Dart FFI 同批构建，Windows 通过 `native:prepare windows --release` 暂存 DLL。内置公共 ECH 域名含 LINUX DO、静态资源和 IDCFlare，关闭开关同时关闭公共兜底，但不关闭原域名 HTTPS/ECH 查询；Selector 覆盖范围独立，不随公共 ECH 域名扩展。
+- PM、勿扰与分类变更订阅由登录后启动项统一持有和释放；MessageBus 轮询、延迟队列和私信请求均检查会话或请求代际。列表事件按版本消费，静音不阻断已读与删除恢复同步。
+- 首页刷新按钮偏好独立于 FAB，标签与话题共用通知级别面板；预览入口必须使用 `MorphingDialogAnchor` 捕获真实来源，不再传旧的 `anchorRect`。
+- Windows 工作区回归使用 `dart tool/project_tasks.dart test:all --no-pub`，运行前将 `build\windows\x64\runner\Release` 加入进程 `PATH`，供 `flutter_js` 加载 `quickjs_c_bridge.dll`；测试命令同时覆盖 `fluxdo_render` 等含测试目录的包。
+- Windows 界面验收需连接运行应用的桌面会话；RDP 断开时 `ImageGrab` 可能失败、`PrintWindow` 可能只得到黑色客户区，此时只能据日志确认启动与请求成功，不能将其作为视觉通过证据。
+
 
 ## 话题列表时间
 

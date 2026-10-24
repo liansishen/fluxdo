@@ -79,10 +79,7 @@ class MasterDetailLayout extends StatefulWidget {
     this.resizableMaster = true,
     this.projectDetailWhenNarrow = false,
     this.animatePanes = true,
-  }) : assert(
-         detail == null || panes == null,
-         'detail(单格兼容)与 panes(胶片带)二选一',
-       );
+  }) : assert(detail == null || panes == null, 'detail(单格兼容)与 panes(胶片带)二选一');
 
   /// 主列表（左侧）
   final Widget master;
@@ -230,7 +227,7 @@ class _MasterDetailLayoutState extends State<MasterDetailLayout> {
     // FAB 锚定在系统安全区基线（viewPadding，不含 extendBody 注入的
     // 底栏槽高）：底栏是滑出式的，槽高恒定但可见性随滚动变化，锚在
     // padding.bottom 会让 FAB 在底栏滑走后仍悬在半空。跟随底栏升降
-    // 由 FAB 自身按 barVisibility 平移（见 _TopicsFab）。
+    // 由 FAB 自身按 barVisibility 平移（见 TopicsFab）。
     final bottomPadding = MediaQuery.viewPaddingOf(context).bottom;
 
     return LayoutBuilder(
@@ -238,11 +235,16 @@ class _MasterDetailLayoutState extends State<MasterDetailLayout> {
         final totalWidth = constraints.maxWidth;
         final showBothPanes = widget.canShowBothPanes(context);
         // 单格兼容口(detail)与胶片带(panes)归一成格子列表。
-        final panes = widget.panes ??
-            (widget.detail != null ? <Widget>[widget.detail!] : const <Widget>[]);
+        final panes =
+            widget.panes ??
+            (widget.detail != null
+                ? <Widget>[widget.detail!]
+                : const <Widget>[]);
         // 投影态:窄屏 + 栈非空,栈顶格全宽盖住 master。
         final projecting =
-            !showBothPanes && widget.projectDetailWhenNarrow && panes.isNotEmpty;
+            !showBothPanes &&
+            widget.projectDetailWhenNarrow &&
+            panes.isNotEmpty;
         // masterFillsWhenEmpty 且栈空:master 独占视口(内容页自排版),
         // 此刻不存在"两栏"——空态与拖拽柄都不该出现。
         final masterFillsNow =
@@ -467,4 +469,3 @@ class MasterDetailEmptyState extends StatelessWidget {
     );
   }
 }
-

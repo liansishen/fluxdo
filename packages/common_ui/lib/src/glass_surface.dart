@@ -386,6 +386,7 @@ class _GlassSurfaceState extends State<GlassSurface> {
   ShapeBorder _shapeWithSide(ShapeBorder shape, BorderSide side) {
     if (shape is StadiumBorder) return shape.copyWith(side: side);
     if (shape is RoundedRectangleBorder) return shape.copyWith(side: side);
+    if (shape is CircleBorder) return shape.copyWith(side: side);
     return shape;
   }
 
@@ -401,6 +402,7 @@ class _GlassSurfaceState extends State<GlassSurface> {
         Color.from(alpha: 1, red: gray, green: gray, blue: gray);
 
     final settings = GlassSettingsScope.of(context);
+    final solid = settings.solid;
     final highContrast = MediaQuery.maybeOf(context)?.highContrast ?? false;
     final enabled = settings.allowsBlur(
       highContrast: highContrast,
@@ -423,7 +425,14 @@ class _GlassSurfaceState extends State<GlassSurface> {
       fit: StackFit.passthrough,
       children: [
         Positioned.fill(
-          child: !enabled
+          child: solid != null
+              ? DecoratedBox(
+                  decoration: ShapeDecoration(
+                    shape: widget.shape,
+                    color: solid.fill,
+                  ),
+                )
+              : !enabled
               ? DecoratedBox(
                   decoration: ShapeDecoration(
                     shape: widget.shape,
@@ -435,6 +444,19 @@ class _GlassSurfaceState extends State<GlassSurface> {
               : _buildFallback(context, tint, recipe, isDark),
         ),
         widget.child ?? const SizedBox.shrink(),
+        if (solid != null && solid.border != null)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: ShapeDecoration(
+                  shape: _shapeWithSide(
+                    widget.shape,
+                    BorderSide(color: solid.border!, width: 0.5),
+                  ),
+                ),
+              ),
+            ),
+          ),
         if (useShader)
           Positioned.fill(
             child: IgnorePointer(
@@ -451,7 +473,7 @@ class _GlassSurfaceState extends State<GlassSurface> {
               ),
             ),
           ),
-        if (!useShader && widget.fallbackBorderRadius != null)
+        if (solid == null && !useShader && widget.fallbackBorderRadius != null)
           Positioned.fill(
             child: IgnorePointer(
               child: CustomPaint(

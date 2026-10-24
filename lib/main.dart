@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:catcher_2/catcher_2.dart';
+import 'package:connectivity_plus/connectivity_plus.dart'
+    show ConnectivityResult;
 import 'package:chinese_font_library/chinese_font_library.dart';
 import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/foundation.dart';
@@ -54,12 +56,13 @@ import 'services/network/proxy/proxy_settings_service.dart';
 import 'services/network/rhttp/rhttp_settings_service.dart';
 import 'services/network/webview/webview_adapter_settings_service.dart';
 import 'services/eruda_settings_service.dart';
-import 'package:rhttp/rhttp.dart' as rhttp;
+import 'services/network/adapters/rhttp_adapter.dart' show RhttpRuntime;
 import 'services/network/vpn_auto_toggle_service.dart';
 import 'services/network/doh_proxy/proxy_certificate.dart';
 import 'services/cf_challenge_logger.dart';
 import 'services/browser_trust_coordinator.dart';
 import 'services/startup/app_startup.dart';
+import 'services/startup/startup_timeline.dart';
 import 'services/site_context.dart';
 import 'config/forum_site.dart';
 import 'services/update_service.dart';
@@ -128,12 +131,6 @@ import 'widgets/keyboard_shortcut_handler.dart';
 import 'utils/platform_utils.dart';
 import 'utils/discourse_url_parser.dart';
 
-/// 初始化 rhttp Rust runtime
-Future<bool> _initRhttp() async {
-  await rhttp.Rhttp.init();
-  return true;
-}
-
 /// 应用 Android 屏幕刷新率偏好。
 /// 偏好值 0 表示跟随系统（auto），非 0 则按目标刷新率从 supported 中选最匹配的 mode。
 /// 失败不阻塞启动。
@@ -199,6 +196,7 @@ void _showLinuxWebViewCrashDialog() {
 }
 
 Future<void> main(List<String> args) async {
+  StartupTimeline.start();
   DeepLinkService.instance.launchArgs = args;
 
   // 自定义 binding:接管标准图片解码入口,全局限制解码并发(= 限制
@@ -215,7 +213,9 @@ Future<void> main(List<String> args) async {
     final text = await rootBundle.loadString(
       'assets/fonts/MojianSerif-OFL.txt',
     );
-    yield LicenseEntryWithLineBreaks(const ['MojianSerif (Noto Serif SC)'], text);
+    yield LicenseEntryWithLineBreaks(const [
+      'MojianSerif (Noto Serif SC)',
+    ], text);
   });
 
   // Rust 动图管线的首帧(挂载瞬态的裸 RGBA 上传,不经 binding)注入
@@ -302,6 +302,9 @@ Future<void> main(List<String> args) async {
     onWebProcessCrashed: _showLinuxWebViewCrashDialog,
   );
 
+  // 与存储初始化并行获取真实网络签名，起本地代理前决定持久化优选是否可复用。
+  final startupConnectivityCheck = ConnectivityService.safeCheckConnectivity();
+
   // 阶段 1：并行执行所有不相互依赖的初始化
   final futures = <Future<dynamic>>[
     Future<SharedPreferences>.value(sitePreferences),
@@ -319,6 +322,7 @@ Future<void> main(List<String> args) async {
     WebViewSettings.preloadPolyfill(),
   ];
   final results = await Future.wait(futures);
+  StartupTimeline.mark('stores');
   final prefs = results[0] as SharedPreferences;
   // 启动序列阶段 1→2：存储（含 jar）已就绪，接上 _t 的服务端探测 / 自愈 /
   // 认证回调。之后无论谁先构造 DiscourseService，priming 的对账都有探测可用
@@ -358,18 +362,32 @@ Future<void> main(List<String> args) async {
   await WebViewAdapterSettingsService.instance.initialize(prefs);
   // Eruda 调试控制台开关 (默认关)
   await ErudaSettingsService.instance.initialize(prefs);
+  StartupTimeline.mark('settings');
+  // 仅在启用 rhttp 时预热运行时，其余客户端首次使用时再初始化。
+  if (RhttpSettingsService.instance.current.enabled) {
+    await RhttpRuntime.ensureInitialized();
+  }
+
+  // 首次签名最多额外等待 300ms；迟到结果仍补种，不能依赖首页挂载后才启动的监听。
+  final startupConnectivity = await startupConnectivityCheck.timeout(
+    const Duration(milliseconds: 300),
+    onTimeout: () => const <ConnectivityResult>[],
+  );
+  ConnectivityService().seedInitialSignature(startupConnectivity);
+  if (startupConnectivity.isEmpty) {
+    unawaited(
+      startupConnectivityCheck.then(ConnectivityService().seedInitialSignature),
+    );
+  }
+  // 在起代理前同步 VPN 状态，避免先启动代理再走设置页节奏关闭它。
+  VpnAutoToggleService.instance.initialize(prefs);
   try {
-    final rhttp = await Future.any([
-      _initRhttp(),
-      Future.delayed(const Duration(seconds: 5), () => false),
-    ]);
-    if (rhttp != true) {
-      debugPrint('[rhttp] 初始化超时或失败');
-      await RhttpSettingsService.instance.forceDisable();
-    }
+    final initialConnectivity = startupConnectivity.isNotEmpty
+        ? startupConnectivity
+        : await startupConnectivityCheck;
+    await VpnAutoToggleService.instance.syncInitialState(initialConnectivity);
   } catch (e) {
-    debugPrint('[rhttp] 初始化异常: $e');
-    await RhttpSettingsService.instance.forceDisable();
+    debugPrint('[Main] 初始 VPN 状态同步失败: $e');
   }
 
   // Windows 固定系统代理必须先于本地 DoH/WebView 网关读取，网关才能按
@@ -377,32 +395,20 @@ Future<void> main(List<String> args) async {
   if (Platform.isWindows) {
     SystemProxyService.instance.start();
   }
+  StartupTimeline.mark('rhttp');
   await NetworkSettingsService.instance.initialize(prefs);
+  StartupTimeline.mark('proxy');
   // 桌面端 WebView UA 必须等本地代理端口确定后再取：WebView2 Environment
   // 创建时会把代理写死，而 Environment 第一次创建若发生在代理决策之前，
   // 会空等 _proxyDecision 到 15s 超时（此前它在阶段 1 并行初始化里，
   // 每次冷启动都白等满 15s）。这里放到 NetworkSettingsService 之后，
   // 放到后台跑，首次请求若更早到达会由 RequestHeaderInterceptor 等它。
   unawaited(AppConstants.initUserAgent());
-  // WindowsWebViewEnvironmentService 必须等 NetworkSettingsService 把本次
-  // 会话真正要用的代理端口定下来之后再创建 Environment。之前放在最早那批
-  // 并行初始化里,等的是"猜的"8s 超时——NetworkSettingsService 前面还排
-  // 着 rhttp(自己就留了最多 5s 预算)等好几个服务,8s 经常等不到真实端口
-  // 就用旧端口摆烂,导致 WebView2 全程连着一个不存在的代理、CF 验证怎么
-  // 也过不去。现在严格排在 NetworkSettingsService 完全初始化(本地代理
-  // 已经启动、setProxy() 已经真正调用过)之后再建,proxyDecision 这时
-  // 早就 complete 了,创建时直接读到确定值,不用再赌超时。
+  // 本地代理端口确定后才创建 Environment，避免等待代理决策超时或固定到旧端口。
   if (Platform.isWindows) {
     await WindowsWebViewEnvironmentService.instance.initialize();
   }
-  VpnAutoToggleService.instance.initialize(prefs);
-  try {
-    final initialConnectivity =
-        await ConnectivityService.safeCheckConnectivity();
-    await VpnAutoToggleService.instance.syncInitialState(initialConnectivity);
-  } catch (e) {
-    debugPrint('[Main] 初始 VPN 状态同步失败: $e');
-  }
+  StartupTimeline.mark('network');
 
   // 启动序列阶段 3→6：priming → 预加载（与 runApp 并行，PreheatGate 复用这个
   // 进行中的预加载）→ 会话判定 → 登录后启动项，全部在后台进行。
@@ -551,7 +557,10 @@ Future<void> main(List<String> args) async {
         sharedPreferencesProvider.overrideWithValue(prefs),
         aiSharedPreferencesProvider.overrideWithValue(prefs),
         aiChatStorageServiceProvider.overrideWithValue(
-          AiChatStorageService(prefs, sessionNamespace: SiteContext.storageKey('')),
+          AiChatStorageService(
+            prefs,
+            sessionNamespace: SiteContext.storageKey(''),
+          ),
         ),
         aiDioAdapterFactoryProvider.overrideWithValue(
           createExternalHttpAdapter,
@@ -571,6 +580,11 @@ Future<void> main(List<String> args) async {
     releaseConfig: releaseConfig,
     profileConfig: releaseConfig,
     enableLogger: kDebugMode,
+  );
+  unawaited(
+    WidgetsBinding.instance.waitUntilFirstFrameRasterized.then(
+      (_) => StartupTimeline.mark('first_frame'),
+    ),
   );
 }
 
@@ -795,23 +809,23 @@ class MainApp extends ConsumerWidget {
         // 动态色路径只取系统动态色 primary 当种子，不用 OEM 原始 scheme。
         final resolvedTheme = switch (themeState.uiStyle) {
           UiStyle.mojian => MojianTheme.resolve(
-              themeState.mode,
-              themeState.mojianAccent,
-              black: themeState.blackEnabled,
-              accentPair: themeState.mojianAccentPair,
-            ),
+            themeState.mode,
+            themeState.mojianAccent,
+            black: themeState.blackEnabled,
+            accentPair: themeState.mojianAccentPair,
+          ),
           UiStyle.claude => ClaudeTheme.resolve(
-              themeState.mode,
-              black: themeState.blackEnabled,
-            ),
+            themeState.mode,
+            black: themeState.blackEnabled,
+          ),
           UiStyle.classic => ThemeResolver.resolve(
-              mode: themeState.mode,
-              neutral: themeState.neutralEnabled,
-              black: themeState.blackEnabled,
-              transparent: themeState.isTransparentActive,
-              seed: themeState.effectiveSeedColor,
-              variant: themeState.schemeVariant,
-            ),
+            mode: themeState.mode,
+            neutral: themeState.neutralEnabled,
+            black: themeState.blackEnabled,
+            transparent: themeState.isTransparentActive,
+            seed: themeState.effectiveSeedColor,
+            variant: themeState.schemeVariant,
+          ),
         };
         final lightScheme = resolvedTheme.light;
         final darkScheme = resolvedTheme.dark;
@@ -994,7 +1008,7 @@ class _MessageBusChannels implements PostLoginStart {
   _MessageBusChannels(this._state);
 
   final _MainPageState _state;
-  final List<ProviderSubscription<void>> _subs = [];
+  final List<ProviderSubscription<dynamic>> _subs = [];
   bool _active = false;
 
   @override
@@ -1014,6 +1028,9 @@ class _MessageBusChannels implements PostLoginStart {
         ref.listenManual<void>(notificationAlertChannelProvider, (_, _) {}),
         ref.listenManual<void>(chatNotificationAlertProvider, (_, _) {}),
         ref.listenManual<void>(logoutChannelProvider, (_, _) {}),
+        ref.listenManual<PmIncomingState>(pmTrackingProvider, (_, _) {}),
+        ref.listenManual<DateTime?>(doNotDisturbProvider, (_, _) {}),
+        ref.listenManual<void>(categoryChangesProvider, (_, _) {}),
       ]);
     });
   }
@@ -1210,8 +1227,7 @@ class _MainPageState extends ConsumerState<MainPage>
     // 已经开着了就不用建议了（原生侧也会做这个判断，这里是快速短路）
     if (ref.read(preferencesProvider).renderGlesBackend) return;
 
-    final shouldSuggest =
-        await RenderBackendService.shouldSuggestCompatMode();
+    final shouldSuggest = await RenderBackendService.shouldSuggestCompatMode();
     if (!shouldSuggest || !mounted) return;
 
     final enable = await showAppDialog<bool>(
@@ -1233,9 +1249,7 @@ class _MainPageState extends ConsumerState<MainPage>
     );
 
     if (enable == true) {
-      await ref
-          .read(preferencesProvider.notifier)
-          .setRenderGlesBackend(true);
+      await ref.read(preferencesProvider.notifier).setRenderGlesBackend(true);
       if (!mounted) return;
       await showAppDialog<void>(
         context: context,
@@ -1682,79 +1696,79 @@ class _MainPageState extends ConsumerState<MainPage>
       valueListenable: NotificationQuickPanel.visible,
       builder: (context, notificationPanelVisible, _) =>
           ValueListenableBuilder<bool>(
-        // 平行视界投影态(窄屏详情全宽盖在 tab 体内)开着时返回由
-        // PaneProjectionBackScope 消费,根层完全让位:不弹退出 toast。
-        valueListenable: PaneProjectionBackScope.hasActiveProjection,
-        builder: (context, paneProjectionOpen, _) => PopScope(
-          canPop:
-              routeCanPopInternally ||
-              (!notificationPanelVisible &&
-                  !paneProjectionOpen &&
-                  !requireDoubleBackToExit),
-          onPopInvokedWithResult: (bool didPop, dynamic result) {
-            if (didPop) return;
-            // 分类侧栏通过 LocalHistoryEntry 消费返回；这里保留兜底，覆盖
-            // 抽屉正在收尾动画等 LocalHistory 尚未同步的短暂状态。
-            if (CategoryDrawerHost.isOpen) {
-              CategoryDrawerHost.close();
-              return;
-            }
-            if (NotificationQuickPanel.isVisible) {
-              NotificationQuickPanel.dismiss();
-              return;
-            }
-            // 投影态:PaneProjectionBackScope 的 PopEntry 自己消费本次
-            // 返回(关投影层),根层不做双击退出。
-            if (PaneProjectionBackScope.hasActiveProjection.value) {
-              return;
-            }
-            if (requireDoubleBackToExit) {
-              if (_backExitGuard.shouldExit()) {
-                SystemNavigator.pop();
-              } else {
-                ToastService.showInfo(S.current.toast_pressAgainToExit);
-              }
-            }
-          },
-          child: AdaptiveScaffold(
-            selectedIndex: selectedBottomIndex,
-            onDestinationSelected: _onDestinationSelected,
-            destinations: destinations,
-            // 墨笺:电脑宽屏用带字的宽侧栏,顶部放品牌
-            extendedRail: isMojian && Responsive.isDesktop(context),
-            railLeading: isMojian
-                ? MojianBrand(extended: Responsive.isDesktop(context))
-                : null,
-            railBottomLeading: (user != null && !hasNotificationEntry)
-                ? const NotificationIconButton()
-                : null,
-            hideNavigationRail: hideNavigationRail,
-            // 投影态底栏隐藏:详情全宽盖在 tab 体内,底栏还留着会像
-            // "详情页悬在 tab 骨架上";合成路由时代盖住一切,投影态
-            // 用显式谓词达成同样观感。
-            hideBottomNavigation: paneProjectionOpen,
-            body: IndexedStack(
-              index: safePageIndex,
-              children: [
-                for (int i = 0; i < pageEntries.length; i++)
-                  KeyedSubtree(
-                    key: ValueKey('nav-entry-${pageEntries[i].id}'),
-                    child: TickerMode(
-                      enabled: safePageIndex == i,
-                      child: ExcludeFocus(
-                        excluding: safePageIndex != i,
-                        child: pageEntries[i].pageBuilder!(
-                          context,
-                          safePageIndex == i,
+            // 平行视界投影态(窄屏详情全宽盖在 tab 体内)开着时返回由
+            // PaneProjectionBackScope 消费,根层完全让位:不弹退出 toast。
+            valueListenable: PaneProjectionBackScope.hasActiveProjection,
+            builder: (context, paneProjectionOpen, _) => PopScope(
+              canPop:
+                  routeCanPopInternally ||
+                  (!notificationPanelVisible &&
+                      !paneProjectionOpen &&
+                      !requireDoubleBackToExit),
+              onPopInvokedWithResult: (bool didPop, dynamic result) {
+                if (didPop) return;
+                // 分类侧栏通过 LocalHistoryEntry 消费返回；这里保留兜底，覆盖
+                // 抽屉正在收尾动画等 LocalHistory 尚未同步的短暂状态。
+                if (CategoryDrawerHost.isOpen) {
+                  CategoryDrawerHost.close();
+                  return;
+                }
+                if (NotificationQuickPanel.isVisible) {
+                  NotificationQuickPanel.dismiss();
+                  return;
+                }
+                // 投影态:PaneProjectionBackScope 的 PopEntry 自己消费本次
+                // 返回(关投影层),根层不做双击退出。
+                if (PaneProjectionBackScope.hasActiveProjection.value) {
+                  return;
+                }
+                if (requireDoubleBackToExit) {
+                  if (_backExitGuard.shouldExit()) {
+                    SystemNavigator.pop();
+                  } else {
+                    ToastService.showInfo(S.current.toast_pressAgainToExit);
+                  }
+                }
+              },
+              child: AdaptiveScaffold(
+                selectedIndex: selectedBottomIndex,
+                onDestinationSelected: _onDestinationSelected,
+                destinations: destinations,
+                // 墨笺:电脑宽屏用带字的宽侧栏,顶部放品牌
+                extendedRail: isMojian && Responsive.isDesktop(context),
+                railLeading: isMojian
+                    ? MojianBrand(extended: Responsive.isDesktop(context))
+                    : null,
+                railBottomLeading: (user != null && !hasNotificationEntry)
+                    ? const NotificationIconButton()
+                    : null,
+                hideNavigationRail: hideNavigationRail,
+                // 投影态底栏隐藏:详情全宽盖在 tab 体内,底栏还留着会像
+                // "详情页悬在 tab 骨架上";合成路由时代盖住一切,投影态
+                // 用显式谓词达成同样观感。
+                hideBottomNavigation: paneProjectionOpen,
+                body: IndexedStack(
+                  index: safePageIndex,
+                  children: [
+                    for (int i = 0; i < pageEntries.length; i++)
+                      KeyedSubtree(
+                        key: ValueKey('nav-entry-${pageEntries[i].id}'),
+                        child: TickerMode(
+                          enabled: safePageIndex == i,
+                          child: ExcludeFocus(
+                            excluding: safePageIndex != i,
+                            child: pageEntries[i].pageBuilder!(
+                              context,
+                              safePageIndex == i,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  ),
-              ],
+                  ],
+                ),
+              ),
             ),
           ),
-        ),
-      ),
     );
 
     // 桌面端需要 Focus 以接收全局快捷键

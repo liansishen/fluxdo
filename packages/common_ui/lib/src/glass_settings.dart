@@ -13,19 +13,39 @@ enum GlassEffectLevel {
       );
 }
 
+/// 不用玻璃时的实底外观：填色、细描边，不绘制模糊、光学边或落影。
+@immutable
+class GlassSolidStyle {
+  const GlassSolidStyle({required this.fill, this.border});
+
+  final Color fill;
+  final Color? border;
+
+  @override
+  bool operator ==(Object other) =>
+      other is GlassSolidStyle && other.fill == fill && other.border == border;
+
+  @override
+  int get hashCode => Object.hash(fill, border);
+}
+
 /// 应用级玻璃策略。common_ui 只依赖此配置，不依赖应用偏好存储。
 @immutable
 class GlassSettings {
   const GlassSettings({
     this.enabled = true,
     this.level = GlassEffectLevel.auto,
+    this.solid,
   });
 
   final bool enabled;
   final GlassEffectLevel level;
 
+  /// 非空时优先于全局开关与档位，统一使用界面风格的实底外观。
+  final GlassSolidStyle? solid;
+
   bool allowsBlur({required bool highContrast, bool locallyEnabled = true}) =>
-      enabled && locallyEnabled && !highContrast;
+      solid == null && enabled && locallyEnabled && !highContrast;
 
   bool allowsOptics({
     required bool shaderSupported,
@@ -40,10 +60,11 @@ class GlassSettings {
   bool operator ==(Object other) =>
       other is GlassSettings &&
       other.enabled == enabled &&
-      other.level == level;
+      other.level == level &&
+      other.solid == solid;
 
   @override
-  int get hashCode => Object.hash(enabled, level);
+  int get hashCode => Object.hash(enabled, level, solid);
 }
 
 /// 放在 Navigator 之上，页面、弹出的编辑器与新玻璃组件自动遵循同一策略。
