@@ -54,9 +54,12 @@ mixin _TopicsMixin on _DiscourseServiceBase {
     String? order,
     bool? ascending,
     String? subset,
+    List<int>? topicIds,
   }) async {
     String path;
-    final queryParams = <String, dynamic>{};
+    final queryParams = <String, dynamic>{
+      if (topicIds != null) 'topic_ids': topicIds.join(','),
+    };
 
     if (page > 0) {
       queryParams['page'] = page;
@@ -280,17 +283,32 @@ mixin _TopicsMixin on _DiscourseServiceBase {
     required String raw,
     required int categoryId,
     List<String>? tags,
+    String? featuredLink,
     bool createAsPostVoting = false,
+    String? draftKey,
+    ValueChanged<int>? onDraftSequence,
   }) async {
     final data = <String, dynamic>{
       'title': title,
       'raw': raw,
       'category': categoryId,
       'archetype': 'regular',
+      'draft_key': ?draftKey,
     };
 
     if (tags != null && tags.isNotEmpty) {
       data['tags[]'] = tags;
+    }
+
+    // 精选链接（标题为纯 URL 时自动解析）。
+    //
+    // 注：Discourse 除站点开关 topic_featured_link_enabled 外，还有分类级的
+    // topic_featured_link_allowed，而后者只在 CategorySerializer 下发、不在
+    // /site.json 用的 SiteCategorySerializer 里，客户端无法预先判断。分类
+    // 不允许时服务端会直接忽略该字段，不会连带整个发帖失败；叠加上正文
+    // 里已经追加了同一个 URL，降级后链接不会丢。
+    if (featuredLink != null && featuredLink.isNotEmpty) {
+      data['featured_link'] = featuredLink;
     }
 
     // post-voting(问答)话题:插件只认字符串 'true',且仅对新话题生效
@@ -305,6 +323,12 @@ mixin _TopicsMixin on _DiscourseServiceBase {
     );
 
     final respData = response.data;
+    if (respData is Map) {
+      final target = respData['target'];
+      final sequence = (target is Map ? target['draft_sequence'] : null) ??
+          respData['draft_sequence'];
+      if (sequence is int) onDraftSequence?.call(sequence);
+    }
 
     // 帖子进入审核队列
     if (respData is Map && respData['action'] == 'enqueued') {

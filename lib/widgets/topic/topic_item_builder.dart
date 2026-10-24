@@ -1,15 +1,21 @@
 import 'package:flutter/material.dart';
+
 import '../../models/category.dart';
 import '../../models/topic.dart';
+import '../../models/topic_card_style.dart';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../providers/discourse_providers.dart';
 import '../../l10n/s.dart';
 import '../../services/topic_preview_preloader.dart';
 import '../../theme/mojian_theme.dart';
 import '../../utils/responsive.dart';
+import '../common/morphing_dialog_anchor.dart';
 import 'painted_topic_card.dart';
 import 'topic_card.dart';
 import 'topic_card_layout.dart';
+import 'topic_expandable_excerpt.dart';
 import 'topic_preview_dialog.dart';
 
 /// 话题卡排版宽:与 [buildTopicItem] 的壳层约束同源(移动 = 视口宽
@@ -90,9 +96,7 @@ Widget buildTopicItem({
           ? theme.colorScheme.surfaceContainerLow.withValues(alpha: 0.5)
           : theme.cardTheme.color ?? theme.colorScheme.surfaceContainerLow);
 
-  // Builder 紧贴卡片构造:longPress 需要卡片自身的 context 取屏幕
-  // rect 作一镜到底起点(外层 context 的 RenderObject 在桌面端居中
-  // 约束下是满宽,不是卡身)。bottomGap 裁掉卡片外壳底部间距。
+  // 从实际卡身接管画面；桌面的居中约束留在来源外层。
   VoidCallback? longPressFor(BuildContext cardContext) => enableLongPress
       ? () => TopicPreviewDialog.show(
           context,
@@ -100,12 +104,7 @@ Widget buildTopicItem({
           onOpen: onTap,
           actions: previewActions,
           customActionPanelBuilder: previewCustomActionPanelBuilder,
-          anchorRect: topicCardAnchorRect(
-            cardContext,
-            bottomGap: theme.extension<MojianTokens>() != null
-                ? 0
-                : (topic.pinned ? 6 : 8),
-          ),
+          sourceContext: cardContext,
           anchorColor: anchorColor,
         )
       : null;
@@ -123,11 +122,39 @@ Widget buildTopicItem({
         )
       : null;
 
+  // 检查是否启用了正文摘要展示（类 X/推特信息流风格）
+  final currentStyle = messageStyle
+      ? TopicCardStyle.defaults
+      : TopicCardStyleScope.current;
+  final isFullyRead =
+      !topic.unseen && topic.unread == 0 && topic.lastReadPostNumber != null;
+  final effectiveMiddleWidget =
+      middleWidget ??
+      (!messageStyle && (currentStyle.showExcerpt || currentStyle.showImages)
+          ? TopicExpandableExcerpt(
+              topic: topic,
+              showText: currentStyle.showExcerpt,
+              showImages: currentStyle.showImages,
+              maxCollapsedLines: currentStyle.maxCollapsedLines,
+              isFullyRead: isFullyRead,
+              allowFetch: currentStyle.allowExcerptFetch,
+            )
+          : null);
+
   // 自绘路径的排版在 Builder 外先取好:入参(context/theme/宽度)与
   // Builder 内一致,避免逐分支重复。
+  // 列表摘要/图片:墨笺话题行把摘要组件夹进自绘卡的中段插槽,不退回
+  // widget 版(两种卡排版不同,开了摘要列表就变样);经典卡仍走 widget 版
+  final excerptInPainted =
+      middleWidget == null &&
+      effectiveMiddleWidget != null &&
+      !messageStyle &&
+      theme.extension<MojianTokens>() != null;
   final usePainted =
-      kUsePaintedTopicCard && topWidget == null && middleWidget == null;
-  final paintedLayout = usePainted && !topic.pinned
+      kUsePaintedTopicCard &&
+      topWidget == null &&
+      (effectiveMiddleWidget == null || excerptInPainted);
+  var paintedLayout = usePainted && !topic.pinned
       ? obtainTopicItemLayout(
           context: context,
           topic: topic,
@@ -136,11 +163,19 @@ Widget buildTopicItem({
           messageStyle: messageStyle,
         )
       : null;
+  if (excerptInPainted && paintedLayout?.middleSplitY == null) {
+    paintedLayout = null;
+  }
 
   // 自绘路径:排版全局缓存 + 单渲染对象。宽度口径见
   // [topicCardWidthFor];分类表由调用方传入(未传时不查,分类行缺分
   // 类名 —— 各列表页均已传)
-  final Widget child = Builder(
+  final Widget child = MorphingDialogAnchor(
+    enabled: enableLongPress,
+    // 墨笺列表行之间没有外壳间距，不裁
+    bottomGap: theme.extension<MojianTokens>() != null
+        ? 0
+        : (topic.pinned ? 6 : 8),
     builder: (cardContext) {
       if (topic.pinned) {
         return CompactTopicCard(
@@ -163,6 +198,7 @@ Widget buildTopicItem({
           onPreviewIntent: previewIntent,
           isSelected: isSelected,
           highlightColor: highlightColor,
+          middle: excerptInPainted ? effectiveMiddleWidget : null,
         );
       }
       return TopicCard(
@@ -174,7 +210,7 @@ Widget buildTopicItem({
         isSelected: isSelected,
         highlightColor: highlightColor,
         topWidget: topWidget,
-        middleWidget: middleWidget,
+        middleWidget: effectiveMiddleWidget,
         messageStyle: messageStyle,
         categoryMap: categoryMap,
         statsAvailableWidth: statsAvailableWidth,

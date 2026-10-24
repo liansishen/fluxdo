@@ -82,6 +82,57 @@ void main() {
       expect(env.jar, 'old', reason: '失败要恢复备份，别让 jar 空着');
     });
 
+    test('/challenge 直接 404、没有下发挑战 → 宽限后落 WebView 现有的值并通过', () async {
+      // WebView 里早就有一枚有效值（不算新值），jar 里是另一枚
+      env.webView = 'wv-live';
+      env.staleWebView = 'wv-live';
+      final (outcome, round) = await start();
+
+      round.completionHint('main frame /challenge 404', conclusive: true);
+      await clock.advance(const Duration(seconds: 2));
+      expect(round.isDone, isFalse, reason: '宽限期内仍先等新值');
+      await clock.advance(const Duration(seconds: 2));
+
+      final result = await outcome;
+      expect((result as CfRoundPassed).clearance, 'wv-live');
+      expect(env.jar, 'wv-live');
+      expect(env.recordedFailures, isEmpty, reason: '不再按 notLanded 计失败');
+      expect(
+        clock.elapsed,
+        lessThan(const Duration(seconds: 8)),
+        reason: '不用白等 8 秒',
+      );
+    });
+
+    test('WebView 现值就是 jar 原来那枚 → 照样落值通过，交给重放判断是否有效', () async {
+      env.webView = 'old';
+      final (outcome, round) = await start();
+
+      round.completionHint('main frame /challenge 404', conclusive: true);
+      await clock.advance(const Duration(seconds: 4));
+
+      final result = await outcome;
+      expect((result as CfRoundPassed).clearance, 'old');
+      expect(env.jar, 'old');
+      expect(env.recordedFailures, isEmpty);
+    });
+
+    test('宽限期内来了新值（跳转后第二枚）→ 落新值，不落旧值', () async {
+      env.webView = 'wv-live';
+      env.staleWebView = 'wv-live';
+      final (outcome, round) = await start();
+
+      round.completionHint('main frame /challenge 404', conclusive: true);
+      await clock.advance(const Duration(seconds: 1));
+      env.webView = 'fresh';
+      round.clearanceSeen('fresh', source: 'polling');
+      await clock.advance(const Duration(seconds: 3));
+
+      final result = await outcome;
+      expect((result as CfRoundPassed).clearance, 'fresh');
+      expect(env.landed, ['fresh']);
+    });
+
     test('闸门始终不采纳定稿值 → 重试后 notLanded', () async {
       env.gateAccepts = false;
       final (outcome, round) = await start();
@@ -93,6 +144,24 @@ void main() {
       final result = await outcome;
       expect((result as CfRoundFailed).reason, CfRoundFailure.notLanded);
       expect(env.landed, hasLength(3), reason: '落值确认 3 次');
+    });
+
+    test('定稿后站点又签一枚（第二枚晚到）→ 落值失败后改落最新值并通过', () async {
+      env.landOnlyCurrentWebView = true;
+      // 定稿窗口已过、正在落 v1 时，/challenge 跳转又签了 v2
+      env.onLand = (value) {
+        if (value == 'v1') env.webView = 'v2';
+      };
+      final (outcome, round) = await start();
+      env.webView = 'v1';
+      round.clearanceSeen('v1', source: 'polling');
+      await clock.advance(const Duration(seconds: 3));
+
+      final result = await outcome;
+      expect((result as CfRoundPassed).clearance, 'v2');
+      expect(env.jar, 'v2');
+      expect(env.landed.first, 'v1');
+      expect(env.landed.last, 'v2');
     });
 
     test('值一直在变、稳定不下来 → 不落值，按超时收口', () async {

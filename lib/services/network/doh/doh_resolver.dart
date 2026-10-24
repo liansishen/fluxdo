@@ -138,7 +138,9 @@ class DohResolver {
     try {
       return await future;
     } finally {
-      _inflight.remove(host);
+      // 只删自己登记的那条：期间切换过 DoH（清空后有新请求登记了同一 host），
+      // 旧请求收尾不能把新的在途查询删掉（上游 a54adc2c 修过同一处）
+      if (identical(_inflight[host], future)) _inflight.remove(host);
     }
   }
 
@@ -159,7 +161,7 @@ class DohResolver {
           durationMs: stopwatch.elapsedMilliseconds,
           error: 'empty response',
         );
-        return _fallbackResolveAll(host);
+        return await _fallbackResolveAll(host);
       }
 
       // 根据设置排序地址（IPv6 优先 / IPv4 优先）
@@ -209,7 +211,7 @@ class DohResolver {
           durationMs: stopwatch.elapsedMilliseconds,
           error: 'empty response',
         );
-        return _fallbackResolveAll(host);
+        return await _fallbackResolveAll(host);
       }
       final sorted = _sortAddresses(addresses);
       NetworkLogger.logDoh(

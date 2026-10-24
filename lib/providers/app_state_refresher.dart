@@ -11,6 +11,7 @@ import 'pinned_categories_provider.dart';
 import 'user_content_providers.dart';
 import 'category_provider.dart';
 import 'message_bus/notification_providers.dart';
+import 'message_bus/pm_tracking_providers.dart';
 import 'message_bus/session_channel_providers.dart';
 import 'message_bus/topic_tracking_providers.dart';
 import 'ldc_providers.dart';
@@ -118,7 +119,9 @@ class AppStateRefresher {
     (c) => c.invalidate(notificationChannelProvider),
     (c) => c.invalidate(notificationAlertChannelProvider),
     (c) => c.invalidate(logoutChannelProvider),
-    (c) => c.invalidate(latestChannelProvider),
+    (c) => c.invalidate(pmTrackingProvider),
+    (c) => c.invalidate(doNotDisturbProvider),
+    (c) => c.invalidate(categoryChangesProvider),
     (c) => c.invalidate(messageBusInitProvider),
     (c) => c.invalidate(ldcUserInfoProvider),
     (c) => c.invalidate(cdkUserInfoProvider),

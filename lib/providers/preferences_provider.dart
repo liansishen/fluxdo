@@ -1,13 +1,17 @@
 import 'dart:io';
 
 import 'package:collection/collection.dart';
+import 'package:common_ui/common_ui.dart' show GlassEffectLevel;
 import 'package:flutter/services.dart';
 // ignore: depend_on_referenced_packages
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../constants/composer_tool_defaults.dart';
 import '../models/topic_card_style.dart';
 import '../navigation/nav_action_bus.dart';
 import '../services/network/request_scheduler_config.dart';
+import '../services/uploads/upload_settings.dart';
 import '../services/cf_challenge_service.dart';
 import '../services/render_backend_service.dart';
 import '../utils/blocked_user_filter.dart';
@@ -104,6 +108,9 @@ class AppPreferences {
   /// 自动填充登录凭证
   final bool autoFillLogin;
 
+  /// 在首页创作按钮上方显示独立刷新入口，默认关闭
+  final bool homeRefreshButton;
+
   /// 自动识别剪贴板中的 Linux.do 话题链接
   final bool clipboardTopicLinkDetection;
 
@@ -152,6 +159,9 @@ class AppPreferences {
 
   /// 滚动时收起顶栏和底栏
   final bool hideBarOnScroll;
+
+  /// 话题列表停在顶部时自动载入新话题（不用点「查看 N 个新的或更新的话题」）
+  final bool autoLoadTopicUpdates;
 
   /// 退出时清除图片缓存
   final bool clearCacheOnExit;
@@ -232,6 +242,7 @@ class AppPreferences {
   final BookmarksOpenMode bookmarksOpenMode;
 
   /// 最大并发请求数
+  final bool forceDisableMultipartUpload;
   final int maxConcurrent;
 
   /// 滑动窗口内最大请求数
@@ -255,8 +266,11 @@ class AppPreferences {
   /// 底栏：悬浮底栏（仅手机底栏，宽度随入口数量自适应的悬浮胶囊）
   final bool bottomNavFloating;
 
-  /// 底栏：悬浮胶囊毛玻璃模糊（仅悬浮底栏开启时生效）
-  final bool bottomNavFloatingBlur;
+  /// 所有玻璃组件的总开关，不影响顶栏、弹窗背景或壁纸模糊。
+  final bool glassEnabled;
+
+  /// 玻璃效果能力档位。
+  final GlassEffectLevel glassEffectLevel;
 
   /// Android 屏幕刷新率偏好（0 = auto/跟随系统，其它为目标刷新率，如 60 / 90 / 120）
   final int displayModeRefreshRate;
@@ -279,8 +293,14 @@ class AppPreferences {
   /// 长按菜单候选功能（按顺序展示在半圆菜单中）
   final List<ProgressGestureAction> progressGestureMenuActions;
 
-  /// 编辑器工具栏外显工具 id 列表（空 = 全部收进「更多」面板）
+  /// 源码工具栏固定工具及其顺序；空列表表示不固定。
   final List<String> editorToolbarTools;
+
+  /// 富文本工具栏外显工具 id 列表。
+  ///
+  /// 与 [editorToolbarTools] 分开存：两种模式的工具集不同（富文本有行内
+  /// 剧透、没有模板/TOC 这类纯 markdown 字面量工具），共用一份会互相污染。
+  final List<String> richToolbarTools;
 
   /// 话题卡片自定义样式（元信息字段开关 / 头像布局 / 动态头像）
   final TopicCardStyle topicCardStyle;
@@ -294,6 +314,7 @@ class AppPreferences {
     required this.contentFontScale,
     required this.shareImageThemeIndex,
     required this.autoFillLogin,
+    this.homeRefreshButton = false,
     required this.clipboardTopicLinkDetection,
     required this.topicFilterKeywords,
     this.topicFilterWholeWord = false,
@@ -304,6 +325,7 @@ class AppPreferences {
     required this.fullscreenSwipeBack,
     required this.exitOnSingleBack,
     required this.hideBarOnScroll,
+    this.autoLoadTopicUpdates = false,
     required this.clearCacheOnExit,
     required this.autoCfChallenge,
     required this.expandRelatedLinks,
@@ -327,6 +349,7 @@ class AppPreferences {
     this.defaultNestedView = false,
     this.nestedLineStyle = NestedLineStyle.auto,
     this.bookmarksOpenMode = BookmarksOpenMode.defaultRoute,
+    this.forceDisableMultipartUpload = false,
     required this.maxConcurrent,
     required this.maxPerWindow,
     required this.windowSeconds,
@@ -335,7 +358,8 @@ class AppPreferences {
     required this.bottomNavIds,
     this.bottomNavLabelless = false,
     this.bottomNavFloating = false,
-    this.bottomNavFloatingBlur = false,
+    this.glassEnabled = true,
+    this.glassEffectLevel = GlassEffectLevel.auto,
     this.displayModeRefreshRate = 0,
     this.progressGesturesEnabled = true,
     this.progressGestureSwipeLeft = ProgressGestureAction.nextPost,
@@ -343,7 +367,8 @@ class AppPreferences {
     this.progressGestureSwipeUp = ProgressGestureAction.jumpToUnread,
     this.progressGestureLongPressEnabled = true,
     this.progressGestureMenuActions = _defaultProgressGestureMenu,
-    this.editorToolbarTools = const [],
+    this.editorToolbarTools = kDefaultSourceVisibleTools,
+    this.richToolbarTools = kDefaultRichVisibleTools,
     this.topicCardStyle = TopicCardStyle.defaults,
   });
 
@@ -356,6 +381,7 @@ class AppPreferences {
     double? contentFontScale,
     int? shareImageThemeIndex,
     bool? autoFillLogin,
+    bool? homeRefreshButton,
     bool? clipboardTopicLinkDetection,
     List<String>? topicFilterKeywords,
     bool? topicFilterWholeWord,
@@ -366,6 +392,7 @@ class AppPreferences {
     bool? fullscreenSwipeBack,
     bool? exitOnSingleBack,
     bool? hideBarOnScroll,
+    bool? autoLoadTopicUpdates,
     bool? clearCacheOnExit,
     bool? autoCfChallenge,
     bool? expandRelatedLinks,
@@ -389,6 +416,7 @@ class AppPreferences {
     bool? defaultNestedView,
     NestedLineStyle? nestedLineStyle,
     BookmarksOpenMode? bookmarksOpenMode,
+    bool? forceDisableMultipartUpload,
     int? maxConcurrent,
     int? maxPerWindow,
     int? windowSeconds,
@@ -397,7 +425,8 @@ class AppPreferences {
     List<String>? bottomNavIds,
     bool? bottomNavLabelless,
     bool? bottomNavFloating,
-    bool? bottomNavFloatingBlur,
+    bool? glassEnabled,
+    GlassEffectLevel? glassEffectLevel,
     int? displayModeRefreshRate,
     bool? progressGesturesEnabled,
     ProgressGestureAction? progressGestureSwipeLeft,
@@ -406,6 +435,7 @@ class AppPreferences {
     bool? progressGestureLongPressEnabled,
     List<ProgressGestureAction>? progressGestureMenuActions,
     List<String>? editorToolbarTools,
+    List<String>? richToolbarTools,
     TopicCardStyle? topicCardStyle,
   }) {
     return AppPreferences(
@@ -418,6 +448,7 @@ class AppPreferences {
       contentFontScale: contentFontScale ?? this.contentFontScale,
       shareImageThemeIndex: shareImageThemeIndex ?? this.shareImageThemeIndex,
       autoFillLogin: autoFillLogin ?? this.autoFillLogin,
+      homeRefreshButton: homeRefreshButton ?? this.homeRefreshButton,
       clipboardTopicLinkDetection:
           clipboardTopicLinkDetection ?? this.clipboardTopicLinkDetection,
       topicFilterKeywords: topicFilterKeywords ?? this.topicFilterKeywords,
@@ -429,6 +460,7 @@ class AppPreferences {
       fullscreenSwipeBack: fullscreenSwipeBack ?? this.fullscreenSwipeBack,
       exitOnSingleBack: exitOnSingleBack ?? this.exitOnSingleBack,
       hideBarOnScroll: hideBarOnScroll ?? this.hideBarOnScroll,
+      autoLoadTopicUpdates: autoLoadTopicUpdates ?? this.autoLoadTopicUpdates,
       clearCacheOnExit: clearCacheOnExit ?? this.clearCacheOnExit,
       autoCfChallenge: autoCfChallenge ?? this.autoCfChallenge,
       expandRelatedLinks: expandRelatedLinks ?? this.expandRelatedLinks,
@@ -464,6 +496,8 @@ class AppPreferences {
       defaultNestedView: defaultNestedView ?? this.defaultNestedView,
       nestedLineStyle: nestedLineStyle ?? this.nestedLineStyle,
       bookmarksOpenMode: bookmarksOpenMode ?? this.bookmarksOpenMode,
+      forceDisableMultipartUpload:
+          forceDisableMultipartUpload ?? this.forceDisableMultipartUpload,
       maxConcurrent: maxConcurrent ?? this.maxConcurrent,
       maxPerWindow: maxPerWindow ?? this.maxPerWindow,
       windowSeconds: windowSeconds ?? this.windowSeconds,
@@ -474,8 +508,8 @@ class AppPreferences {
       bottomNavIds: bottomNavIds ?? this.bottomNavIds,
       bottomNavLabelless: bottomNavLabelless ?? this.bottomNavLabelless,
       bottomNavFloating: bottomNavFloating ?? this.bottomNavFloating,
-      bottomNavFloatingBlur:
-          bottomNavFloatingBlur ?? this.bottomNavFloatingBlur,
+      glassEnabled: glassEnabled ?? this.glassEnabled,
+      glassEffectLevel: glassEffectLevel ?? this.glassEffectLevel,
       displayModeRefreshRate:
           displayModeRefreshRate ?? this.displayModeRefreshRate,
       progressGesturesEnabled:
@@ -492,6 +526,7 @@ class AppPreferences {
       progressGestureMenuActions:
           progressGestureMenuActions ?? this.progressGestureMenuActions,
       editorToolbarTools: editorToolbarTools ?? this.editorToolbarTools,
+      richToolbarTools: richToolbarTools ?? this.richToolbarTools,
       topicCardStyle: topicCardStyle ?? this.topicCardStyle,
     );
   }
@@ -507,6 +542,7 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
   static const String _contentFontScaleKey = 'pref_content_font_scale';
   static const String _shareImageThemeIndexKey = 'pref_share_image_theme_index';
   static const String _autoFillLoginKey = 'pref_auto_fill_login';
+  static const String _homeRefreshButtonKey = 'pref_home_refresh_button';
   static const String _clipboardTopicLinkDetectionKey =
       'pref_clipboard_topic_link_detection';
   static const String _topicFilterKeywordsKey = 'pref_topic_filter_keywords';
@@ -522,6 +558,8 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
   static const String _fullscreenSwipeBackKey = 'pref_fullscreen_swipe_back';
   static const String _exitOnSingleBackKey = 'pref_exit_on_single_back';
   static const String _hideBarOnScrollKey = 'pref_hide_bar_on_scroll';
+  static const String _autoLoadTopicUpdatesKey =
+      'pref_auto_load_topic_updates';
   static const String _clearCacheOnExitKey = 'pref_clear_cache_on_exit';
   static const String _autoCfChallengeKey = 'pref_auto_cf_challenge';
   static const String _expandRelatedLinksKey = 'pref_expand_related_links';
@@ -559,8 +597,8 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
   static const String _bottomNavIdsKey = 'pref_bottom_nav_ids';
   static const String _bottomNavLabellessKey = 'pref_bottom_nav_labelless';
   static const String _bottomNavFloatingKey = 'pref_bottom_nav_floating';
-  static const String _bottomNavFloatingBlurKey =
-      'pref_bottom_nav_floating_blur';
+  static const String _glassEnabledKey = 'pref_glass_enabled';
+  static const String _glassEffectLevelKey = 'pref_glass_effect_level';
   static const String _displayModeRefreshRateKey =
       'pref_display_mode_refresh_rate';
   static const String _progressGesturesEnabledKey =
@@ -576,6 +614,7 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
   static const String _progressGestureMenuActionsKey =
       'pref_progress_gesture_menu_actions';
   static const String _editorToolbarToolsKey = 'pref_editor_toolbar_tools';
+  static const String _richToolbarToolsKey = 'pref_rich_toolbar_tools';
   static const String _topicCardStyleKey = 'pref_topic_card_style';
 
   PreferencesNotifier(this._prefs)
@@ -591,6 +630,7 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
           // -1 = 从没选过（墨笺界面下默认墨笺版式，见 ShareImageTheme.initial）
           shareImageThemeIndex: _prefs.getInt(_shareImageThemeIndexKey) ?? -1,
           autoFillLogin: _prefs.getBool(_autoFillLoginKey) ?? true,
+          homeRefreshButton: _prefs.getBool(_homeRefreshButtonKey) ?? false,
           clipboardTopicLinkDetection:
               _prefs.getBool(_clipboardTopicLinkDetectionKey) ?? false,
           topicFilterKeywords:
@@ -607,6 +647,8 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
               _prefs.getBool(_fullscreenSwipeBackKey) ?? false,
           exitOnSingleBack: _prefs.getBool(_exitOnSingleBackKey) ?? false,
           hideBarOnScroll: _prefs.getBool(_hideBarOnScrollKey) ?? true,
+          autoLoadTopicUpdates:
+              _prefs.getBool(_autoLoadTopicUpdatesKey) ?? false,
           clearCacheOnExit: _prefs.getBool(_clearCacheOnExitKey) ?? false,
           autoCfChallenge: _prefs.getBool(_autoCfChallengeKey) ?? true,
           expandRelatedLinks: _prefs.getBool(_expandRelatedLinksKey) ?? false,
@@ -641,6 +683,7 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
           bookmarksOpenMode: BookmarksOpenMode.fromString(
             _prefs.getString(_bookmarksOpenModeKey),
           ),
+          forceDisableMultipartUpload: UploadSettings.forceDisabled(_prefs),
           maxConcurrent: _prefs.getInt(_maxConcurrentKey) ?? 3,
           maxPerWindow: _prefs.getInt(_maxPerWindowKey) ?? 6,
           windowSeconds: _prefs.getInt(_windowSecondsKey) ?? 3,
@@ -657,8 +700,11 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
               const [NavEntryIds.home, NavEntryIds.profile],
           bottomNavLabelless: _prefs.getBool(_bottomNavLabellessKey) ?? false,
           bottomNavFloating: _prefs.getBool(_bottomNavFloatingKey) ?? false,
-          bottomNavFloatingBlur:
-              _prefs.getBool(_bottomNavFloatingBlurKey) ?? false,
+          // 新全局策略默认自动开启；不继承废弃的底栏局部开关。
+          glassEnabled: _prefs.getBool(_glassEnabledKey) ?? true,
+          glassEffectLevel: GlassEffectLevel.fromStorage(
+            _prefs.getString(_glassEffectLevelKey),
+          ),
           displayModeRefreshRate:
               _prefs.getInt(_displayModeRefreshRateKey) ?? 0,
           progressGesturesEnabled:
@@ -681,7 +727,11 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
             _prefs.getStringList(_progressGestureMenuActionsKey),
           ),
           editorToolbarTools:
-              _prefs.getStringList(_editorToolbarToolsKey) ?? const [],
+              _prefs.getStringList(_editorToolbarToolsKey) ??
+              kDefaultSourceVisibleTools,
+          richToolbarTools:
+              _prefs.getStringList(_richToolbarToolsKey) ??
+              kDefaultRichVisibleTools,
           topicCardStyle: TopicCardStyle.fromJsonString(
             _prefs.getString(_topicCardStyleKey),
           ),
@@ -739,6 +789,11 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
   Future<void> setAutoFillLogin(bool enabled) async {
     state = state.copyWith(autoFillLogin: enabled);
     await _prefs.setBool(_autoFillLoginKey, enabled);
+  }
+
+  Future<void> setHomeRefreshButton(bool enabled) async {
+    state = state.copyWith(homeRefreshButton: enabled);
+    await _prefs.setBool(_homeRefreshButtonKey, enabled);
   }
 
   Future<void> setClipboardTopicLinkDetection(bool enabled) async {
@@ -824,6 +879,11 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
   Future<void> setHideBarOnScroll(bool enabled) async {
     state = state.copyWith(hideBarOnScroll: enabled);
     await _prefs.setBool(_hideBarOnScrollKey, enabled);
+  }
+
+  Future<void> setAutoLoadTopicUpdates(bool enabled) async {
+    state = state.copyWith(autoLoadTopicUpdates: enabled);
+    await _prefs.setBool(_autoLoadTopicUpdatesKey, enabled);
   }
 
   Future<void> setClearCacheOnExit(bool enabled) async {
@@ -971,6 +1031,11 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
     await _prefs.setString(_bookmarksOpenModeKey, mode.name);
   }
 
+  Future<void> setForceDisableMultipartUpload(bool value) async {
+    await _prefs.setBool(UploadSettings.forceDisableMultipartKey, value);
+    state = state.copyWith(forceDisableMultipartUpload: value);
+  }
+
   Future<void> setMaxConcurrent(int value) async {
     final clamped = value.clamp(1, 10);
     state = state.copyWith(maxConcurrent: clamped);
@@ -1020,10 +1085,15 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
     await _prefs.setBool(_bottomNavFloatingKey, enabled);
   }
 
-  /// 悬浮胶囊毛玻璃模糊（仅悬浮底栏开启时生效）
-  Future<void> setBottomNavFloatingBlur(bool enabled) async {
-    state = state.copyWith(bottomNavFloatingBlur: enabled);
-    await _prefs.setBool(_bottomNavFloatingBlurKey, enabled);
+  /// 所有玻璃组件共用；保留档位，关闭后再开启不会重置选择。
+  Future<void> setGlassEnabled(bool enabled) async {
+    state = state.copyWith(glassEnabled: enabled);
+    await _prefs.setBool(_glassEnabledKey, enabled);
+  }
+
+  Future<void> setGlassEffectLevel(GlassEffectLevel level) async {
+    state = state.copyWith(glassEffectLevel: level);
+    await _prefs.setString(_glassEffectLevelKey, level.name);
   }
 
   /// 设置 Android 屏幕刷新率偏好（0 = auto，其它为目标刷新率整数）。
@@ -1091,7 +1161,17 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
     await setProgressGestureMenuActions(_defaultProgressGestureMenu);
   }
 
-  /// 写入编辑器工具栏外显工具 id 列表（顺序无关，渲染按工具注册表顺序）
+  /// 按用户顺序保存富文本工具栏固定工具。
+  Future<void> setRichToolbarTools(List<String> ids) async {
+    final deduped = ids.toSet().toList();
+    if (const ListEquality<String>().equals(state.richToolbarTools, deduped)) {
+      return;
+    }
+    state = state.copyWith(richToolbarTools: deduped);
+    await _prefs.setStringList(_richToolbarToolsKey, deduped);
+  }
+
+  /// 按用户顺序保存源码工具栏固定工具。
   Future<void> setEditorToolbarTools(List<String> ids) async {
     final deduped = ids.toSet().toList();
     if (const ListEquality<String>().equals(

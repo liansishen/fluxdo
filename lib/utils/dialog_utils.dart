@@ -25,6 +25,7 @@ bool _isBlurEnabled(BuildContext context) {
 Widget _buildAnimatedBlurBarrier({
   required Widget barrier,
   required Animation<double> animation,
+  required ModalBlurScene scene,
 }) {
   return AnimatedBuilder(
     animation: animation,
@@ -32,7 +33,7 @@ Widget _buildAnimatedBlurBarrier({
       final t = animation.value;
       if (t == 0) return child!;
 
-      final sigma = (blurSigma * t).clamp(0.01, blurSigma);
+      final sigma = (scene.sigma * t).clamp(0.01, scene.sigma);
       final filter = createBlurFilter(sigma);
 
       return BackdropFilter(filter: filter, child: child);
@@ -149,7 +150,10 @@ Future<T?> showAppDialog<T>({
     barrierColor:
         barrierColor ??
         (enableBlur
-            ? blurBarrierColor(Theme.of(context).brightness)
+            ? blurBarrierColor(
+                Theme.of(context).brightness,
+                scene: ModalBlurScene.dialog,
+              )
             : Colors.black54),
     barrierLabel:
         barrierLabel ??
@@ -177,12 +181,14 @@ Future<T?> showAppGeneralDialog<T extends Object?>({
   String? barrierLabel,
   Color? barrierColor,
   Duration transitionDuration = const Duration(milliseconds: 200),
+  Duration? reverseTransitionDuration,
   RouteTransitionsBuilder? transitionBuilder,
   bool useRootNavigator = true,
   RouteSettings? routeSettings,
   bool blur = true,
   ShortcutSurfaceConfig? shortcutSurface,
   bool suspendDynamicContent = true,
+  VoidCallback? onDisposed,
 }) {
   final enableBlur = blur && _isBlurEnabled(context);
   final navigator = Navigator.of(context, rootNavigator: useRootNavigator);
@@ -193,12 +199,17 @@ Future<T?> showAppGeneralDialog<T extends Object?>({
     barrierColor:
         barrierColor ??
         (enableBlur
-            ? blurBarrierColor(Theme.of(context).brightness)
+            ? blurBarrierColor(
+                Theme.of(context).brightness,
+                scene: ModalBlurScene.dialog,
+              )
             : const Color(0x80000000)),
     transitionDuration: transitionDuration,
+    reverseTransitionDuration: reverseTransitionDuration,
     transitionBuilder: transitionBuilder,
     settings: routeSettings,
     enableBlur: enableBlur,
+    onDisposed: onDisposed,
   );
 
   return _pushOverlayRoute(
@@ -286,7 +297,10 @@ Future<T?> showAppBottomSheet<T>({
     modalBarrierColor:
         barrierColor ??
         (enableBlur
-            ? blurBarrierColor(Theme.of(context).brightness)
+            ? blurBarrierColor(
+                Theme.of(context).brightness,
+                scene: ModalBlurScene.sheet,
+              )
             : Theme.of(context).bottomSheetTheme.modalBarrierColor),
     isDismissible: isDismissible,
     enableDrag: enableDrag,
@@ -343,7 +357,11 @@ class _BlurModalBottomSheetRoute<T> extends ModalBottomSheetRoute<T> {
   Widget buildModalBarrier() {
     final barrier = super.buildModalBarrier();
     if (!enableBlur) return barrier;
-    return _buildAnimatedBlurBarrier(barrier: barrier, animation: animation!);
+    return _buildAnimatedBlurBarrier(
+      barrier: barrier,
+      animation: animation!,
+      scene: ModalBlurScene.sheet,
+    );
   }
 
   /// Android 预测返回手势:慢划边缘时 sheet 跟手下滑,与手指下拉关闭是同
@@ -380,8 +398,10 @@ class _BlurRawDialogRoute<T> extends PopupRoute<T> {
   final String? _barrierLabel;
   final Color _barrierColor;
   final Duration _transitionDuration;
+  final Duration? _reverseTransitionDuration;
   final RouteTransitionsBuilder? _transitionBuilder;
   final bool enableBlur;
+  final VoidCallback? onDisposed;
 
   _BlurRawDialogRoute({
     required this.pageBuilder,
@@ -389,13 +409,16 @@ class _BlurRawDialogRoute<T> extends PopupRoute<T> {
     String? barrierLabel,
     required Color barrierColor,
     required Duration transitionDuration,
+    Duration? reverseTransitionDuration,
     RouteTransitionsBuilder? transitionBuilder,
     super.settings,
     this.enableBlur = false,
+    this.onDisposed,
   }) : _barrierDismissible = barrierDismissible,
        _barrierLabel = barrierLabel,
        _barrierColor = barrierColor,
        _transitionDuration = transitionDuration,
+       _reverseTransitionDuration = reverseTransitionDuration,
        _transitionBuilder = transitionBuilder;
 
   @override
@@ -409,6 +432,16 @@ class _BlurRawDialogRoute<T> extends PopupRoute<T> {
 
   @override
   Duration get transitionDuration => _transitionDuration;
+
+  @override
+  Duration get reverseTransitionDuration =>
+      _reverseTransitionDuration ?? _transitionDuration;
+
+  @override
+  void dispose() {
+    onDisposed?.call();
+    super.dispose();
+  }
 
   @override
   Widget buildPage(
@@ -439,6 +472,10 @@ class _BlurRawDialogRoute<T> extends PopupRoute<T> {
   Widget buildModalBarrier() {
     final barrier = super.buildModalBarrier();
     if (!enableBlur) return barrier;
-    return _buildAnimatedBlurBarrier(barrier: barrier, animation: animation!);
+    return _buildAnimatedBlurBarrier(
+      barrier: barrier,
+      animation: animation!,
+      scene: ModalBlurScene.dialog,
+    );
   }
 }

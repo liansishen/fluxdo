@@ -10,7 +10,6 @@ import '../../models/topic_card_style.dart';
 import '../../theme/mojian_theme.dart';
 import '../../utils/color_utils.dart';
 import '../../utils/number_utils.dart';
-import '../../utils/relative_time_clock.dart';
 import '../../utils/time_utils.dart';
 
 /// 话题自绘卡的排版产物:一张卡全部文本的 [ui.Paragraph] 成品 + 几何。
@@ -81,6 +80,12 @@ class TopicCardLayout {
 
   /// 是否按墨笺排版(主题带 [MojianTokens] 时)
   bool mojian = false;
+
+  /// 墨笺话题行的「中段插槽」分界:标题(及自带摘要)之下、元信息行之上
+  /// 的 y。列表开了摘要/图片时,[PaintedTopicCard] 在这里切开画布,把
+  /// 摘要组件夹在两段之间 —— 墨笺行不必为摘要退回 widget 版卡片。
+  /// null = 本排版不支持(经典卡、私信卡)
+  double? middleSplitY;
   Rect avatarRect = Rect.zero;
   Offset titleOffset = Offset.zero;
   Offset excerptOffset = Offset.zero;
@@ -145,20 +150,10 @@ class TopicCardLayout {
   /// 也可作性能诊断口径(挂载帧该值增长 = 预热漏了)。
   static int layoutBuildCount = 0;
 
-  /// 相对时间的分钟代:全局心跳每跳一次 +1,进 stamp —— 含时间的
-  /// 排版跨分钟自动失效,下次 build 惰性重排(消灭"自绘卡时间是
-  /// 排版快照不自刷"与 widget 路径的行为差异)。渲染对象侧由
-  /// PaintedTopicCard 订阅心跳触发 rebuild,失效与重建同源同帧。
-  static int _minuteEpoch = 0;
-  static bool _clockHooked = false;
-
-  static int _currentMinuteEpoch() {
-    if (!_clockHooked) {
-      _clockHooked = true;
-      RelativeTimeClock.instance.addListener(() => _minuteEpoch++);
-    }
-    return _minuteEpoch;
-  }
+  /// 离屏缓存按实际分钟惰性失效，不为缓存永久订阅心跳。
+  /// 在屏卡仍由 RenderObject 的 attach/detach 管理心跳并刷新时间。
+  static int _currentMinuteEpoch() =>
+      DateTime.now().millisecondsSinceEpoch ~/ Duration.millisecondsPerMinute;
 
   /// 存入缓存(替换旧实例)并按需 LRU。**内容变化必产出新实例**:
   /// PaintedTopicCard 的渲染对象用 identical 判断是否重绘,若复用同一
@@ -493,6 +488,7 @@ class TopicCardLayout {
           );
     final hlFg = mj?.ink ?? scheme.onPrimaryContainer;
     mojian = mj != null;
+    middleSplitY = null;
     // 墨笺的普通话题行另走一套纵向装配(分类在上、宋体标题、细线分隔);
     // 私信卡沿用经典装配,只换字体与外壳
     final mjRow = mj != null && !messageStyle;
@@ -1167,6 +1163,8 @@ class TopicCardLayout {
       excerptOffset = Offset(hPad, y);
       y += excerpt!.height;
     }
+
+    middleSplitY = y;
 
     // 4. 元信息行
     y += 10;
