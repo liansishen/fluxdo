@@ -16,7 +16,6 @@ import '../topic/category_tab_manager_sheet.dart';
 import '../topic/category_drawer.dart';
 import '../../utils/platform_utils.dart';
 import '../../theme/mojian_theme.dart';
-import 'site_switch_button.dart';
 import '../../theme/vscode_theme.dart';
 import 'vscode_workbench_chrome.dart';
 import 'vscode_reader_status_scope.dart';
@@ -195,29 +194,14 @@ class AdaptiveScaffold extends ConsumerWidget {
                       ? Theme.of(context).colorScheme.surface
                       : null,
                   child: VscodeReaderStatusHost(
-                    child: Column(
-                      children: [
-                        if (!showRail && !hideNavigationRail)
-                          SafeArea(
-                            bottom: false,
-                            child: Align(
-                              alignment: Alignment.centerLeft,
-                              child: SiteSwitchButton(extended: true),
-                            ),
-                          ),
-                        Expanded(
-                          child: Builder(
-                            // 保留 Scaffold 为底栏注入的 inset，避免首页按钮被遮挡。
-                            builder: (bodyContext) => MediaQuery.removePadding(
-                              context: bodyContext,
-                              removeTop: !showRail && !hideNavigationRail,
-                              child: body,
-                            ),
-                          ),
-                        ),
-                        if (isVscode) const VscodeStatusBar(),
-                      ],
-                    ),
+                    child: isVscode
+                        ? Column(
+                            children: [
+                              Expanded(child: body),
+                              const VscodeStatusBar(),
+                            ],
+                          )
+                        : body,
                   ),
                 ),
               ),

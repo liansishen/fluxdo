@@ -127,7 +127,7 @@ void main() {
     expect(find.text('平行视界内容'), findsOneWidget);
   });
 
-  testWidgets('手机端 body 保留 Scaffold 注入的底栏 inset（extendBody），顶部 inset 由站点条吃掉', (
+  testWidgets('手机端 body 保留 Scaffold 注入的底栏 inset（extendBody）', (
     tester,
   ) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -188,7 +188,5 @@ void main() {
     // 底栏在 body 后面（extendBody），FAB / 列表尾部靠这份 inset 让位；
     // 1.2.2-beta 用外层 context 重建 MediaQuery 把它丢成 0，FAB 整个被底栏盖住
     expect(bodyPadding!.bottom, navHeight);
-    // 状态栏 inset 由站点切换条上方的 SafeArea 消费，body 不再重复让位
-    expect(bodyPadding!.top, 0);
   });
 }

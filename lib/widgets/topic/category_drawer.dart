@@ -17,6 +17,7 @@ import '../../utils/url_helper.dart';
 import '../../theme/mojian_theme.dart';
 import '../common/mojian_section_label.dart';
 import '../common/predictive_back_overlay_handler.dart';
+import '../layout/site_switch_button.dart';
 import '../../services/discourse_cache_manager.dart';
 import '../../pages/category_topics_page.dart';
 import '../../pages/tag_topics_page.dart';
@@ -471,7 +472,7 @@ class _CategoryDrawerState extends ConsumerState<CategoryDrawer> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // —— 头部：分类 ⇄ 标签 页签切换（编辑铅笔只属于分类页）——
+            // —— 头部：分类 ⇄ 标签、分类编辑与站点切换共用一行 ——
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 10, 8, 6),
               child: Row(
@@ -480,7 +481,7 @@ class _CategoryDrawerState extends ConsumerState<CategoryDrawer> {
                     showTags: _showTags,
                     onChanged: (v) => setState(() => _showTags = v),
                   ),
-                  const Spacer(),
+                  const SizedBox(width: 8),
                   if (!_showTags && pinnedIds.isNotEmpty)
                     IconButton(
                       icon: const Icon(Symbols.edit_rounded, size: 20),
@@ -489,6 +490,12 @@ class _CategoryDrawerState extends ConsumerState<CategoryDrawer> {
                       onPressed: () =>
                           _closeAndPush(const PinnedCategoryEditPage()),
                     ),
+                  const Expanded(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: SiteSwitchButton.inCategoryDrawer(),
+                    ),
+                  ),
                 ],
               ),
             ),
