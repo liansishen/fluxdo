@@ -140,7 +140,7 @@ final class ShareImageRenderer: NSObject, WKNavigationDelegate {
             let completion = ShareRenderCompletion<Any?>(continuation)
             cancelPending = { completion.finish(.failure($0)) }
             navigationTimeout = timeout(completion)
-            web.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .defaultClient) { result in
+            web.callAsyncJavaScript(script, arguments: [:], in: nil, in: .defaultClient) { result in
                 completion.finish(result.map { $0 as Any? })
             }
         }
