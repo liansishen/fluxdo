@@ -315,12 +315,11 @@ class PostRenderPlans {
 
 /// 段落预热一步:对 [unit] 从 [startIndex] 起预热,超 [budgetMicros] 即停。
 /// 返回下一个待处理下标;全部完成返回 -1。
-typedef UnitParagraphWarmer =
-    int Function(
-      PostRenderUnit unit, {
-      required int startIndex,
-      required int budgetMicros,
-    });
+typedef UnitParagraphWarmer = int Function(
+  PostRenderUnit unit, {
+  required int startIndex,
+  required int budgetMicros,
+});
 
 /// [PostRenderPrep.warmOneUnit] 的结果
 enum PostWarmOutcome {

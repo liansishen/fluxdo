@@ -182,7 +182,7 @@ class NestedChildrenResponse {
   }
 }
 
-/// 保留已加载的分支与元数据，同时补入定位路径；按帖子身份去重。
+/// 保留已加载分支与节点元数据，刷新帖子内容并补入定位路径；按帖子身份去重。
 NestedNode mergeNestedNode(NestedNode original, NestedNode incoming) {
   final children = [...original.children];
   for (final child in incoming.children) {
@@ -193,5 +193,5 @@ NestedNode mergeNestedNode(NestedNode original, NestedNode incoming) {
       children[index] = mergeNestedNode(children[index], child);
     }
   }
-  return original.copyWith(children: children);
+  return original.copyWith(post: incoming.post, children: children);
 }

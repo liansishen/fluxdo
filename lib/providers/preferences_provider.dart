@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../constants/composer_tool_defaults.dart';
 import '../models/topic_card_style.dart';
+import '../models/vscode_body_style.dart';
 import '../navigation/nav_action_bus.dart';
 import '../services/network/request_scheduler_config.dart';
 import '../services/uploads/upload_settings.dart';
@@ -311,6 +312,10 @@ class AppPreferences {
   /// 话题卡片自定义样式（元信息字段开关 / 头像布局 / 动态头像）
   final TopicCardStyle topicCardStyle;
 
+  /// VS Code 正文呈现方式与编程语言，不影响其他界面风格。
+  final VscodeBodyStyle vscodeBodyStyle;
+  final VscodeCodeLanguage vscodeCodeLanguage;
+
   AppPreferences({
     required this.autoPanguSpacing,
     required this.displayPanguSpacing,
@@ -377,6 +382,8 @@ class AppPreferences {
     this.editorToolbarTools = kDefaultSourceVisibleTools,
     this.richToolbarTools = kDefaultRichVisibleTools,
     this.topicCardStyle = TopicCardStyle.defaults,
+    this.vscodeBodyStyle = VscodeBodyStyle.compact,
+    this.vscodeCodeLanguage = VscodeCodeLanguage.java,
   });
 
   AppPreferences copyWith({
@@ -445,6 +452,8 @@ class AppPreferences {
     List<String>? editorToolbarTools,
     List<String>? richToolbarTools,
     TopicCardStyle? topicCardStyle,
+    VscodeBodyStyle? vscodeBodyStyle,
+    VscodeCodeLanguage? vscodeCodeLanguage,
   }) {
     return AppPreferences(
       autoPanguSpacing: autoPanguSpacing ?? this.autoPanguSpacing,
@@ -539,6 +548,8 @@ class AppPreferences {
       editorToolbarTools: editorToolbarTools ?? this.editorToolbarTools,
       richToolbarTools: richToolbarTools ?? this.richToolbarTools,
       topicCardStyle: topicCardStyle ?? this.topicCardStyle,
+      vscodeBodyStyle: vscodeBodyStyle ?? this.vscodeBodyStyle,
+      vscodeCodeLanguage: vscodeCodeLanguage ?? this.vscodeCodeLanguage,
     );
   }
 }
@@ -631,6 +642,8 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
   static const String _editorToolbarToolsKey = 'pref_editor_toolbar_tools';
   static const String _richToolbarToolsKey = 'pref_rich_toolbar_tools';
   static const String _topicCardStyleKey = 'pref_topic_card_style';
+  static const String _vscodeBodyStyleKey = 'pref_vscode_body_style';
+  static const String _vscodeCodeLanguageKey = 'pref_vscode_code_language';
 
   PreferencesNotifier(this._prefs)
     : super(
@@ -750,6 +763,14 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
           topicCardStyle: TopicCardStyle.fromJsonString(
             _prefs.getString(_topicCardStyleKey),
           ),
+          vscodeBodyStyle: VscodeBodyStyle.values.firstWhere(
+            (value) => value.name == _prefs.get(_vscodeBodyStyleKey),
+            orElse: () => VscodeBodyStyle.compact,
+          ),
+          vscodeCodeLanguage: VscodeCodeLanguage.values.firstWhere(
+            (value) => value.name == _prefs.get(_vscodeCodeLanguageKey),
+            orElse: () => VscodeCodeLanguage.java,
+          ),
         ),
       ) {
     // 废弃的局部开关不再参与全局玻璃策略。
@@ -768,6 +789,16 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
   }
 
   final SharedPreferences _prefs;
+
+  Future<void> setVscodeBodyStyle(VscodeBodyStyle style) async {
+    state = state.copyWith(vscodeBodyStyle: style);
+    await _prefs.setString(_vscodeBodyStyleKey, style.name);
+  }
+
+  Future<void> setVscodeCodeLanguage(VscodeCodeLanguage language) async {
+    state = state.copyWith(vscodeCodeLanguage: language);
+    await _prefs.setString(_vscodeCodeLanguageKey, language.name);
+  }
 
   Future<void> setAutoPanguSpacing(bool enabled) async {
     state = state.copyWith(autoPanguSpacing: enabled);

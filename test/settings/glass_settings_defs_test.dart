@@ -7,6 +7,7 @@ import 'package:fluxdo/l10n/s.dart';
 import 'package:fluxdo/providers/theme_provider.dart';
 import 'package:fluxdo/theme/claude_theme.dart';
 import 'package:fluxdo/theme/mojian_theme.dart';
+import 'package:fluxdo/theme/vscode_theme.dart';
 import 'package:fluxdo/settings/definitions/appearance_defs.dart';
 import 'package:fluxdo/settings/definitions/bottom_nav_defs.dart';
 import 'package:fluxdo/settings/settings_renderer.dart';
@@ -30,6 +31,7 @@ void main() {
                 if (style == UiStyle.mojian)
                   MojianTokens.of(Brightness.light, MojianAccent.cinnabar),
                 if (style == UiStyle.claude) ClaudeTokens.of(Brightness.light),
+                if (style == UiStyle.vscode) VscodeTokens.of(Brightness.light),
               ],
             ),
             locale: const Locale('zh'),
@@ -116,13 +118,15 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('玻璃分组和底栏入口只在墨笺隐藏，Claude 仍可调整', (tester) async {
+  testWidgets('固定实色风格隐藏玻璃入口，Claude 与经典仍可调整', (tester) async {
     for (final style in UiStyle.values) {
       for (final bottomNav in [false, true]) {
         await pumpSettings(tester, style: style, bottomNav: bottomNav);
         expect(
           find.text(bottomNav ? '玻璃效果' : '启用玻璃效果'),
-          style == UiStyle.mojian ? findsNothing : findsOneWidget,
+          style == UiStyle.mojian || style == UiStyle.vscode
+              ? findsNothing
+              : findsOneWidget,
         );
         await tester.pumpWidget(const SizedBox.shrink());
       }

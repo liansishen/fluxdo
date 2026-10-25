@@ -7,6 +7,7 @@ import '../../navigation/nav_action_bus.dart';
 import '../../pages/appearance_page.dart';
 import '../../providers/preferences_provider.dart';
 import '../../theme/mojian_theme.dart';
+import '../../theme/vscode_theme.dart';
 import '../../utils/dialog_utils.dart';
 import '../settings_model.dart';
 
@@ -41,8 +42,9 @@ List<SettingsGroup> buildBottomNavGroups(BuildContext context) {
               .read(preferencesProvider.notifier)
               .setBottomNavFloating(value),
         ),
-        // 墨笺统一使用纸面，经典与 Claude 仍可调整玻璃效果。
-        if (Theme.of(context).extension<MojianTokens>() == null)
+        // 固定实色风格不提供玻璃入口；经典与 Claude 仍可调整。
+        if (Theme.of(context).extension<MojianTokens>() == null &&
+            VscodeTokens.maybeOf(context) == null)
           ActionModel(
             id: 'glassSettings',
             title: l10n.appearance_glass,
