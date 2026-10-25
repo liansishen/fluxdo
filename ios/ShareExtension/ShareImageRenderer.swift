@@ -136,7 +136,7 @@ final class ShareImageRenderer: NSObject, WKNavigationDelegate {
             navigationTimeout?.cancel()
             navigationTimeout = nil
         }
-        return try await withCheckedThrowingContinuation { continuation in
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Any?, Error>) in
             let completion = ShareRenderCompletion<Any?>(continuation)
             cancelPending = { completion.finish(.failure($0)) }
             navigationTimeout = timeout(completion)

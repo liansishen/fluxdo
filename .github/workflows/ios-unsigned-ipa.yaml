@@ -64,6 +64,13 @@ jobs:
           swiftc ios/Shared/ShareSessionStore.swift ios/ShareExtension/ForumShareClient.swift tool/ios_share_extension_smoke.swift -o "$RUNNER_TEMP/share-extension-smoke"
           "$RUNNER_TEMP/share-extension-smoke"
 
+      - name: Typecheck native iOS share extension
+        run: |
+          swiftc -typecheck -swift-version 5 -application-extension \
+            -target arm64-apple-ios15.0 -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" \
+            ios/Shared/ShareSessionStore.swift ios/ShareExtension/ForumShareClient.swift \
+            ios/ShareExtension/ShareImageRenderer.swift ios/ShareExtension/ShareViewController.swift
+
       - name: Cache iOS engine artifacts
         run: flutter precache --ios
 
