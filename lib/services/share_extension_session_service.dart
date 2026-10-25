@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../constants.dart';
+import 'app_logger.dart';
 import 'network/cookie/app_cookie_manager.dart';
 import 'network/cookie/cookie_value_codec.dart';
 
@@ -108,25 +109,37 @@ final class ShareExtensionSessionService {
         _failureLogged = false;
       } on PlatformException catch (error) {
         // 不输出原生异常 message/details，避免底层错误携带凭据。
-        final reason = error.code == 'SHARE_SESSION_UNAVAILABLE'
-            ? 'App Group 不可用，请检查签名与权限'
-            : '原生会话写入失败';
-        _logFailure(reason);
+        final unavailable = error.code == 'SHARE_SESSION_UNAVAILABLE';
+        _logFailure(
+          unavailable
+              ? 'SideStore 共享组权限不可用，请检查主应用与分享扩展的 App Groups 签名权限'
+              : '原生会话写入失败',
+          code: unavailable
+              ? 'SHARE_SESSION_UNAVAILABLE'
+              : 'SHARE_SESSION_WRITE_FAILED',
+        );
       } on MissingPluginException {
         // 后台 isolate 没有注册通道时，留待主 isolate 恢复前台后重载同步。
-        _logFailure('会话同步通道不可用');
+        _logFailure('会话同步通道不可用', code: 'CHANNEL_UNAVAILABLE');
       } catch (_) {
-        _logFailure('会话同步失败，CookieJar 登录状态不受影响');
+        _logFailure(
+          '会话同步失败，CookieJar 登录状态不受影响',
+          code: 'SESSION_SYNC_FAILED',
+        );
       }
     });
     _serial = operation;
     return operation;
   }
 
-  void _logFailure(String reason) {
+  void _logFailure(String reason, {required String code}) {
     if (_failureLogged) return;
     _failureLogged = true;
-    debugPrint('[ShareExtension] $reason');
+    AppLogger.warning(
+      reason,
+      tag: 'ShareExtension',
+      fields: {'host': host, 'code': code},
+    );
   }
 
   Future<Map<String, double>> _cookieExpirations(

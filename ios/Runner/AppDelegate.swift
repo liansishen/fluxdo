@@ -112,9 +112,11 @@ import WebKit
         try ShareSessionStore.write(host: host, cookieHeader: cookieHeader, userAgent: userAgent,
                                     cookieExpirations: expirations)
         result(nil)
+      } catch ShareSessionStore.StoreError.unavailableGroup {
+        // 不返回底层路径或认证参数；仅共享容器权限不可用使用此错误码。
+        result(FlutterError(code: "SHARE_SESSION_UNAVAILABLE", message: "SideStore 共享组权限不可用，请检查主应用与分享扩展的 App Groups 签名权限", details: nil))
       } catch {
-        // 不返回底层路径或认证参数；侧载签名可能未授予共享容器权限。
-        result(FlutterError(code: "SHARE_SESSION_UNAVAILABLE", message: "分享扩展会话同步不可用，请检查共享容器签名权限", details: nil))
+        result(FlutterError(code: "SHARE_SESSION_WRITE_FAILED", message: "分享扩展会话写入失败", details: nil))
       }
     }
     let siteSwitchChannel = FlutterMethodChannel(name: "fluxdo/site_switch", binaryMessenger: messenger)

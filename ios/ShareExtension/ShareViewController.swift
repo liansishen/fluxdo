@@ -191,8 +191,33 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
             guard let self = self else { return }
             let link = try await self.receiveLink()
             try self.ensureActive(id)
-            self.sessionHint.isHidden = ShareSessionStore.read(host: link.host) != nil
-            self.sessionHint.text = "当前未读取到 FluxDO 登录状态，可尝试公开帖子；受限帖子需先在 FluxDO 登录并同步会话，侧载需保留 App Groups 权限。"
+            do {
+                _ = try ShareSessionStore.readSession(host: link.host)
+                self.sessionHint.isHidden = true
+            } catch {
+                let message: String
+                if let storeError = error as? ShareSessionStore.StoreError {
+                    switch storeError {
+                    case .unavailableGroup:
+                        message = "SideStore 共享组权限不可用，无法读取 FluxDO 分享会话；请检查主应用与分享扩展的 App Groups 签名权限。"
+                    case .missingSession:
+                        message = "尚未同步 \(link.host) 的分享会话，请打开 FluxDO，切换至该站点并完成登录与会话同步后重新分享。"
+                    case .expiredSession:
+                        message = "\(link.host) 的分享会话已过期，请打开 FluxDO，切换至该站点并重新登录、同步会话后重新分享。"
+                    case .invalidSession:
+                        message = "\(link.host) 的分享会话已损坏或格式无效，请打开 FluxDO，切换至该站点并重新同步会话后重新分享。"
+                    case .fileOperation(let code):
+                        message = "无法读取 \(link.host) 的分享会话文件（诊断码：FILE_OPERATION_\(code)），请解锁设备后重试，或打开 FluxDO 重新同步会话。"
+                    case .unsupportedHost:
+                        message = "该站点不支持 FluxDO 分享会话（诊断码：UNSUPPORTED_HOST）。"
+                    }
+                } else {
+                    // 仅展示固定诊断码，不泄露底层路径或认证信息。
+                    message = "无法读取 FluxDO 分享会话（诊断码：SESSION_READ_FAILED）。"
+                }
+                self.sessionHint.text = "\(message)当前仅尝试匿名加载公开帖子。"
+                self.sessionHint.isHidden = false
+            }
             let client = ForumShareClient(link: link)
             let topic = try await client.loadTopic()
             try self.ensureActive(id)
