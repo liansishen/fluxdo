@@ -7,6 +7,7 @@ import 'package:extended_nested_scroll_view/extended_nested_scroll_view.dart';
 import 'package:m3e_ui/m3e_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
+
 import '../models/user.dart';
 import '../models/user_action.dart';
 import '../models/topic.dart';
@@ -18,7 +19,9 @@ import '../utils/number_utils.dart';
 import '../utils/load_more_coordinator.dart';
 import '../utils/pagination_helper.dart';
 import '../services/emoji_handler.dart';
+
 import 'package:dio/dio.dart';
+
 import '../utils/url_helper.dart';
 import '../services/app_error_handler.dart';
 import '../utils/share_utils.dart';
@@ -55,7 +58,9 @@ import 'follow_list_page.dart';
 import 'image_viewer_page.dart';
 import 'badge_page.dart';
 import 'chat/channel/chat_channel_page.dart';
+
 import 'package:common_ui/common_ui.dart';
+
 import '../l10n/s.dart';
 import '../utils/dialog_utils.dart';
 import '../widgets/common/hero_image.dart';
@@ -66,10 +71,12 @@ import '../theme/mojian_theme.dart';
 ///
 /// 一处给出,同时约束源端与 openViewer 两侧参数(见 ViewerSourceStyle)——
 /// 此前两处不同步:源端 borderRadius 12 而 openViewer 传 heroSourceRadius 8。
-ViewerSourceStyle _avatarStyle({required bool isSquare, required double radius}) =>
-    isSquare
-        ? ViewerSourceStyle.cover(radius: radius)
-        : const ViewerSourceStyle.circular();
+ViewerSourceStyle _avatarStyle({
+  required bool isSquare,
+  required double radius,
+}) => isSquare
+    ? ViewerSourceStyle.cover(radius: radius)
+    : const ViewerSourceStyle.circular();
 
 class UserProfilePage extends ConsumerStatefulWidget {
   final String username;
@@ -170,7 +177,9 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
     // 转投影)。
     if (MasterDetailLayout.canShowBothPanesFor(context)) {
       ref.read(activePaneProvider.notifier).state = ActivePane.detail;
-      ref.read(_ownPaneProvider.notifier).select(
+      ref
+          .read(_ownPaneProvider.notifier)
+          .select(
             topicId: topicId,
             initialTitle: initialTitle,
             scrollToPostNumber: scrollToPostNumber,
@@ -1310,9 +1319,8 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
         // StretchingOverscrollIndicator，与 NestedScrollView/SliverAppBar
         // 组合存在 framework bug（flutter/flutter #100967、#116522、#100538），
         // 表现为上滑松手时 tab 区域回弹抖动（与 topics_page 同因同修）。
-        behavior: ScrollConfiguration.of(
-          context,
-        ).copyWith(scrollbars: false, overscroll: false),
+        behavior: ScrollConfiguration.of(context)
+            .copyWith(scrollbars: false, overscroll: false),
         child: ExtendedNestedScrollView(
           controller: _scrollController,
           pinnedHeaderSliverHeightBuilder: () => pinnedHeaderHeight,
@@ -1516,9 +1524,8 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                               Flexible(
                                 child: GestureDetector(
                                   behavior: HitTestBehavior.opaque,
-                                  onTap: () => copyUsernameToClipboard(
-                                    _user!.username,
-                                  ),
+                                  onTap: () =>
+                                      copyUsernameToClipboard(_user!.username),
                                   child: Text(
                                     '@${_user!.username}',
                                     maxLines: 1,
@@ -1839,10 +1846,8 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
           onTap: () => Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => FollowListPage(
-                username: widget.username,
-                isFollowing: true,
-              ),
+              builder: (_) =>
+                  FollowListPage(username: widget.username, isFollowing: true),
             ),
           ),
         ),
@@ -1854,12 +1859,16 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
           onTap: () => Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => FollowListPage(
-                username: widget.username,
-                isFollowing: false,
-              ),
+              builder: (_) =>
+                  FollowListPage(username: widget.username, isFollowing: false),
             ),
           ),
+        ),
+      if (_user?.gamificationScore != null)
+        _buildWideStat(
+          NumberUtils.formatThousands(_user!.gamificationScore!),
+          context.l10n.userCard_score,
+          _user!.gamificationScore!,
         ),
       if (_summary != null) ...[
         _buildWideStat(
@@ -1934,8 +1943,9 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
 
     // ESC 两段式:右栏开着让分发落 detail scope(关右栏),空了才
     // maybePop 关整页。
-    (_standaloneEsc ??= PaneHostEscBinding(ref: ref))
-        .sync(context, paneOpen: selected.hasSelection);
+    (_standaloneEsc ??= PaneHostEscBinding(
+      ref: ref,
+    )).sync(context, paneOpen: selected.hasSelection);
 
     final notifier = ref.read(_ownPaneProvider.notifier);
     return PaneProjectionBackScope(
@@ -2088,51 +2098,51 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                     ),
                   ),
               ] else ...[
-              // ===== 层 0: 背景 - shader 动画 + 径向渐变辉光 + 图片叠加 =====
-              // 用 ClipRect 裁剪溢出，内部固定为 expandedHeight，防止收起时 shader 被压扁
-              Positioned.fill(
-                child: ClipRect(
-                  child: OverflowBox(
-                    alignment: Alignment.topCenter,
-                    maxHeight: expandedHeight,
-                    child: SizedBox(
-                      height: expandedHeight,
-                      // 个人主页可能长时间停留，装饰背景不应常驻 60 FPS
-                      // 刷新；固定 shader 时间轴仍保留原始画质与噪声细节。
-                      child: const GrainGradientBackground(animated: false),
+                // ===== 层 0: 背景 - shader 动画 + 径向渐变辉光 + 图片叠加 =====
+                // 用 ClipRect 裁剪溢出，内部固定为 expandedHeight，防止收起时 shader 被压扁
+                Positioned.fill(
+                  child: ClipRect(
+                    child: OverflowBox(
+                      alignment: Alignment.topCenter,
+                      maxHeight: expandedHeight,
+                      child: SizedBox(
+                        height: expandedHeight,
+                        // 个人主页可能长时间停留，装饰背景不应常驻 60 FPS
+                        // 刷新；固定 shader 时间轴仍保留原始画质与噪声细节。
+                        child: const GrainGradientBackground(animated: false),
+                      ),
                     ),
                   ),
                 ),
-              ),
-              if (hasBackground)
-                Image(
-                  image: discourseImageProvider(
-                    UrlHelper.resolveUrlWithCdn(bgUrl),
+                if (hasBackground)
+                  Image(
+                    image: discourseImageProvider(
+                      UrlHelper.resolveUrlWithCdn(bgUrl),
+                    ),
+                    fit: BoxFit.cover,
+                    alignment: Alignment.center,
+                    frameBuilder:
+                        (context, child, frame, wasSynchronouslyLoaded) {
+                          if (wasSynchronouslyLoaded || frame != null) {
+                            return AnimatedOpacity(
+                              opacity: frame != null ? 1.0 : 0.0,
+                              duration: const Duration(milliseconds: 300),
+                              child: child,
+                            );
+                          }
+                          return const SizedBox.shrink();
+                        },
+                    errorBuilder: (_, _, _) => const SizedBox.shrink(),
                   ),
-                  fit: BoxFit.cover,
-                  alignment: Alignment.center,
-                  frameBuilder:
-                      (context, child, frame, wasSynchronouslyLoaded) {
-                        if (wasSynchronouslyLoaded || frame != null) {
-                          return AnimatedOpacity(
-                            opacity: frame != null ? 1.0 : 0.0,
-                            duration: const Duration(milliseconds: 300),
-                            child: child,
-                          );
-                        }
-                        return const SizedBox.shrink();
-                      },
-                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
-                ),
 
-              // ===== 层 1: 统一压暗遮罩 - 随向上滑动变得更暗 =====
-              Container(
-                color: Color.lerp(
-                  Colors.black.withValues(alpha: 0.6), // 展开状态：默认更暗 (0.6)
-                  Colors.black.withValues(alpha: 0.85), // 收起状态：稍微透一点 (0.85)
-                  Curves.easeOut.transform(1.0 - t), // 使用 easeOut 曲线优化滑动体验
+                // ===== 层 1: 统一压暗遮罩 - 随向上滑动变得更暗 =====
+                Container(
+                  color: Color.lerp(
+                    Colors.black.withValues(alpha: 0.6), // 展开状态：默认更暗 (0.6)
+                    Colors.black.withValues(alpha: 0.85), // 收起状态：稍微透一点 (0.85)
+                    Curves.easeOut.transform(1.0 - t), // 使用 easeOut 曲线优化滑动体验
+                  ),
                 ),
-              ),
               ],
 
               // ===== 层 2: 用户信息内容 - 展开时显示，收起时淡出 =====
@@ -2203,9 +2213,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontFamily: mj == null
-                                  ? null
-                                  : MojianTokens.serifFamily,
+                              fontFamily: mj?.titleFamily,
                               color: mj?.ink ?? Colors.white,
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
@@ -2225,7 +2233,6 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
       ),
     );
   }
-
 
   /// 用户信息列(头像/名字/简介/统计/最近活动),窄版 SliverAppBar
   /// flexibleSpace 层2 专用(白字压深色头图);宽版左栏是同风格的另一
@@ -2261,9 +2268,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
             GestureDetector(
               onTap: () {
                 if (_user?.getAvatarUrl() != null) {
-                  final avatarUrl = _user!.getAvatarUrl(
-                    size: 360,
-                  );
+                  final avatarUrl = _user!.getAvatarUrl(size: 360);
                   // 与页面头像同参(144)的缩略图作飞行纹理,命中已解码缓存
                   final thumbUrl = _user!.getAvatarUrl(size: 144);
                   // 与源端同源(同竖版口径,见 _avatarStyle)
@@ -2291,12 +2296,8 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                   final isSquare = isSquareAvatarUrl(avatarUrl);
                   return Container(
                     decoration: BoxDecoration(
-                      shape: isSquare
-                          ? BoxShape.rectangle
-                          : BoxShape.circle,
-                      borderRadius: isSquare
-                          ? BorderRadius.circular(8)
-                          : null,
+                      shape: isSquare ? BoxShape.rectangle : BoxShape.circle,
+                      borderRadius: isSquare ? BorderRadius.circular(8) : null,
                       border: Border.all(
                         color: ink.avatarRing,
                         width: ink.mojian ? 1 : 2,
@@ -2348,10 +2349,9 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                           overflow: TextOverflow.ellipsis,
                           // 墨笺:名字用宋体(横幅背景保留,白字不变)
                           style: TextStyle(
-                            fontFamily:
-                                theme.extension<MojianTokens>() != null
-                                ? MojianTokens.serifFamily
-                                : null,
+                            fontFamily: theme
+                                .extension<MojianTokens>()
+                                ?.titleFamily,
                             color: ink.fg,
                             fontSize: ink.mojian ? 24 : 22,
                             fontWeight: ink.mojian
@@ -2373,9 +2373,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                         const SizedBox(width: 8),
                         Padding(
                           padding: const EdgeInsets.only(top: 4),
-                          child: _buildStatusEmoji(
-                            _user!.status!,
-                          ),
+                          child: _buildStatusEmoji(_user!.status!),
                         ),
                       ],
                     ],
@@ -2384,16 +2382,11 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                   // Row 2: Username
                   if (_user?.username != null)
                     Padding(
-                      padding: const EdgeInsets.only(
-                        top: 2,
-                        bottom: 6,
-                      ),
+                      padding: const EdgeInsets.only(top: 2, bottom: 6),
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
                         // 点击 @username 复制用户名
-                        onTap: () => copyUsernameToClipboard(
-                          _user!.username,
-                        ),
+                        onTap: () => copyUsernameToClipboard(_user!.username),
                         child: Text(
                           '@${_user?.username}',
                           style: TextStyle(color: ink.fg2, fontSize: 13),
@@ -2449,36 +2442,25 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                   _buildRestrictionBanner(
                     icon: Symbols.block_rounded,
                     label: _user!.isSuspendedForever
-                        ? context
-                              .l10n
-                              .userProfile_suspendedBannerForever
-                        : context.l10n
-                              .userProfile_suspendedBannerUntil(
-                                TimeUtils.formatFullDate(
-                                  _user!.suspendedTill,
-                                ),
-                              ),
+                        ? context.l10n.userProfile_suspendedBannerForever
+                        : context.l10n.userProfile_suspendedBannerUntil(
+                            TimeUtils.formatFullDate(_user!.suspendedTill),
+                          ),
                     reason: _user!.suspendReason,
                     color: Colors.redAccent,
                     reasonColor: ink.mojian ? ink.fg2 : null,
                   ),
-                  if (_user!.isSilenced)
-                    const SizedBox(height: 8),
+                  if (_user!.isSilenced) const SizedBox(height: 8),
                 ],
                 // 禁言提示
                 if (_user!.isSilenced)
                   _buildRestrictionBanner(
                     icon: Symbols.mic_off_rounded,
                     label: _user!.isSilencedForever
-                        ? context
-                              .l10n
-                              .userProfile_silencedBannerForever
-                        : context.l10n
-                              .userProfile_silencedBannerUntil(
-                                TimeUtils.formatFullDate(
-                                  _user!.silencedTill,
-                                ),
-                              ),
+                        ? context.l10n.userProfile_silencedBannerForever
+                        : context.l10n.userProfile_silencedBannerUntil(
+                            TimeUtils.formatFullDate(_user!.silencedTill),
+                          ),
                     reason: _user!.silenceReason,
                     color: Colors.orangeAccent,
                     reasonColor: ink.mojian ? ink.fg2 : null,
@@ -2553,9 +2535,10 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 第一行：关注、粉丝
+              // 第一行：关注、粉丝、点数
               if (_user?.totalFollowing != null ||
-                  _user?.totalFollowers != null)
+                  _user?.totalFollowers != null ||
+                  _user?.gamificationScore != null)
                 Wrap(
                   spacing: 16,
                   children: [
@@ -2571,9 +2554,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                           ),
                         ),
                         child: _buildStatSlot(
-                          NumberUtils.formatCount(
-                            _user!.totalFollowing!,
-                          ),
+                          NumberUtils.formatCount(_user!.totalFollowing!),
                           context.l10n.userProfile_following,
                           _user!.totalFollowing!,
                         ),
@@ -2590,33 +2571,34 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                           ),
                         ),
                         child: _buildStatSlot(
-                          NumberUtils.formatCount(
-                            _user!.totalFollowers!,
-                          ),
+                          NumberUtils.formatCount(_user!.totalFollowers!),
                           context.l10n.userProfile_followers,
                           _user!.totalFollowers!,
                         ),
+                      ),
+                    if (_user?.gamificationScore != null)
+                      _buildStatSlot(
+                        NumberUtils.formatThousands(_user!.gamificationScore!),
+                        context.l10n.userCard_score,
+                        _user!.gamificationScore!,
                       ),
                   ],
                 ),
               // 第二行：获赞、访问、话题、回复
               if (_user?.totalFollowing != null ||
-                  _user?.totalFollowers != null)
+                  _user?.totalFollowers != null ||
+                  _user?.gamificationScore != null)
                 const SizedBox(height: 8),
               Wrap(
                 spacing: 16,
                 children: [
                   _buildStatSlot(
-                    NumberUtils.formatCount(
-                      _summary!.likesReceived,
-                    ),
+                    NumberUtils.formatCount(_summary!.likesReceived),
                     context.l10n.userProfile_statsLikes,
                     _summary!.likesReceived,
                   ),
                   _buildStatSlot(
-                    NumberUtils.formatCount(
-                      _summary!.daysVisited,
-                    ),
+                    NumberUtils.formatCount(_summary!.daysVisited),
                     context.l10n.userProfile_statsVisits,
                     _summary!.daysVisited,
                   ),
@@ -2640,10 +2622,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
             (_user?.lastPostedAt != null || _user?.lastSeenAt != null)) ...[
           const SizedBox(height: 12),
           Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 10,
-              vertical: 4,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
               color: ink.mojian
                   ? ink.chipFill
@@ -2663,8 +2642,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                 ),
                 const SizedBox(width: 4),
                 RelativeTimeText(
-                  dateTime:
-                      _user?.lastSeenAt ?? _user!.lastPostedAt!,
+                  dateTime: _user?.lastSeenAt ?? _user!.lastPostedAt!,
                   style: TextStyle(
                     color: ink.mojian ? ink.fg2 : Colors.white70,
                     fontSize: 11,
@@ -2876,10 +2854,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
           Text(
             value,
             style: TextStyle(
-              fontFamily:
-                  Theme.of(context).extension<MojianTokens>() != null
-                  ? MojianTokens.serifFamily
-                  : null,
+              fontFamily: MojianTokens.titleFamilyOf(context),
               color: ink.fg,
               fontSize: 17,
               fontWeight: FontWeight.w600,
@@ -2889,9 +2864,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
           Text(
             label,
             style: TextStyle(
-              color: ink.mojian
-                  ? ink.fg2
-                  : Colors.white.withValues(alpha: 0.7),
+              color: ink.mojian ? ink.fg2 : Colors.white.withValues(alpha: 0.7),
               fontSize: 12,
             ),
           ),
@@ -2911,10 +2884,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
             width: 32,
             height: 32,
             padding: const EdgeInsets.all(8),
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: ink.fg,
-            ),
+            child: CircularProgressIndicator(strokeWidth: 2, color: ink.fg),
           )
         : TextButton.icon(
             onPressed: _toggleFollow,
@@ -3237,25 +3207,31 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
             summary.mostLikedUsers.isEmpty &&
             summary.topCategories.isEmpty &&
             summary.badges.isEmpty)
-          mojianEmptyState(context, Symbols.summarize_rounded, context.l10n.userProfile_noSummary, padding: const EdgeInsets.only(top: 80)) ?? Center(
-            child: Padding(
-              padding: const EdgeInsets.only(top: 80),
-              child: Column(
-                children: [
-                  Icon(
-                    Symbols.summarize_rounded,
-                    size: 48,
-                    color: Colors.grey[400],
+          mojianEmptyState(
+                context,
+                Symbols.summarize_rounded,
+                context.l10n.userProfile_noSummary,
+                padding: const EdgeInsets.only(top: 80),
+              ) ??
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 80),
+                  child: Column(
+                    children: [
+                      Icon(
+                        Symbols.summarize_rounded,
+                        size: 48,
+                        color: Colors.grey[400],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        context.l10n.userProfile_noSummary,
+                        style: TextStyle(color: Colors.grey[600]),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    context.l10n.userProfile_noSummary,
-                    style: TextStyle(color: Colors.grey[600]),
-                  ),
-                ],
+                ),
               ),
-            ),
-          ),
       ],
     );
   }
@@ -3298,9 +3274,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                     fontWeight: theme.extension<MojianTokens>() != null
                         ? FontWeight.w600
                         : FontWeight.w500,
-                    fontFamily: theme.extension<MojianTokens>() != null
-                        ? MojianTokens.serifFamily
-                        : null,
+                    fontFamily: theme.extension<MojianTokens>()?.titleFamily,
                   ),
                 ),
               ),
@@ -3612,23 +3586,28 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
 
     // 空状态
     if (reactions == null || reactions.isEmpty) {
-      return mojianEmptyState(context, Symbols.emoji_emotions_rounded, context.l10n.userProfile_noReactions) ?? Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Symbols.emoji_emotions_rounded,
-              size: 48,
-              color: Colors.grey[400],
+      return mojianEmptyState(
+            context,
+            Symbols.emoji_emotions_rounded,
+            context.l10n.userProfile_noReactions,
+          ) ??
+          Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Symbols.emoji_emotions_rounded,
+                  size: 48,
+                  color: Colors.grey[400],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  context.l10n.userProfile_noReactions,
+                  style: TextStyle(color: Colors.grey[600]),
+                ),
+              ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              context.l10n.userProfile_noReactions,
-              style: TextStyle(color: Colors.grey[600]),
-            ),
-          ],
-        ),
-      );
+          );
     }
 
     return NotificationListener<ScrollNotification>(
@@ -3680,23 +3659,28 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
 
     // 空状态
     if (boosts == null || boosts.isEmpty) {
-      return mojianEmptyState(context, Symbols.rocket_launch_rounded, context.l10n.userProfile_noBoosts) ?? Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Symbols.rocket_launch_rounded,
-              size: 48,
-              color: Colors.grey[400],
+      return mojianEmptyState(
+            context,
+            Symbols.rocket_launch_rounded,
+            context.l10n.userProfile_noBoosts,
+          ) ??
+          Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Symbols.rocket_launch_rounded,
+                  size: 48,
+                  color: Colors.grey[400],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  context.l10n.userProfile_noBoosts,
+                  style: TextStyle(color: Colors.grey[600]),
+                ),
+              ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              context.l10n.userProfile_noBoosts,
-              style: TextStyle(color: Colors.grey[600]),
-            ),
-          ],
-        ),
-      );
+          );
     }
 
     return NotificationListener<ScrollNotification>(
@@ -3746,23 +3730,28 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
 
     // 空状态
     if (topics == null || topics.isEmpty) {
-      return mojianEmptyState(context, Symbols.how_to_vote_rounded, context.l10n.userProfile_noVotes) ?? Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Symbols.how_to_vote_rounded,
-              size: 48,
-              color: Colors.grey[400],
+      return mojianEmptyState(
+            context,
+            Symbols.how_to_vote_rounded,
+            context.l10n.userProfile_noVotes,
+          ) ??
+          Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Symbols.how_to_vote_rounded,
+                  size: 48,
+                  color: Colors.grey[400],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  context.l10n.userProfile_noVotes,
+                  style: TextStyle(color: Colors.grey[600]),
+                ),
+              ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              context.l10n.userProfile_noVotes,
-              style: TextStyle(color: Colors.grey[600]),
-            ),
-          ],
-        ),
-      );
+          );
     }
 
     final enableLongPress = ref.watch(
@@ -3786,33 +3775,34 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
         child: TopicCardPrewarmScope(
           topics: topics,
           child: ListView.builder(
-          padding: const EdgeInsets.all(12),
-          itemCount: topics.length + 1,
-          itemBuilder: (context, index) {
-            if (index == topics.length) {
-              return PagedListFooter(
-                hasMore: hasMore,
-                isLoadingMore: _votesLoadMoreCoordinator.isRunning && isLoading,
-                isLoadMoreFailed: _votesLoadMoreFailed,
-                onRetry: _loadMoreVotes,
+            padding: const EdgeInsets.all(12),
+            itemCount: topics.length + 1,
+            itemBuilder: (context, index) {
+              if (index == topics.length) {
+                return PagedListFooter(
+                  hasMore: hasMore,
+                  isLoadingMore:
+                      _votesLoadMoreCoordinator.isRunning && isLoading,
+                  isLoadMoreFailed: _votesLoadMoreFailed,
+                  onRetry: _loadMoreVotes,
+                );
+              }
+              final topic = topics[index];
+              return buildTopicItem(
+                context: context,
+                topic: topic,
+                isSelected: false,
+                onTap: () => _openTopic(
+                  topicId: topic.id,
+                  initialTitle: topic.title,
+                  scrollToPostNumber:
+                      ref.read(preferencesProvider).defaultNestedView
+                      ? null
+                      : topic.lastReadPostNumber,
+                ),
+                enableLongPress: enableLongPress,
               );
-            }
-            final topic = topics[index];
-            return buildTopicItem(
-              context: context,
-              topic: topic,
-              isSelected: false,
-              onTap: () => _openTopic(
-                topicId: topic.id,
-                initialTitle: topic.title,
-                scrollToPostNumber:
-                    ref.read(preferencesProvider).defaultNestedView
-                        ? null
-                        : topic.lastReadPostNumber,
-              ),
-              enableLongPress: enableLongPress,
-            );
-          },
+            },
           ),
         ),
       ),
@@ -3832,23 +3822,28 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
 
     // 空状态
     if (posts == null || posts.isEmpty) {
-      return mojianEmptyState(context, Symbols.check_circle_rounded, context.l10n.userProfile_noSolved) ?? Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Symbols.check_circle_rounded,
-              size: 48,
-              color: Colors.grey[400],
+      return mojianEmptyState(
+            context,
+            Symbols.check_circle_rounded,
+            context.l10n.userProfile_noSolved,
+          ) ??
+          Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Symbols.check_circle_rounded,
+                  size: 48,
+                  color: Colors.grey[400],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  context.l10n.userProfile_noSolved,
+                  style: TextStyle(color: Colors.grey[600]),
+                ),
+              ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              context.l10n.userProfile_noSolved,
-              style: TextStyle(color: Colors.grey[600]),
-            ),
-          ],
-        ),
-      );
+          );
     }
 
     return NotificationListener<ScrollNotification>(
@@ -4099,9 +4094,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage>
                   fontWeight: theme.extension<MojianTokens>() != null
                       ? FontWeight.w600
                       : FontWeight.w500,
-                  fontFamily: theme.extension<MojianTokens>() != null
-                      ? MojianTokens.serifFamily
-                      : null,
+                  fontFamily: theme.extension<MojianTokens>()?.titleFamily,
                 ),
               ),
 

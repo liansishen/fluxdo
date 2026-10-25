@@ -129,7 +129,7 @@ class _BannerHeader extends StatelessWidget {
               color: fg,
               fontWeight: FontWeight.w700,
               letterSpacing: 0.3,
-              fontFamily: mj != null ? MojianTokens.serifFamily : null,
+              fontFamily: mj?.titleFamily,
             ),
           ),
           if (count > 1) ...[
@@ -191,7 +191,9 @@ class _AnswerRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           InkWell(
-            onTap: hasExcerpt ? onToggle : () => onJumpToPost?.call(answer.postNumber),
+            onTap: hasExcerpt
+                ? onToggle
+                : () => onJumpToPost?.call(answer.postNumber),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               child: Row(
@@ -237,7 +239,9 @@ class _AnswerRow extends StatelessWidget {
                   ),
                   if (hasExcerpt)
                     Icon(
-                      expanded ? Symbols.expand_less_rounded : Symbols.expand_more_rounded,
+                      expanded
+                          ? Symbols.expand_less_rounded
+                          : Symbols.expand_more_rounded,
                       size: 20,
                       color: theme.colorScheme.onSurfaceVariant,
                     )
@@ -317,4 +321,3 @@ class _ExpandedExcerpt extends StatelessWidget {
     );
   }
 }
-

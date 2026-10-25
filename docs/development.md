@@ -123,6 +123,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## 全局字体与推荐字体
+
+- 外观页统一展示当前字体、预览、系统默认、MiSans、系统已安装字体、导入文件及推荐字体。自选与系统安装字体通过 `ThemeState.titleFontFamilyName` 同步到墨笺标题；系统默认与 MiSans 保留墨笺内置标题字体。Claude 与 VS Code 继续继承全局字体。
+- 推荐清单位于 `assets/fonts/recommended_fonts.json`，下载支持顺序镜像、大小与 SHA-256 校验，以及从声明的 tgz 成员提取字体。下载后通过既有自选字体链路启用，重启恢复使用同一缓存键。
+- 切换或取消选用推荐字体不删除已下载文件；只有推荐字体的显式删除操作清理其缓存。导入字体仍按原规则删除，目录判断兼容 Windows 分隔符且不误认相似目录名。
+- 回归入口：`test/services/recommended_font_service_test.dart`、`test/providers/theme_provider_font_test.dart`、`test/settings/appearance_font_section_test.dart`。
+
 ## 编辑器、草稿与上传
 
 - 编辑工作台统一承载源码与语义富文本模式；两种模式的固定工具顺序分别保存，表格、图片网格、对象工具和上传任务复用同一选区与撤销历史。
@@ -136,9 +143,11 @@ SOFTWARE.
 ## 网络启动与增量消息
 
 - 启动时并行读取网络签名，代理启动前补种签名并处理 VPN 压制；Windows 保持系统代理 → `NetworkSettingsService` → 后台 UA → WebView Environment 顺序。rhttp 未启用时不在冷启动初始化运行时。
+- 桌面 UA 缓存按实际 WebView 运行时版本验证；版本变化或缓存损坏时重新探测，仍在代理决策完成后后台初始化。
 - Rust 原生产物需与 Dart FFI 同批构建，Windows 通过 `native:prepare windows --release` 暂存 DLL。内置公共 ECH 域名含 LINUX DO、静态资源和 IDCFlare，关闭开关同时关闭公共兜底，但不关闭原域名 HTTPS/ECH 查询；Selector 覆盖范围独立，不随公共 ECH 域名扩展。
+- Selector 显式覆盖 LINUX DO、IDCFlare、`ldstatic.com` 及配置主机的子域，共享赢家与故障统计；静态资源域纳入叶证书预放行及 MITM，范围外继续隧道转发。
 - PM、勿扰与分类变更订阅由登录后启动项统一持有和释放；MessageBus 轮询、延迟队列和私信请求均检查会话或请求代际。列表事件按版本消费，静音不阻断已读与删除恢复同步。
-- 首页辅助刷新按钮偏好独立于主 FAB；主 FAB 朝列表顶部滚动时切换为刷新，点击后回顶刷新并恢复加号，向下浏览、到达顶部或切换分类也恢复创作模式。切换刷新模式会收起创作菜单，避免透明菜单残留；辅助刷新开关不禁用主 FAB 的滚动刷新功能。标签与话题共用通知级别面板；预览入口必须使用 `MorphingDialogAnchor` 捕获真实来源，不再传旧的 `anchorRect`。
+- 首页辅助刷新按钮偏好独立于主 FAB；「上滑变刷新」默认开启，可通过 `pref_home_fab_refresh_on_scroll_up` 单独关闭。开启时主 FAB 朝顶部滚动切换为刷新，回到折叠锚位或点击刷新后恢复加号，非活跃列表不回写模式。切换刷新模式收起菜单；VS Code 保留固定资源管理器工具按钮。社区点数显示精确千分位值，缺少插件数据时不占位，点击进入当前站排行榜。标签与话题共用通知级别面板；预览入口继续使用 `MorphingDialogAnchor`。
 - 「阅读设置 → 自动载入新话题」默认关闭，持久化键为 `pref_auto_load_topic_updates`。启用后仅前台、可见、停在顶部且未拖动的列表自动消费更新；2 秒攒批、请求最小间隔 30 秒。关闭、离开页面或切换筛选时取消旧定时器，插入话题时保留开头的置顶行。
 - CF 验证轮次收到 `/challenge` 的源站 404 后，先等待 3 秒；若始终没有新 Cookie，才采纳 WebView 现值。现值也必须通过权威闸门并确认写入 jar，不放宽主站/双站 Cookie 准入。
 - Windows 工作区回归使用 `dart tool/project_tasks.dart test:all --no-pub`，运行前将 `build\windows\x64\runner\Release` 加入进程 `PATH`，供 `flutter_js` 加载 `quickjs_c_bridge.dll`；测试命令同时覆盖 `fluxdo_render` 等含测试目录的包。
@@ -158,7 +167,7 @@ SOFTWARE.
 
 - `ForumSite` 定义 LINUX DO、IDCFlare 的域名和 Logo；`SiteContext` 在启动阶段读取选择，当前引擎内保持不变。LINUX DO 沿用原存储键与目录，IDCFlare 使用 `site:idcflare:` 前缀和 `sites/idcflare` support 子目录。
 - 左上角 Logo 调用 `SiteSwitchService`：先通过 `SiteDataLifecycle.flushBeforeSwitch()` 收取编辑器现场并刷盘，再保存选择并调用 `fluxdo/site_switch`。保存或原生重启失败会回滚选择；切站不调用登出或清理另一站数据。
-- Windows / Linux 以进程重启释放 WebView 和原生代理，等待旧进程退出后才启动新引擎；保留窗口尺寸与最大化，Windows / X11 也保留位置。Wayland 窗口位置由合成器决定。Android 停止代理后重建 Activity 与引擎，保留 WebView Cookie。
+- Windows / Linux 以进程重启释放 WebView 和原生代理，等待旧进程退出后才启动新引擎；保留窗口尺寸与最大化，Windows / X11 也保留位置。Wayland 窗口位置由合成器决定。Android 停止代理后通过独立进程的 `SiteRestartActivity` 拉起全新主进程并清除旧授权回调，保留分站 WebView Cookie；启动时统一重申贴边显示。
 - 两站分别保存密码、CSRF、UserAPIKey、RSA/nonce、Cookie、数据库与账号内容；主题、字体和 AI 模型配置保持全局，AI 会话分站。备份保留数据的原始站点归属，不导入当前站点选择或待打开链接。
 - IDCFlare 默认打开系统浏览器的 `/user-api-key/new` 授权页，可在网页中选择 LINUX DO 登录，再经 `discourse://auth_redirect` 回调完成本站 OTP 会话兑换；内置完整网页登录保留为备用入口。不运行 LINUX DO 专属 fingerprint / `_rt` bootstrap，不显示 LDC/CDK 等专属功能。跨站主域链接先切站再打开，子域和非标准来源不能直接按论坛 ID 路由。
 - 回归入口：`test/services/site_*_test.dart`、Cookie / SessionTokenAuthority 既有测试，以及 `packages/ai_model_manager/test/services/ai_chat_storage_site_test.dart`。原生交接还需实际验证双向切换、原站登录态与窗口状态。

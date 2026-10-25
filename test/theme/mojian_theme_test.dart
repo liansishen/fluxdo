@@ -169,6 +169,30 @@ void main() {
       }
     }
 
+    for (final brightness in Brightness.values) {
+      test('${brightness.name}：用户字体统一用于标题、正文和帖子渲染', () {
+        const family = 'FluxdoCustomFont_noto-sans-sc';
+        final theme = MojianTheme.build(
+          scheme: MojianTheme.colorScheme(brightness, MojianAccent.cinnabar),
+          accent: MojianAccent.cinnabar,
+          fontFamily: family,
+          titleFontFamily: family,
+          pageTransitionsTheme: const PageTransitionsTheme(),
+          iconTheme: const IconThemeData(),
+          primaryIconTheme: const IconThemeData(),
+        );
+        expect(theme.textTheme.titleLarge?.fontFamily, family);
+        expect(theme.textTheme.headlineSmall?.fontFamily, family);
+        expect(theme.textTheme.bodyMedium?.fontFamily, family);
+        expect(theme.appBarTheme.titleTextStyle?.fontFamily, family);
+        expect(theme.dialogTheme.titleTextStyle?.fontFamily, family);
+        expect(theme.extension<MojianTokens>()?.titleFamily, family);
+        final render = theme.extension<FluxdoRenderStyle>();
+        expect(render?.headingFontFamily, family);
+        expect(render?.quoteFontFamily, family);
+      });
+    }
+
     test('纯黑:只改深色的纸与表面,文字对比度仍达标;浅色不受影响', () {
       for (final accent in MojianAccent.values) {
         final s = MojianTheme.colorScheme(Brightness.dark, accent, black: true);

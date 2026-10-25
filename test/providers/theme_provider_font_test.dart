@@ -41,6 +41,7 @@ void main() {
       state.fontFamilyName,
       CustomFontService.familyNameFor(fontFile.path),
     );
+    expect(state.titleFontFamilyName, state.fontFamilyName);
     expect(prefs.getString(CustomFontService.pathPrefKey), fontFile.path);
     expect(
       prefs.getString(CustomFontService.namePrefKey),
@@ -91,6 +92,7 @@ void main() {
     final state = container.read(themeProvider);
     expect(state.fontFamily, AppFontFamily.installed);
     expect(state.fontFamilyName, 'Microsoft YaHei');
+    expect(state.titleFontFamilyName, 'Microsoft YaHei');
     expect(state.installedFontName, '微软雅黑');
     expect(prefs.getString(SystemFontService.familyPrefKey), 'Microsoft YaHei');
     expect(prefs.getString(SystemFontService.namePrefKey), '微软雅黑');
@@ -128,6 +130,7 @@ void main() {
         .read(themeProvider.notifier)
         .setFontFamily(AppFontFamily.miSans);
     expect(container.read(themeProvider).fontFamilyName, 'MiSans');
+    expect(container.read(themeProvider).titleFontFamilyName, isNull);
   });
 
   test('移除自选字体时当前用的是别的字体，选择保持不变', () async {
@@ -152,5 +155,36 @@ void main() {
     expect(state.customFontPath, isNull);
     expect(prefs.getString('font_family'), 'miSans');
     expect(fontFile.existsSync(), isFalse);
+  });
+
+  test('推荐字体沿用自选缓存键，重启恢复且取消选用保留下载', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'fluxdo_recommended_font',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final directory = await Directory.fromUri(
+      root.uri.resolve('recommended_fonts/'),
+    ).create();
+    final file = await File.fromUri(directory.uri.resolve('noto-sans-sc.ttf'))
+        .writeAsBytes([0, 1, 2]);
+    SharedPreferences.setMockInitialValues({
+      'font_family': 'custom',
+      CustomFontService.pathPrefKey: file.path,
+      CustomFontService.namePrefKey: '思源黑体',
+    });
+    final prefs = await SharedPreferences.getInstance();
+    final container = await _createContainer(prefs);
+    final state = container.read(themeProvider);
+    expect(state.fontFamily, AppFontFamily.custom);
+    expect(state.customFontName, '思源黑体');
+    expect(
+      state.titleFontFamilyName,
+      CustomFontService.familyNameFor(file.path),
+    );
+
+    await container.read(themeProvider.notifier).removeCustomFont();
+    expect(container.read(themeProvider).fontFamily, AppFontFamily.system);
+    expect(prefs.getString(CustomFontService.pathPrefKey), isNull);
+    expect(file.existsSync(), isTrue);
   });
 }

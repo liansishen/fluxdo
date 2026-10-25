@@ -35,7 +35,10 @@ class DownloadProgressDialog extends ConsumerWidget {
             children: [
               Positioned.fill(child: _buildMeshBackground(context)),
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 32,
+                ),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -84,12 +87,7 @@ class DownloadProgressDialog extends ConsumerWidget {
             Color.lerp(colorScheme.inversePrimary, Colors.white, 0.5)!,
           ];
 
-    return MeshGradient(
-      colors: colors,
-      distortion: 0.8,
-      swirl: 0.1,
-      speed: 1,
-    );
+    return MeshGradient(colors: colors, distortion: 0.8, swirl: 0.1, speed: 1);
   }
 
   Color _contentColor(BuildContext context) {
@@ -119,15 +117,12 @@ class DownloadProgressDialog extends ConsumerWidget {
             // 墨笺:百分比用宋体
             style: TextStyle(
               fontSize: 64,
-              fontWeight:
-                  Theme.of(context).extension<MojianTokens>() != null
+              fontWeight: Theme.of(context).extension<MojianTokens>() != null
                   ? FontWeight.w600
                   : FontWeight.w300,
               color: color,
               height: 1.0,
-              fontFamily: Theme.of(context).extension<MojianTokens>() != null
-                  ? MojianTokens.serifFamily
-                  : 'monospace',
+              fontFamily: MojianTokens.titleFamilyOf(context) ?? 'monospace',
             ),
           ),
           const SizedBox(height: 16),
@@ -200,7 +195,10 @@ class DownloadProgressDialog extends ConsumerWidget {
   }
 
   Widget _buildBottomAction(
-      BuildContext context, WidgetRef ref, ApkUpdateState state) {
+    BuildContext context,
+    WidgetRef ref,
+    ApkUpdateState state,
+  ) {
     final color = _contentColor(context);
     final subColor = _subContentColor(context);
     final l10n = S.current;

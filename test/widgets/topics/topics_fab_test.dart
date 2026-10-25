@@ -471,4 +471,26 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('关闭「上滑变刷新」后滚动模式不再影响主按钮', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'pref_home_refresh_button': true,
+      'pref_home_fab_refresh_on_scroll_up': false,
+    });
+    final prefs = await SharedPreferences.getInstance();
+    container.dispose();
+    container = ProviderContainer(
+      overrides: [sharedPreferencesProvider.overrideWithValue(prefs)],
+    );
+    await pumpFab(tester);
+    container.read(fabRefreshModeProvider.notifier).state = true;
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('topics-fab-add')), findsOneWidget);
+    expect(refresh, findsOneWidget);
+    await tester.tap(trigger);
+    await tester.pumpAndSettle();
+    expect(items, findsNWidgets(2));
+    expect(refreshCount, 0);
+    expect(tester.takeException(), isNull);
+  });
 }

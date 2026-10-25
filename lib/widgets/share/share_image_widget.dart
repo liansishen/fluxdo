@@ -4,6 +4,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:fluxdo_render/fluxdo_render.dart';
 import 'package:jovial_svg/jovial_svg.dart';
+
 import '../../constants.dart';
 import '../../l10n/s.dart';
 import '../../models/topic.dart';
@@ -145,7 +146,7 @@ class ShareImageWidget extends ConsumerWidget {
     final tags = detail.tags ?? const <Tag>[];
     final small = TextStyle(fontSize: 12, color: mj.ink3, height: 1.4);
     final titleStyle = TextStyle(
-      fontFamily: MojianTokens.serifFamily,
+      fontFamily: mj.titleFamily,
       fontSize: 21,
       fontWeight: FontWeight.w700,
       height: 1.42,
@@ -186,7 +187,7 @@ class ShareImageWidget extends ConsumerWidget {
                 Text(
                   'LINUX DO',
                   style: TextStyle(
-                    fontFamily: MojianTokens.serifFamily,
+                    fontFamily: mj.titleFamily,
                     fontSize: 12.5,
                     fontWeight: FontWeight.w600,
                     letterSpacing: 2.4,

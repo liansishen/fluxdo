@@ -43,7 +43,10 @@ class SiteSwitchService {
       await SiteDataLifecycle.flushBeforeSwitch();
       if (openUrl == null) {
         await preferences.remove(pendingUrlKey);
-      } else if (!await preferences.setString(pendingUrlKey, openUrl.toString())) {
+      } else if (!await preferences.setString(
+        pendingUrlKey,
+        openUrl.toString(),
+      )) {
         throw const FileSystemException('无法保存待打开的站点链接');
       }
       await SiteContext.persistSelection(target);
@@ -51,7 +54,7 @@ class SiteSwitchService {
       await LogWriter.instance.flushNow();
 
       // 桌面使用进程重启，避免在活跃 WebView2 下析构环境导致消息泵卡死。
-      // Android 重建引擎前必须停掉进程内 Rust 代理，不能让旧引擎继续占端口。
+      // Android 交给独立跳板重启整个进程前先停代理，失败时仍可恢复旧站网络。
       if (Platform.isAndroid) {
         await CfClearanceRefreshService().stop();
         await DohProxyService.instance.stop();

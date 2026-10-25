@@ -217,7 +217,6 @@ Future<void> main(List<String> args) async {
   // 站点必须先于 Cookie、认证和预加载单例确定，同一引擎内不再改变。
   final sitePreferences = await SharedPreferences.getInstance();
   await SiteContext.initialize(sitePreferences);
-
   // 墨笺标题宋体（Noto Serif SC 子集）的 OFL 许可，进「开源许可」页
   LicenseRegistry.addLicense(() async* {
     final text = await rootBundle.loadString(
@@ -292,7 +291,7 @@ Future<void> main(List<String> args) async {
   PaintingBinding.instance.imageCache.maximumSizeBytes = 256 * 1024 * 1024;
   PaintingBinding.instance.imageCache.maximumSize = 30000;
 
-  // 启用 Edge-to-Edge 模式（小白条沉浸式）
+  // 冷启动及整进程切站后统一启用贴边显示，不重复发送 Android 平台调用。
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
   // 初始化语法高亮服务（预热 Isolate Worker 和字体）
@@ -710,6 +709,7 @@ ThemeData _buildThemeForStyle(
         scheme: scheme,
         accent: themeState.mojianAccent,
         fontFamily: themeState.fontFamilyName,
+        titleFontFamily: themeState.titleFontFamilyName,
         pageTransitionsTheme: fullscreenSwipeBack
             ? _fullscreenSwipePageTransitionsTheme
             : _pageTransitionsTheme,

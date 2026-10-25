@@ -3,6 +3,7 @@ import 'package:app_icons/app_icons.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:m3e_ui/m3e_ui.dart';
+
 import '../../models/topic.dart';
 import '../../providers/preferences_provider.dart';
 import '../../providers/theme_provider.dart';
@@ -24,6 +25,7 @@ enum ShareImageTheme {
     cardColor: Colors.white,
     isDark: false,
   ),
+
   /// 纯白色（浅色）
   light(
     nameKey: 'share_themeWhite',
@@ -31,6 +33,7 @@ enum ShareImageTheme {
     cardColor: Color(0xFFF5F5F5),
     isDark: false,
   ),
+
   /// 深灰色（深色）
   dark(
     nameKey: 'share_themeDark',
@@ -38,6 +41,7 @@ enum ShareImageTheme {
     cardColor: Color(0xFF2D2D2D),
     isDark: true,
   ),
+
   /// 纯黑色（深色）
   black(
     nameKey: 'share_themeBlack',
@@ -45,6 +49,7 @@ enum ShareImageTheme {
     cardColor: Color(0xFF1A1A1A),
     isDark: true,
   ),
+
   /// 蓝色调（浅色）
   blue(
     nameKey: 'share_themeBlue',
@@ -52,6 +57,7 @@ enum ShareImageTheme {
     cardColor: Colors.white,
     isDark: false,
   ),
+
   /// 绿色调（浅色）
   green(
     nameKey: 'share_themeGreen',
@@ -81,16 +87,25 @@ enum ShareImageTheme {
   String get name {
     final l10n = S.current;
     switch (nameKey) {
-      case 'share_themeClassic': return l10n.share_themeClassic;
-      case 'share_themeWhite': return l10n.share_themeWhite;
-      case 'share_themeDark': return l10n.share_themeDark;
-      case 'share_themeBlack': return l10n.share_themeBlack;
-      case 'share_themeBlue': return l10n.share_themeBlue;
-      case 'share_themeGreen': return l10n.share_themeGreen;
-      case 'share_themeMojian': return l10n.share_themeMojian;
-      default: return nameKey;
+      case 'share_themeClassic':
+        return l10n.share_themeClassic;
+      case 'share_themeWhite':
+        return l10n.share_themeWhite;
+      case 'share_themeDark':
+        return l10n.share_themeDark;
+      case 'share_themeBlack':
+        return l10n.share_themeBlack;
+      case 'share_themeBlue':
+        return l10n.share_themeBlue;
+      case 'share_themeGreen':
+        return l10n.share_themeGreen;
+      case 'share_themeMojian':
+        return l10n.share_themeMojian;
+      default:
+        return nameKey;
     }
   }
+
   final Color bgColor;
   final Color cardColor;
   final bool isDark;
@@ -127,6 +142,7 @@ ThemeData buildShareImageThemeData(
       ),
       accent: themeState.mojianAccent,
       fontFamily: currentTheme.textTheme.bodyMedium?.fontFamily,
+      titleFontFamily: themeState.titleFontFamilyName,
       pageTransitionsTheme: currentTheme.pageTransitionsTheme,
       iconTheme: const IconThemeData(),
       primaryIconTheme: const IconThemeData(),
@@ -153,22 +169,19 @@ class ShareImagePreview extends ConsumerStatefulWidget {
   /// 帖子（如果为 null，则显示主帖）
   final Post? post;
 
-  const ShareImagePreview({
-    super.key,
-    required this.detail,
-    this.post,
-  });
+  const ShareImagePreview({super.key, required this.detail, this.post});
 
   /// 显示预览 Sheet
-  static Future<void> show(BuildContext context, TopicDetail detail, {Post? post}) {
+  static Future<void> show(
+    BuildContext context,
+    TopicDetail detail, {
+    Post? post,
+  }) {
     return showAppBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => ShareImagePreview(
-        detail: detail,
-        post: post,
-      ),
+      builder: (context) => ShareImagePreview(detail: detail, post: post),
     );
   }
 
@@ -269,12 +282,11 @@ class _ShareImagePreviewState extends ConsumerState<ShareImagePreview> {
   }
 
   /// 基于当前主题创建新的 ThemeData（墨笺版式见 [buildShareImageThemeData]）
-  ThemeData _buildThemeData(ThemeData currentTheme) =>
-      buildShareImageThemeData(
-        _selectedTheme,
-        currentTheme,
-        ref.read(themeProvider),
-      );
+  ThemeData _buildThemeData(ThemeData currentTheme) => buildShareImageThemeData(
+    _selectedTheme,
+    currentTheme,
+    ref.read(themeProvider),
+  );
 
   /// 构建预览内容
   Widget _buildPreviewContent(ThemeData theme) {
@@ -436,10 +448,7 @@ class _ShareImagePreviewState extends ConsumerState<ShareImagePreview> {
                 Expanded(
                   child: Text(
                     context.l10n.share_shareImageTitle,
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w500,
-                    ),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
                     textAlign: TextAlign.center,
                   ),
                 ),
@@ -451,15 +460,15 @@ class _ShareImagePreviewState extends ConsumerState<ShareImagePreview> {
           const SizedBox(height: 8),
 
           // 图片预览区域
-          Expanded(
-            child: _buildPreviewContent(theme),
-          ),
+          Expanded(child: _buildPreviewContent(theme)),
 
           // 选项区域
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+              color: theme.colorScheme.surfaceContainerHighest.withValues(
+                alpha: 0.5,
+              ),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -468,56 +477,63 @@ class _ShareImagePreviewState extends ConsumerState<ShareImagePreview> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: ShareImageTheme.values.map((t) {
-                final isSelected = t == _selectedTheme;
-                return GestureDetector(
-                  onTap: () => _selectTheme(t),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color: t.bgColor,
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: isSelected
-                                ? theme.colorScheme.primary
-                                : theme.colorScheme.outline.withValues(alpha: 0.3),
-                            width: isSelected ? 2.5 : 1,
+                    final isSelected = t == _selectedTheme;
+                    return GestureDetector(
+                      onTap: () => _selectTheme(t),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: t.bgColor,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: isSelected
+                                    ? theme.colorScheme.primary
+                                    : theme.colorScheme.outline.withValues(
+                                        alpha: 0.3,
+                                      ),
+                                width: isSelected ? 2.5 : 1,
+                              ),
+                              boxShadow: isSelected
+                                  ? [
+                                      BoxShadow(
+                                        color: theme.colorScheme.primary
+                                            .withValues(alpha: 0.3),
+                                        blurRadius: 8,
+                                      ),
+                                    ]
+                                  : null,
+                            ),
+                            child: isSelected
+                                ? Icon(
+                                    Symbols.check_rounded,
+                                    size: 18,
+                                    color: t.isDark
+                                        ? Colors.white
+                                        : Colors.black87,
+                                  )
+                                : null,
                           ),
-                          boxShadow: isSelected
-                              ? [
-                                  BoxShadow(
-                                    color: theme.colorScheme.primary.withValues(alpha: 0.3),
-                                    blurRadius: 8,
-                                  ),
-                                ]
-                              : null,
-                        ),
-                        child: isSelected
-                            ? Icon(
-                                Symbols.check_rounded,
-                                size: 18,
-                                color: t.isDark ? Colors.white : Colors.black87,
-                              )
-                            : null,
+                          const SizedBox(height: 4),
+                          Text(
+                            t.name,
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: isSelected
+                                  ? theme.colorScheme.primary
+                                  : theme.colorScheme.onSurfaceVariant,
+                              fontWeight: isSelected
+                                  ? FontWeight.w500
+                                  : FontWeight.normal,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        t.name,
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: isSelected
-                              ? theme.colorScheme.primary
-                              : theme.colorScheme.onSurfaceVariant,
-                          fontWeight: isSelected ? FontWeight.w500 : FontWeight.normal,
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }).toList(),
+                    );
+                  }).toList(),
                 ),
               ],
             ),
@@ -535,7 +551,9 @@ class _ShareImagePreviewState extends ConsumerState<ShareImagePreview> {
               color: theme.colorScheme.surface,
               border: Border(
                 top: BorderSide(
-                  color: theme.colorScheme.outlineVariant.withValues(alpha: 0.3),
+                  color: theme.colorScheme.outlineVariant.withValues(
+                    alpha: 0.3,
+                  ),
                 ),
               ),
             ),
@@ -544,7 +562,9 @@ class _ShareImagePreviewState extends ConsumerState<ShareImagePreview> {
                 // 保存按钮
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: (_isSaving || _targetPost == null) ? null : _saveImage,
+                    onPressed: (_isSaving || _targetPost == null)
+                        ? null
+                        : _saveImage,
                     icon: _isSaving
                         ? const LoadingSpinner(size: 18)
                         : const Icon(Symbols.save_alt_rounded),
@@ -558,7 +578,9 @@ class _ShareImagePreviewState extends ConsumerState<ShareImagePreview> {
                 // 分享按钮
                 Expanded(
                   child: FilledButton.icon(
-                    onPressed: (_isSharing || _targetPost == null) ? null : _shareImage,
+                    onPressed: (_isSharing || _targetPost == null)
+                        ? null
+                        : _shareImage,
                     icon: _isSharing
                         ? const LoadingSpinner(size: 18, color: Colors.white)
                         : const Icon(Symbols.share_rounded),

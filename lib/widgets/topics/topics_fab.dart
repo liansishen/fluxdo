@@ -151,6 +151,10 @@ class _TopicsFabState extends ConsumerState<TopicsFab>
 
   void _toggle() {
     if (!_present || _scrollVisibility < 1) return;
+    // 键盘快捷键等绕过按钮直接开菜单时，先退出刷新模式
+    if (ref.read(fabRefreshModeProvider)) {
+      ref.read(fabRefreshModeProvider.notifier).state = false;
+    }
     if (_expanded) {
       _close();
       return;
@@ -211,6 +215,7 @@ class _TopicsFabState extends ConsumerState<TopicsFab>
   }
 
   void _refreshTopics() {
+    if (!_present || _scrollVisibility < 1) return;
     ref.read(fabRefreshModeProvider.notifier).state = false;
     widget.onRefresh();
   }
@@ -222,8 +227,14 @@ class _TopicsFabState extends ConsumerState<TopicsFab>
     final hideBarOnScroll = ref.watch(
       preferencesProvider.select((p) => p.hideBarOnScroll),
     );
+    final swapOnScrollUp = ref.watch(
+      preferencesProvider.select((p) => p.homeFabRefreshOnScrollUp),
+    );
     final refreshMode =
-        !isExplorer && widget.canCreate && ref.watch(fabRefreshModeProvider);
+        !isExplorer &&
+        widget.canCreate &&
+        swapOnScrollUp &&
+        ref.watch(fabRefreshModeProvider);
     final showRefresh =
         ref.watch(preferencesProvider.select((p) => p.homeRefreshButton)) &&
         !refreshMode;
@@ -343,10 +354,10 @@ class _TopicsFabState extends ConsumerState<TopicsFab>
                               key: const ValueKey('topics-create-menu'),
                               heroTag: null,
                               focusNode: _triggerFocus,
-                              tooltip: _expanded
-                                  ? context.l10n.common_close
-                                  : refreshMode
+                              tooltip: refreshMode
                                   ? context.l10n.common_refresh
+                                  : _expanded
+                                  ? context.l10n.common_close
                                   : context.l10n.topicsScreen_createTopic,
                               elevation: _expanded ? 0 : 3,
                               // 墨笺：墨色圆形钮，展开时也不变色（见 mojian_theme 的
@@ -373,11 +384,20 @@ class _TopicsFabState extends ConsumerState<TopicsFab>
                                       t,
                                     ),
                               onPressed: refreshMode ? _refreshTopics : _toggle,
-                              child: Transform.rotate(
-                                angle: refreshMode ? 0 : t * 0.7853981633974483,
+                              child: AnimatedSwitcher(
+                                duration: const Duration(milliseconds: 150),
+                                switchInCurve: Curves.easeOut,
+                                switchOutCurve: Curves.easeIn,
                                 child: refreshMode
-                                    ? const Icon(Symbols.refresh_rounded)
-                                    : const Icon(Symbols.add_rounded),
+                                    ? const Icon(
+                                        Symbols.refresh_rounded,
+                                        key: ValueKey('topics-fab-refresh'),
+                                      )
+                                    : Transform.rotate(
+                                        key: const ValueKey('topics-fab-add'),
+                                        angle: t * 0.7853981633974483,
+                                        child: const Icon(Symbols.add_rounded),
+                                      ),
                               ),
                             ),
                           );

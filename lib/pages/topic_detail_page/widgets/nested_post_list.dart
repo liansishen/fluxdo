@@ -523,24 +523,30 @@ class _NestedPostListState extends ConsumerState<NestedPostList> {
     final contextChain = contextMode ? ns.contextChain : null;
     final p = widget.params;
     final sourceMode = VscodePostSource.enabled(context);
-    final sourceOptions = ref.watch(preferencesProvider.select(
-      (prefs) => (prefs.vscodeBodyStyle, prefs.vscodeCodeLanguage),
-    ));
+    final sourceOptions = ref.watch(
+      preferencesProvider.select(
+        (prefs) => (prefs.vscodeBodyStyle, prefs.vscodeCodeLanguage),
+      ),
+    );
     if (sourceMode) {
-      _sourceLines.update([
-        if (opPost != null)
-          VscodeLineEntry(post: opPost, htmlUnits: [opPost.cooked]),
-        ...vscodeNestedLines(
-          roots: contextMode && contextChain != null ? [contextChain] : roots,
-          session: _session,
-          blockedUsernames: widget.blockedUsernames,
-          maxDepth: maxDepth,
-          highlightPostNumber: contextMode
-              ? ns.targetPostNumber
-              : _highlightTarget,
-          displayStates: _sourceDisplayStates,
-        ),
-      ], style: sourceOptions.$1, language: sourceOptions.$2);
+      _sourceLines.update(
+        [
+          if (opPost != null)
+            VscodeLineEntry(post: opPost, htmlUnits: [opPost.cooked]),
+          ...vscodeNestedLines(
+            roots: contextMode && contextChain != null ? [contextChain] : roots,
+            session: _session,
+            blockedUsernames: widget.blockedUsernames,
+            maxDepth: maxDepth,
+            highlightPostNumber: contextMode
+                ? ns.targetPostNumber
+                : _highlightTarget,
+            displayStates: _sourceDisplayStates,
+          ),
+        ],
+        style: sourceOptions.$1,
+        language: sourceOptions.$2,
+      );
     }
 
     return NestedReadingScope(
@@ -976,7 +982,7 @@ class _SortChip extends StatelessWidget {
               Text(
                 label,
                 style: theme.textTheme.bodyMedium?.copyWith(
-                  fontFamily: MojianTokens.serifFamily,
+                  fontFamily: MojianTokens.titleFamilyFor(context),
                   fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
                   color: isActive ? mj.ink : mj.ink3,
                 ),

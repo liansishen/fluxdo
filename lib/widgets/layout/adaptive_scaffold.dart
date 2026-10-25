@@ -206,10 +206,13 @@ class AdaptiveScaffold extends ConsumerWidget {
                             ),
                           ),
                         Expanded(
-                          child: MediaQuery.removePadding(
-                            context: context,
-                            removeTop: !showRail && !hideNavigationRail,
-                            child: body,
+                          child: Builder(
+                            // 保留 Scaffold 为底栏注入的 inset，避免首页按钮被遮挡。
+                            builder: (bodyContext) => MediaQuery.removePadding(
+                              context: bodyContext,
+                              removeTop: !showRail && !hideNavigationRail,
+                              child: body,
+                            ),
                           ),
                         ),
                         if (isVscode) const VscodeStatusBar(),

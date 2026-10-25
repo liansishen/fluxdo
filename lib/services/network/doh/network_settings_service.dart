@@ -1,3 +1,4 @@
+import '../../../config/forum_site.dart';
 import '../../site_context.dart';
 
 import 'dart:async';
@@ -280,8 +281,10 @@ class NetworkSettingsService {
   static const selectNoticeVersionKey = 'doh_select_notice_version';
 
   /// atlas（CF 橙云入口）的路由表接口，只回源 hk2，表按线路选池
-  static const _linuxDoHost = 'linux.do';
   static const _atlasHost = 'atlas.1molchuan.top';
+
+  /// linux.do 的静态资源域（cdn / cdn3 / ping / linuxdo-uploads.s3 都在它下面）
+  static const _ldstaticHost = 'ldstatic.com';
   static const accelAtlasRoutesUrl = 'https://$_atlasHost/v1/routes';
 
   /// cfhub：众包 ECH 测速分池，探针上报与探针令牌都在这里
@@ -1005,12 +1008,22 @@ class NetworkSettingsService {
         publicDoh: _publicDohSeeds,
         reportUrl: cfhubReportUrl,
         reportBearer: CfhubProbeAuthService.instance.token,
-        extraCoveredHosts: const [_atlasHost, cfhubHost],
+        // 两个论坛共用同一个赢家：另一站（含子域）也纳入本地优选覆盖，
+        // 走同一个边缘 IP + ECH，与 linux.do 一样不查公共 DNS 的明文答案
+        extraCoveredHosts: [
+          _atlasHost,
+          cfhubHost,
+          for (final site in ForumSite.values)
+            if (!site.isLinuxDo) site.host,
+          // linux.do 的静态资源域（图片 / 表情 / 消息总线 / 直传）：和主站同一个
+          // 赢家 + ECH，高墙地区的明文 SNI 会被 RST（福建实测图片全 502）
+          _ldstaticHost,
+        ],
         appVersion: _appVersion,
         networkSig: ConnectivityService().networkSignature.value,
-        // 仅为当前站点中 Selector 已覆盖的主机预连，不扩大优选覆盖集合。
-        preconnectHosts: selectorEligible && SiteContext.isLinuxDo
-            ? const [_linuxDoHost]
+        // 仅在优选启用时预连当前论坛；两个论坛均已纳入同一个赢家的覆盖范围。
+        preconnectHosts: selectorEligible
+            ? [SiteContext.current.host]
             : const [],
       );
 
