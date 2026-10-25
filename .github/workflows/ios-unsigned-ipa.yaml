@@ -58,6 +58,12 @@ jobs:
           xcodebuild -version
           pod --version
 
+      - name: Exercise share link and export behavior
+        run: |
+          plutil -lint ios/Runner.xcodeproj/project.pbxproj ios/ShareExtension/Info.plist ios/ShareExtension/ShareExtension.entitlements
+          swiftc ios/Shared/ShareSessionStore.swift ios/ShareExtension/ForumShareClient.swift tool/ios_share_extension_smoke.swift -o "$RUNNER_TEMP/share-extension-smoke"
+          "$RUNNER_TEMP/share-extension-smoke"
+
       - name: Cache iOS engine artifacts
         run: flutter precache --ios
 
@@ -77,6 +83,24 @@ jobs:
         run: |
           test -f build/ios/iphoneos/Runner.app/Runner
           nm -gU build/ios/iphoneos/Runner.app/Runner | grep "_doh_proxy_start_with_config_json"
+
+      - name: Verify share extension packaging
+        run: |
+          app=build/ios/iphoneos/Runner.app
+          extension="$app/PlugIns/ShareExtension.appex"
+          test -f "$extension/ShareExtension"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' "$extension/Info.plist")" = com.apple.share-services
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$extension/Info.plist")" = "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Info.plist")"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$extension/Info.plist")" = "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Info.plist")"
+          file "$extension/ShareExtension"
+          python3 - <<'PY'
+          import pathlib, zipfile
+          for ipa in pathlib.Path('build/ios/ipa').glob('*.ipa'):
+              with zipfile.ZipFile(ipa) as archive:
+                  member = 'Payload/Runner.app/PlugIns/ShareExtension.appex/ShareExtension'
+                  assert archive.getinfo(member).file_size > 0, 'IPA 缺少分享扩展可执行文件'
+                  print(f'{ipa.name}: 分享扩展已打包')
+          PY
 
       - name: Generate checksum
         run: |

@@ -8,6 +8,7 @@ import 'package:path/path.dart' as path;
 
 import '../../../constants.dart';
 import '../../windows_webview_environment_service.dart';
+import '../../share_extension_session_service.dart';
 import 'cookie_logger.dart';
 import 'cookie_value_codec.dart';
 import 'strategy/platform_cookie_strategy.dart';
@@ -29,6 +30,7 @@ class CookieJarService {
 
   CookieJar? _cookieJar;
   bool _initialized = false;
+  ShareExtensionSessionService? _shareExtensionSession;
 
   /// 进行中的初始化：并发调用共用这一次，不会建出两个 jar
   /// （第二次还会撞上 [_strategy] 的 late final 重复赋值）。
@@ -101,6 +103,11 @@ class CookieJarService {
   }
 
   Future<void> _initialize() async {
+    if (io.Platform.isIOS) {
+      _shareExtensionSession ??= ShareExtensionSessionService(
+        host: Uri.parse(AppConstants.baseUrl).host,
+      );
+    }
     try {
       final cookiePath = await cookiesPath;
       final cookieDir = io.Directory(cookiePath);
@@ -116,10 +123,13 @@ class CookieJarService {
         await cookieDir.create(recursive: true);
       }
 
-      _cookieJar = EnhancedPersistCookieJar(
-        ignoreExpires: false,
-        store: FileCookieStore(cookiePath),
-      );
+      _cookieJar = _shareExtensionSession?.persistentJar(
+            FileCookieStore(cookiePath),
+          ) ??
+          EnhancedPersistCookieJar(
+            ignoreExpires: false,
+            store: FileCookieStore(cookiePath),
+          );
 
       _initialized = true;
       _strategy = PlatformCookieStrategy.create();
@@ -128,12 +138,13 @@ class CookieJarService {
       debugPrint(
         '[CookieJar] Failed to create persistent storage, using memory: $e',
       );
-      _cookieJar = CookieJar();
+      _cookieJar = _shareExtensionSession?.memoryJar() ?? CookieJar();
       _initialized = true;
       _strategy = PlatformCookieStrategy.create();
     }
 
     await _migrateSessionCookiesToHostOnly();
+    _shareExtensionSession?.start(_cookieJar!);
   }
 
   /// 历史脏数据迁移: 把 authCookieNames 收敛成主域 host-only 单副本。
@@ -587,6 +598,7 @@ class CookieJarService {
   /// 仅清除当前论坛域 Cookie，保留其他站点与 OAuth 身份域。
   Future<void> clearAll() async {
     if (!_initialized) await initialize();
+    await _shareExtensionSession?.beginLogout();
 
     try {
       final baseUri = Uri.parse(AppConstants.baseUrl);
@@ -603,6 +615,8 @@ class CookieJarService {
       CookieLogger.delete(name: '*', source: 'clearAll');
     } catch (e) {
       debugPrint('[CookieJar] Failed to clear cookies: $e');
+    } finally {
+      _shareExtensionSession?.endLogout();
     }
   }
 

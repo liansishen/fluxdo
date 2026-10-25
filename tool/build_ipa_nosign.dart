@@ -57,6 +57,14 @@ Future<void> main(List<String> args) async {
     exit(1);
   }
 
+  final shareExtension = File(
+    p.join(runnerApp.path, 'PlugIns', 'ShareExtension.appex', 'ShareExtension'),
+  );
+  if (!shareExtension.existsSync()) {
+    stderr.writeln('缺少分享扩展可执行文件，不能输出不完整的 IPA: ${shareExtension.path}');
+    exit(1);
+  }
+
   final tempDir = await Directory.systemTemp.createTemp('fluxdo_ipa_');
   try {
     final payloadDir = Directory(p.join(tempDir.path, 'Payload'))..createSync(recursive: true);

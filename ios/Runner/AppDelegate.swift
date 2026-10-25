@@ -94,6 +94,29 @@ import WebKit
   private func registerNativeChannels(messenger: FlutterBinaryMessenger) {
     nativeChannelGeneration += 1
     let generation = nativeChannelGeneration
+    let shareExtensionChannel = FlutterMethodChannel(name: "fluxdo/share_extension", binaryMessenger: messenger)
+    shareExtensionChannel.setMethodCallHandler { call, result in
+      guard call.method == "syncSession" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      guard let arguments = call.arguments as? [String: Any],
+            let host = arguments["host"] as? String,
+            let cookieHeader = arguments["cookieHeader"] as? String,
+            let userAgent = arguments["userAgent"] as? String else {
+        result(FlutterError(code: "INVALID_ARGUMENTS", message: "分享扩展会话参数无效", details: nil))
+        return
+      }
+      do {
+        let expirations = (arguments["cookieExpirations"] as? [String: NSNumber])?.mapValues { $0.doubleValue } ?? [:]
+        try ShareSessionStore.write(host: host, cookieHeader: cookieHeader, userAgent: userAgent,
+                                    cookieExpirations: expirations)
+        result(nil)
+      } catch {
+        // 不返回底层路径或认证参数；侧载签名可能未授予共享容器权限。
+        result(FlutterError(code: "SHARE_SESSION_UNAVAILABLE", message: "分享扩展会话同步不可用，请检查共享容器签名权限", details: nil))
+      }
+    }
     let siteSwitchChannel = FlutterMethodChannel(name: "fluxdo/site_switch", binaryMessenger: messenger)
     siteSwitchChannel.setMethodCallHandler { [weak self] call, result in
       switch call.method {
@@ -362,6 +385,7 @@ import WebKit
     }
     // 仅持有当前引擎的通道；切换时旧通道先注销并释放，不把旧 messenger 留在单例中。
     nativeChannels = [
+      shareExtensionChannel,
       siteSwitchChannel, proxyCertChannel, profileChannel, browserChannel,
       appIconChannel, channel, rawCookieChannel, cookieObserverChannel,
     ]

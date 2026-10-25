@@ -191,6 +191,15 @@ SOFTWARE.
 - Windows / iOS 平台工程已移除内置 cargo / shell build hook，只消费仓库脚本预先落盘的 native 产物
 - macOS 保留一个轻量级 bundle copy/sign 阶段，只负责拷贝和签名已准备好的 native 产物
 
+### iOS 独立分享扩展
+
+- `ios/ShareExtension` 是不依赖 Flutter 引擎的原生 UIKit / WebKit 扩展；系统分享面板选择 FluxDO 后直接处理链接，不启动主应用。仅接收 `https://linux.do/t/...`、`https://idcflare.com/t/...`，可从标题附带的文本中识别唯一链接。
+- 图片生成读取真正主帖，等待正文图片和字体加载完成后逐段生成 PNG；长文在扩展内左右滑动预览，保存及分享包含所有分片，不以首屏截图冒充全文。渲染超限、图片加载失败会明确报错；文章可选 Markdown / HTML 和仅主帖 / 全部楼层，Markdown 沿用最多前 10 条的边界，HTML 按帖子 ID 分批取全。
+- 主应用与扩展都需要 `group.com.github.lingyan000.fluxdo` App Group。`ShareSessionStore` 将两站 `_t`、`_forum_session`、`cf_clearance` 和匹配 UA 分别存入原子写、排除备份、受文件保护的共享私有文件；逐 Cookie 保留有效期。Dart 监听 CookieJar 中央写入、恢复和删除，退出清空共享会话，凭据不写入日志或导出文件。分享扩展的 JSON 请求不接受跨主机跳转；图片代理逐跳移除认证，仅精确原站附加会话。
+- 初次更新后先打开 FluxDO 一次以同步已有会话；处理公开内容不要求主应用运行。扩展不会继承来源 App 的登录态，也不会启动主应用代理或代做 Cloudflare 验证。出现验证或权限错误时需先在 FluxDO 对应站点完成验证，随后重新分享；共享容器不可用时明确提示匿名访问及签名检查。
+- 无签名 IPA 通过现有 CI 构建。构建脚本要求存在 `Runner.app/PlugIns/ShareExtension.appex/ShareExtension`；CI 另外执行 Swift 链接解析 / 安全 HTML 行为验证，检查扩展声明、主扩展版本一致性及 ZIP 内可执行文件。侧载工具必须保留并签名 `.appex`、为主应用和扩展授予一致的 App Group，不能仅重签主可执行文件。
+- 本地 Windows 可运行 `flutter test test/services/share_extension_session_service_test.dart` 验证凭据最小化、跨站隔离与退出并发写入屏障。原生编译在 macOS CI，不能代替实机验收：分享面板启用 FluxDO 后，分别验证两站公开 / 受限帖、主应用关闭、短文 / 多图 / 长文、PNG 保存相册与文件、Markdown / 全量 HTML，以及取消后重试和退出登录后的权限变化。当前原生版式不等于主应用 Flutter 分享卡片的全部主题。
+
 ## macOS 代码签名
 
 macOS 默认走 adhoc 签名（`AppInfo.xcconfig` 中 `FLUXDO_APPLE_CODE_SIGN_IDENTITY_MACOSX = -`），无需证书即可构建。但 adhoc 签名的 CDHash 每次构建都变，钥匙串（`flutter_secure_storage`）会把新构建当成新 app，每次启动反复弹「想要使用钥匙串中的 flutter_secure_storage_service」授权窗。
