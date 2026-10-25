@@ -7,6 +7,9 @@ import WebKit
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   // 窗口由 UIScene 持有，不能再从 AppDelegate.window 获取界面。
   private weak var flutterViewController: FlutterViewController?
+  private var nativeChannels: [FlutterMethodChannel] = []
+  private var nativeChannelGeneration = 0
+  private var siteRestartInProgress = false
 
   func connectFlutterViewController(_ controller: FlutterViewController) {
     flutterViewController = controller
@@ -24,7 +27,88 @@ import WebKit
     registerNativeChannels(messenger: engineBridge.applicationRegistrar.messenger())
   }
 
+  private func restartForSiteSwitch(generation: Int, result: @escaping FlutterResult) {
+    guard !siteRestartInProgress else {
+      result(FlutterError(code: "RESTART_IN_PROGRESS", message: "站点切换正在进行中", details: nil))
+      return
+    }
+    guard generation == nativeChannelGeneration,
+          let controller = flutterViewController,
+          let window = controller.viewIfLoaded?.window,
+          window.rootViewController === controller,
+          window.windowScene?.activationState == .foregroundActive,
+          let sceneDelegate = window.windowScene?.delegate as? SceneDelegate,
+          controller.presentedViewController == nil else {
+      result(FlutterError(code: "ENGINE_NOT_READY", message: "当前 Flutter 场景尚未就绪或正在显示原生界面", details: nil))
+      return
+    }
+
+    siteRestartInProgress = true
+    // 先确认新引擎能运行；失败时旧 isolate 和通道仍可供 Dart 回滚站点及恢复网络。
+    let engine = FlutterEngine(name: "fluxdo.site_switch.\(generation)", project: nil, allowHeadlessExecution: true)
+    guard engine.run() else {
+      engine.destroyContext()
+      siteRestartInProgress = false
+      result(FlutterError(code: "ENGINE_START_FAILED", message: "无法启动新的 Flutter 引擎", details: nil))
+      return
+    }
+
+    let replacement = FlutterViewController(engine: engine, nibName: nil, bundle: nil)
+    // run、插件及通道注册都在同一主线程调用中完成，新 main() 的平台消息不会抢先处理。
+    GeneratedPluginRegistrant.register(with: engine)
+    let previousChannels = nativeChannels
+    registerNativeChannels(messenger: engine.binaryMessenger)
+
+    // 必须先发送应答，再调度销毁；不能在正在处理旧 messenger 调用时拆掉它。
+    result(nil)
+    DispatchQueue.main.async { [self, window, sceneDelegate, replacement, previousChannels] in
+      autoreleasepool {
+        let previousController = window.rootViewController as? FlutterViewController
+        let previousEngine = previousController?.engine
+        previousChannels.forEach { $0.setMethodCallHandler(nil) }
+        flutterViewController = nil
+        // 先完成旧视图的移除，再注销场景和通知，避免销毁后仍收到生命周期调用。
+        UIView.performWithoutAnimation {
+          window.rootViewController = UIViewController()
+        }
+        if let previousController {
+          NSObject.cancelPreviousPerformRequests(withTarget: previousController)
+          NotificationCenter.default.removeObserver(previousController)
+        }
+        if let previousEngine {
+          sceneDelegate.unregisterSceneLifeCycle(with: previousEngine)
+          NotificationCenter.default.removeObserver(previousEngine)
+        }
+        previousEngine?.viewController = nil
+        previousEngine?.destroyContext()
+      }
+      // 旧 isolate 已终止；沿用原 UIScene 的窗口并重新关联新引擎的场景插件。
+      sceneDelegate.registerSceneLifeCycle(with: replacement.engine)
+      window.rootViewController = replacement
+      connectFlutterViewController(replacement)
+      window.makeKeyAndVisible()
+      siteRestartInProgress = false
+    }
+  }
+
   private func registerNativeChannels(messenger: FlutterBinaryMessenger) {
+    nativeChannelGeneration += 1
+    let generation = nativeChannelGeneration
+    let siteSwitchChannel = FlutterMethodChannel(name: "fluxdo/site_switch", binaryMessenger: messenger)
+    siteSwitchChannel.setMethodCallHandler { [weak self] call, result in
+      switch call.method {
+      case "isSupported":
+        result(true)
+      case "restart":
+        guard let self else {
+          result(FlutterError(code: "ENGINE_NOT_READY", message: "应用委托尚未就绪", details: nil))
+          return
+        }
+        self.restartForSiteSwitch(generation: generation, result: result)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
     PublicFileHandler.shared.register(messenger: messenger)
     // 媒体转码通道(音视频压缩到 4MB:AVAssetWriter 硬编,零依赖)
     MediaTranscodeHandler.shared.register(
@@ -103,7 +187,7 @@ import WebKit
       name: "com.github.lingyan000.fluxdo/app_icon",
       binaryMessenger: messenger
     )
-    appIconChannel.setMethodCallHandler { (call, result) in
+    appIconChannel.setMethodCallHandler { [weak self] (call, result) in
       switch call.method {
       case "supportsAlternateIcons":
         if #available(iOS 10.3, *) {
@@ -127,6 +211,10 @@ import WebKit
 
         let args = call.arguments as? [String: Any]
         let iconName = args?["iconName"] as? String
+        guard let self else {
+          result(FlutterError(code: "ENGINE_NOT_READY", message: "应用委托尚未就绪", details: nil))
+          return
+        }
         self.setAlternateIcon(iconName, result: result)
 
       default:
@@ -272,6 +360,11 @@ import WebKit
         result(FlutterMethodNotImplemented)
       }
     }
+    // 仅持有当前引擎的通道；切换时旧通道先注销并释放，不把旧 messenger 留在单例中。
+    nativeChannels = [
+      siteSwitchChannel, proxyCertChannel, profileChannel, browserChannel,
+      appIconChannel, channel, rawCookieChannel, cookieObserverChannel,
+    ]
   }
 
   private func isRequestedIconApplied(_ iconName: String?) -> Bool {
@@ -759,6 +852,8 @@ class SceneDelegate: FlutterSceneDelegate {
     super.scene(scene, willConnectTo: session, options: connectionOptions)
     if let controller = window?.rootViewController as? FlutterViewController,
        let appDelegate = UIApplication.shared.delegate as? AppDelegate {
+      // 显式持有场景注册关系，使后续引擎重建可以用公开接口完整注销旧引擎。
+      registerSceneLifeCycle(with: controller.engine)
       appDelegate.connectFlutterViewController(controller)
     }
   }

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/forum_site.dart';
+import 'app_logger.dart';
 import 'cf_clearance_refresh_service.dart';
 import 'log/log_writer.dart';
 import 'network/doh/network_settings_service.dart';
@@ -26,21 +27,36 @@ class SiteSwitchService {
 
   Future<void> switchTo(ForumSite target, {Uri? openUrl}) async {
     if (target == SiteContext.current) return;
-    final preferences = await SharedPreferences.getInstance();
     if (_isSwitching.value) throw StateError('正在切换站点');
     _isSwitching.value = true;
-    final previousUrl = preferences.getString(pendingUrlKey);
+    SharedPreferences? preferences;
+    String? previousUrl;
+    var pendingUrlChanged = false;
     var selectionSaved = false;
-    var mobileProxyStopped = false;
+    var mobileServicesStopped = false;
+    var stage = 'preferences';
+    final fields = {
+      'fromSite': SiteContext.current.id,
+      'toSite': target.id,
+      'platform': Platform.operatingSystem,
+    };
+    AppLogger.info('开始切换站点', tag: 'SiteSwitch', fields: fields);
     try {
+      preferences = await SharedPreferences.getInstance();
+      previousUrl = preferences.getString(pendingUrlKey);
+      stage = 'validate_url';
       if (openUrl != null && !await _isValidTargetUrl(target, openUrl)) {
         throw ArgumentError.value(target.id, 'target', '链接与目标站点不匹配');
       }
+      stage = 'check_support';
       if (await _channel.invokeMethod<bool>('isSupported') != true) {
         throw PlatformException(code: 'SITE_SWITCH_UNSUPPORTED');
       }
       // 先保存编辑器当前值与延迟落盘数据，失败时不离开当前站点。
+      stage = 'flush_site_data';
       await SiteDataLifecycle.flushBeforeSwitch();
+      stage = 'save_selection';
+      pendingUrlChanged = true;
       if (openUrl == null) {
         await preferences.remove(pendingUrlKey);
       } else if (!await preferences.setString(
@@ -51,31 +67,65 @@ class SiteSwitchService {
       }
       await SiteContext.persistSelection(target);
       selectionSaved = true;
-      await LogWriter.instance.flushNow();
 
-      // 桌面使用进程重启，避免在活跃 WebView2 下析构环境导致消息泵卡死。
-      // Android 交给独立跳板重启整个进程前先停代理，失败时仍可恢复旧站网络。
-      if (Platform.isAndroid) {
+      // 移动端代理由进程级 Rust 状态持有，重建引擎前必须停止。
+      // iOS 不退出进程；否则新引擎会继承旧代理和验证 WebView 的运行状态。
+      if (Platform.isAndroid || Platform.isIOS) {
+        stage = 'stop_mobile_services';
+        mobileServicesStopped = true;
         await CfClearanceRefreshService().stop();
         await DohProxyService.instance.stop();
-        mobileProxyStopped = true;
       }
+      stage = 'restart';
+      AppLogger.info(
+        '站点选择已保存，准备重建运行环境',
+        tag: 'SiteSwitch',
+        fields: fields,
+      );
+      await LogWriter.instance.flushNow();
+      // 桌面重启进程，iOS 重建引擎；旧环境不再接受第二次切换。
       await _channel.invokeMethod<void>('restart');
-      // 成功后不解锁按钮；旧运行环境即将退出，不能接受第二次切换。
-    } catch (_) {
+    } catch (error, stackTrace) {
+      // 只记录类型、平台错误码和栈，不落盘可能含认证参数的异常正文或链接。
+      AppLogger.error(
+        '切换站点失败，正在恢复原站',
+        tag: 'SiteSwitch',
+        stackTrace: stackTrace,
+        fields: {
+          ...fields,
+          'stage': stage,
+          'errorType': error.runtimeType.toString(),
+          if (error is PlatformException) 'errorCode': error.code,
+        },
+      );
       try {
         if (selectionSaved) {
           await SiteContext.persistSelection(SiteContext.current);
         }
-        if (previousUrl == null) {
-          await preferences.remove(pendingUrlKey);
-        } else {
-          await preferences.setString(pendingUrlKey, previousUrl);
+        if (pendingUrlChanged && preferences != null) {
+          if (previousUrl == null) {
+            await preferences.remove(pendingUrlKey);
+          } else {
+            await preferences.setString(pendingUrlKey, previousUrl);
+          }
         }
-        if (mobileProxyStopped) {
+        if (mobileServicesStopped) {
           await NetworkSettingsService.instance.restartProxy();
           CfClearanceRefreshService().start();
         }
+      } catch (recoveryError, recoveryStackTrace) {
+        AppLogger.error(
+          '切换失败后恢复原站状态失败',
+          tag: 'SiteSwitch',
+          stackTrace: recoveryStackTrace,
+          fields: {
+            ...fields,
+            'stage': 'rollback',
+            'errorType': recoveryError.runtimeType.toString(),
+            if (recoveryError is PlatformException)
+              'errorCode': recoveryError.code,
+          },
+        );
       } finally {
         _isSwitching.value = false;
       }
