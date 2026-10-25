@@ -92,8 +92,11 @@ class CustomFontService {
   }
 
   /// 删除已导入的字体文件（换字体/移除后调用；文件已不存在时静默跳过）。
+  /// 推荐字体由自己的服务管理；这里只移除选用记录，保留已下载文件。
   static Future<void> delete(String? path) async {
     if (path == null) return;
+    // 同时兼容 Windows 原生路径和历史缓存里的正斜杠路径。
+    if (path.split(RegExp(r'[/\\]')).contains('recommended_fonts')) return;
     try {
       final file = File(path);
       if (file.existsSync()) {

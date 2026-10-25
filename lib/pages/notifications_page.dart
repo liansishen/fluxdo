@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:app_icons/app_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../providers/discourse_providers.dart';
 import '../providers/preferences_provider.dart';
 import '../utils/load_more_coordinator.dart';
@@ -136,7 +137,7 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
                           style: mj == null
                               ? const TextStyle(color: Colors.grey)
                               : TextStyle(
-                                  fontFamily: MojianTokens.serifFamily,
+                                  fontFamily: mj.titleFamily,
                                   fontSize: 16,
                                   color: mj.ink2,
                                 ),
@@ -215,7 +216,7 @@ class _MojianDayHead extends StatelessWidget {
           Text(
             label,
             style: TextStyle(
-              fontFamily: MojianTokens.serifFamily,
+              fontFamily: MojianTokens.titleFamilyFor(context),
               fontWeight: FontWeight.w600,
               fontSize: 12.5,
               letterSpacing: 2.4,

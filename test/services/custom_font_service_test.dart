@@ -62,6 +62,34 @@ void main() {
     test('文件不存在时注册失败而不是抛异常', () async {
       expect(await CustomFontService.load('/no/such/font.ttf'), isFalse);
     });
+
+    test('取消选用推荐字体不删除下载文件，兼容原生与历史路径', () async {
+      final root = await Directory.systemTemp.createTemp('fluxdo_font_delete');
+      addTearDown(() => root.delete(recursive: true));
+      final recommended = await Directory.fromUri(
+        root.uri.resolve('recommended_fonts/'),
+      ).create();
+      final file = File.fromUri(recommended.uri.resolve('cached.ttf'));
+
+      for (final path in [file.path, file.path.replaceAll('\\', '/')]) {
+        await file.writeAsBytes([0, 1, 2]);
+        await CustomFontService.delete(path);
+        expect(file.existsSync(), isTrue, reason: path);
+      }
+    });
+
+    test('普通自选缓存仍可删除，不误判相似目录名', () async {
+      final root = await Directory.systemTemp.createTemp('fluxdo_font_delete');
+      addTearDown(() => root.delete(recursive: true));
+      final custom = await Directory.fromUri(
+        root.uri.resolve('recommended_fonts_backup/'),
+      ).create();
+      final file = await File.fromUri(custom.uri.resolve('custom_font_1.ttf'))
+          .writeAsBytes([0, 1, 2]);
+
+      await CustomFontService.delete(file.path);
+      expect(file.existsSync(), isFalse);
+    });
   });
 }
 

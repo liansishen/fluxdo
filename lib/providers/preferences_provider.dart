@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../constants/composer_tool_defaults.dart';
 import '../models/topic_card_style.dart';
+import '../models/vscode_body_style.dart';
 import '../navigation/nav_action_bus.dart';
 import '../services/network/request_scheduler_config.dart';
 import '../services/uploads/upload_settings.dart';
@@ -111,6 +112,9 @@ class AppPreferences {
 
   /// 在首页创作按钮上方显示独立刷新入口，默认关闭。
   final bool homeRefreshButton;
+
+  /// 首页列表往回（向上）滑时，创作按钮临时变成刷新按钮；默认开启
+  final bool homeFabRefreshOnScrollUp;
 
   /// 自动识别剪贴板中的 Linux.do 话题链接
   final bool clipboardTopicLinkDetection;
@@ -311,6 +315,10 @@ class AppPreferences {
   /// 话题卡片自定义样式（元信息字段开关 / 头像布局 / 动态头像）
   final TopicCardStyle topicCardStyle;
 
+  /// VS Code 正文呈现方式与编程语言，不影响其他界面风格。
+  final VscodeBodyStyle vscodeBodyStyle;
+  final VscodeCodeLanguage vscodeCodeLanguage;
+
   AppPreferences({
     required this.autoPanguSpacing,
     required this.displayPanguSpacing,
@@ -321,6 +329,7 @@ class AppPreferences {
     required this.shareImageThemeIndex,
     required this.autoFillLogin,
     this.homeRefreshButton = false,
+    this.homeFabRefreshOnScrollUp = true,
     required this.clipboardTopicLinkDetection,
     required this.topicFilterKeywords,
     this.topicFilterWholeWord = false,
@@ -377,6 +386,8 @@ class AppPreferences {
     this.editorToolbarTools = kDefaultSourceVisibleTools,
     this.richToolbarTools = kDefaultRichVisibleTools,
     this.topicCardStyle = TopicCardStyle.defaults,
+    this.vscodeBodyStyle = VscodeBodyStyle.compact,
+    this.vscodeCodeLanguage = VscodeCodeLanguage.java,
   });
 
   AppPreferences copyWith({
@@ -389,6 +400,7 @@ class AppPreferences {
     int? shareImageThemeIndex,
     bool? autoFillLogin,
     bool? homeRefreshButton,
+    bool? homeFabRefreshOnScrollUp,
     bool? clipboardTopicLinkDetection,
     List<String>? topicFilterKeywords,
     bool? topicFilterWholeWord,
@@ -445,6 +457,8 @@ class AppPreferences {
     List<String>? editorToolbarTools,
     List<String>? richToolbarTools,
     TopicCardStyle? topicCardStyle,
+    VscodeBodyStyle? vscodeBodyStyle,
+    VscodeCodeLanguage? vscodeCodeLanguage,
   }) {
     return AppPreferences(
       autoPanguSpacing: autoPanguSpacing ?? this.autoPanguSpacing,
@@ -457,6 +471,8 @@ class AppPreferences {
       shareImageThemeIndex: shareImageThemeIndex ?? this.shareImageThemeIndex,
       autoFillLogin: autoFillLogin ?? this.autoFillLogin,
       homeRefreshButton: homeRefreshButton ?? this.homeRefreshButton,
+      homeFabRefreshOnScrollUp:
+          homeFabRefreshOnScrollUp ?? this.homeFabRefreshOnScrollUp,
       clipboardTopicLinkDetection:
           clipboardTopicLinkDetection ?? this.clipboardTopicLinkDetection,
       topicFilterKeywords: topicFilterKeywords ?? this.topicFilterKeywords,
@@ -539,6 +555,8 @@ class AppPreferences {
       editorToolbarTools: editorToolbarTools ?? this.editorToolbarTools,
       richToolbarTools: richToolbarTools ?? this.richToolbarTools,
       topicCardStyle: topicCardStyle ?? this.topicCardStyle,
+      vscodeBodyStyle: vscodeBodyStyle ?? this.vscodeBodyStyle,
+      vscodeCodeLanguage: vscodeCodeLanguage ?? this.vscodeCodeLanguage,
     );
   }
 }
@@ -554,6 +572,8 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
   static const String _shareImageThemeIndexKey = 'pref_share_image_theme_index';
   static const String _autoFillLoginKey = 'pref_auto_fill_login';
   static const String _homeRefreshButtonKey = 'pref_home_refresh_button';
+  static const String _homeFabRefreshOnScrollUpKey =
+      'pref_home_fab_refresh_on_scroll_up';
   static const String _clipboardTopicLinkDetectionKey =
       'pref_clipboard_topic_link_detection';
   static const String _topicFilterKeywordsKey = 'pref_topic_filter_keywords';
@@ -631,6 +651,8 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
   static const String _editorToolbarToolsKey = 'pref_editor_toolbar_tools';
   static const String _richToolbarToolsKey = 'pref_rich_toolbar_tools';
   static const String _topicCardStyleKey = 'pref_topic_card_style';
+  static const String _vscodeBodyStyleKey = 'pref_vscode_body_style';
+  static const String _vscodeCodeLanguageKey = 'pref_vscode_code_language';
 
   PreferencesNotifier(this._prefs)
     : super(
@@ -646,6 +668,8 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
           shareImageThemeIndex: _prefs.getInt(_shareImageThemeIndexKey) ?? -1,
           autoFillLogin: _prefs.getBool(_autoFillLoginKey) ?? true,
           homeRefreshButton: _prefs.getBool(_homeRefreshButtonKey) ?? false,
+          homeFabRefreshOnScrollUp:
+              _prefs.getBool(_homeFabRefreshOnScrollUpKey) ?? true,
           clipboardTopicLinkDetection:
               _prefs.getBool(_clipboardTopicLinkDetectionKey) ?? false,
           topicFilterKeywords:
@@ -750,6 +774,14 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
           topicCardStyle: TopicCardStyle.fromJsonString(
             _prefs.getString(_topicCardStyleKey),
           ),
+          vscodeBodyStyle: VscodeBodyStyle.values.firstWhere(
+            (value) => value.name == _prefs.get(_vscodeBodyStyleKey),
+            orElse: () => VscodeBodyStyle.compact,
+          ),
+          vscodeCodeLanguage: VscodeCodeLanguage.values.firstWhere(
+            (value) => value.name == _prefs.get(_vscodeCodeLanguageKey),
+            orElse: () => VscodeCodeLanguage.java,
+          ),
         ),
       ) {
     // 废弃的局部开关不再参与全局玻璃策略。
@@ -768,6 +800,16 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
   }
 
   final SharedPreferences _prefs;
+
+  Future<void> setVscodeBodyStyle(VscodeBodyStyle style) async {
+    state = state.copyWith(vscodeBodyStyle: style);
+    await _prefs.setString(_vscodeBodyStyleKey, style.name);
+  }
+
+  Future<void> setVscodeCodeLanguage(VscodeCodeLanguage language) async {
+    state = state.copyWith(vscodeCodeLanguage: language);
+    await _prefs.setString(_vscodeCodeLanguageKey, language.name);
+  }
 
   Future<void> setAutoPanguSpacing(bool enabled) async {
     state = state.copyWith(autoPanguSpacing: enabled);
@@ -814,6 +856,11 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
   Future<void> setHomeRefreshButton(bool enabled) async {
     state = state.copyWith(homeRefreshButton: enabled);
     await _prefs.setBool(_homeRefreshButtonKey, enabled);
+  }
+
+  Future<void> setHomeFabRefreshOnScrollUp(bool enabled) async {
+    state = state.copyWith(homeFabRefreshOnScrollUp: enabled);
+    await _prefs.setBool(_homeFabRefreshOnScrollUpKey, enabled);
   }
 
   Future<void> setClipboardTopicLinkDetection(bool enabled) async {

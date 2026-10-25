@@ -36,6 +36,101 @@ extension _UserActions on _TopicDetailPageState {
     }
   }
 
+  Future<Post?> _showTopicComposer({
+    required BuildContext context,
+    required int topicId,
+    int? categoryId,
+    Post? replyToPost,
+    Post? editPost,
+    String? initialContent,
+    String? topicTitle,
+    Future<Draft?>? preloadedDraftFuture,
+    bool isPrivateMessageTopic = false,
+    bool isPmWithNonHumanUser = false,
+    ShortcutSurfaceConfig? shortcutSurface,
+    ValueChanged<PendingPost>? onEnqueued,
+  }) async {
+    if (VscodeTokens.maybeOf(context) == null || !PlatformUtils.isDesktop) {
+      if (editPost != null) {
+        return showEditSheet(
+          context: context,
+          topicId: topicId,
+          post: editPost,
+          categoryId: categoryId,
+          isPrivateMessageTopic: isPrivateMessageTopic,
+          isPmWithNonHumanUser: isPmWithNonHumanUser,
+          shortcutSurface: shortcutSurface,
+        );
+      }
+      return showReplySheet(
+        context: context,
+        topicId: topicId,
+        categoryId: categoryId,
+        replyToPost: replyToPost,
+        initialContent: initialContent,
+        topicTitle: topicTitle,
+        preloadedDraftFuture: preloadedDraftFuture,
+        isPrivateMessageTopic: isPrivateMessageTopic,
+        isPmWithNonHumanUser: isPmWithNonHumanUser,
+        shortcutSurface: shortcutSurface,
+        onEnqueued: onEnqueued,
+      );
+    }
+    final existing = _terminalReplyComposer;
+    if (existing != null) {
+      _terminalPanelKey.currentState?.reveal();
+      if (existing.replyToPost?.id == replyToPost?.id &&
+          existing.editPost?.id == editPost?.id) {
+        if (initialContent != null) {
+          _terminalReplyController.appendContent(initialContent);
+        }
+        _terminalReplyController.focus();
+        return null;
+      }
+      // 不同楼层使用各自草稿；先安全保存旧编辑器，不能把旧正文带到新目标。
+      final previous = _terminalReplyCompletion!;
+      if (!_terminalReplyController.close()) {
+        return null;
+      }
+      await previous.future;
+      if (!mounted) {
+        return null;
+      }
+    }
+    final completion = Completer<Post?>();
+    setState(() {
+      _terminalReplyCompletion = completion;
+      _terminalReplyComposer = ReplySheet(
+        key: UniqueKey(),
+        embedded: true,
+        controller: _terminalReplyController,
+        topicId: topicId,
+        categoryId: categoryId,
+        replyToPost: replyToPost,
+        editPost: editPost,
+        initialContent: initialContent,
+        topicTitle: topicTitle,
+        preloadedDraftFuture: preloadedDraftFuture,
+        isPrivateMessageTopic: isPrivateMessageTopic,
+        isPmWithNonHumanUser: isPmWithNonHumanUser,
+        onEnqueued: onEnqueued,
+        onClosed: (post) {
+          if (completion.isCompleted) {
+            return;
+          }
+          if (mounted) {
+            setState(() {
+              _terminalReplyComposer = null;
+              _terminalReplyCompletion = null;
+            });
+          }
+          completion.complete(post);
+        },
+      );
+    });
+    return completion.future;
+  }
+
   Future<void> _handleReply(Post? replyToPost, {String? initialContent}) async {
     final params = _params;
     final notifier = ref.read(topicDetailProvider(params).notifier);
@@ -49,7 +144,7 @@ extension _UserActions on _TopicDetailPageState {
     );
     final preloadedDraftFuture = DiscourseService().getDraft(draftKey);
 
-    final newPost = await showReplySheet(
+    final newPost = await _showTopicComposer(
       context: context,
       topicId: widget.topicId,
       categoryId: detail?.categoryId,
@@ -238,10 +333,10 @@ extension _UserActions on _TopicDetailPageState {
     final params = _params;
     final detail = ref.read(topicDetailProvider(params)).value;
 
-    final updatedPost = await showEditSheet(
+    final updatedPost = await _showTopicComposer(
       context: context,
       topicId: widget.topicId,
-      post: post,
+      editPost: post,
       categoryId: detail?.categoryId,
       isPrivateMessageTopic: detail?.isPrivateMessage ?? false,
       isPmWithNonHumanUser: detail?.pmWithNonHumanUser ?? false,
@@ -767,7 +862,7 @@ extension _UserActions on _TopicDetailPageState {
     );
     final preloadedDraftFuture = DiscourseService().getDraft(draftKey);
 
-    final newPost = await showReplySheet(
+    final newPost = await _showTopicComposer(
       context: context,
       topicId: widget.topicId,
       categoryId: detail?.categoryId,
@@ -1206,13 +1301,31 @@ extension _UserActions on _TopicDetailPageState {
     }
   }
 
-  void _showJumpToPostDialog() {
+  Future<void> _showJumpToPostDialog() async {
     final detail = ref.read(topicDetailProvider(_params)).value;
-    if (detail == null) return;
+    if (detail == null || detail.postsCount <= 0) return;
 
-    final controller = TextEditingController(
-      text: _resolvedShortcutPostNumber?.toString() ?? '',
-    );
+    if (VscodeTokens.maybeOf(context) != null) {
+      final target = await showAppDialog<int>(
+        context: context,
+        blur: false,
+        barrierColor: Colors.transparent,
+        shortcutSurface: const ShortcutSurfaceConfig(
+          id: ShortcutSurfaceIds.topicJumpToPost,
+          triggerAction: ShortcutAction.jumpToPost,
+          repeatBehavior: ShortcutSurfaceRepeatBehavior.toggle,
+        ),
+        builder: (_) => VscodePostJumpDialog(
+          currentPostNumber: _resolvedShortcutPostNumber ?? 1,
+          maxPostNumber: math.max(detail.highestPostNumber, detail.postsCount),
+        ),
+      );
+      if (!mounted || target == null) return;
+      await _jumpToPostInTopic(target);
+      return;
+    }
+
+    var postNumberInput = _resolvedShortcutPostNumber?.toString() ?? '';
 
     showAppDialog(
       context: context,
@@ -1223,8 +1336,9 @@ extension _UserActions on _TopicDetailPageState {
       ),
       builder: (context) => AlertDialog(
         title: Text(context.l10n.topic_jump),
-        content: TextField(
-          controller: controller,
+        content: TextFormField(
+          initialValue: postNumberInput,
+          onChanged: (value) => postNumberInput = value,
           autofocus: true,
           keyboardType: TextInputType.number,
           decoration: InputDecoration(
@@ -1239,7 +1353,7 @@ extension _UserActions on _TopicDetailPageState {
           ),
           FilledButton(
             onPressed: () {
-              final postNumber = int.tryParse(controller.text.trim());
+              final postNumber = int.tryParse(postNumberInput.trim());
               Navigator.pop(context);
               if (postNumber != null && postNumber > 0) {
                 unawaited(
@@ -1340,7 +1454,7 @@ extension _UserActions on _TopicDetailPageState {
     final preloadedDraftFuture = DiscourseService().getDraft(draftKey);
 
     // 打开回复框，预填引用内容（回复给被引用的帖子）
-    final newPost = await showReplySheet(
+    final newPost = await _showTopicComposer(
       context: context,
       topicId: widget.topicId,
       categoryId: detail?.categoryId,
@@ -1393,7 +1507,7 @@ extension _UserActions on _TopicDetailPageState {
     final preloadedDraftFuture = DiscourseService().getDraft(draftKey);
 
     // 打开回复框，预填引用内容
-    final newPost = await showReplySheet(
+    final newPost = await _showTopicComposer(
       context: context,
       topicId: widget.topicId,
       categoryId: detail?.categoryId,

@@ -105,6 +105,7 @@ import 'widgets/post/post_item/render_parse_cache.dart';
 import 'utils/scroll_busy_signal.dart';
 import 'theme/mojian_theme.dart';
 import 'theme/claude_theme.dart';
+import 'theme/vscode_theme.dart';
 import 'utils/responsive.dart';
 import 'theme/theme_resolver.dart';
 import 'widgets/common/app_background_layer.dart';
@@ -216,7 +217,6 @@ Future<void> main(List<String> args) async {
   // 站点必须先于 Cookie、认证和预加载单例确定，同一引擎内不再改变。
   final sitePreferences = await SharedPreferences.getInstance();
   await SiteContext.initialize(sitePreferences);
-
   // 墨笺标题宋体（Noto Serif SC 子集）的 OFL 许可，进「开源许可」页
   LicenseRegistry.addLicense(() async* {
     final text = await rootBundle.loadString(
@@ -291,7 +291,7 @@ Future<void> main(List<String> args) async {
   PaintingBinding.instance.imageCache.maximumSizeBytes = 256 * 1024 * 1024;
   PaintingBinding.instance.imageCache.maximumSize = 30000;
 
-  // 启用 Edge-to-Edge 模式（小白条沉浸式）
+  // 冷启动及整进程切站后统一启用贴边显示，不重复发送 Android 平台调用。
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
   // 初始化语法高亮服务（预热 Isolate Worker 和字体）
@@ -709,6 +709,7 @@ ThemeData _buildThemeForStyle(
         scheme: scheme,
         accent: themeState.mojianAccent,
         fontFamily: themeState.fontFamilyName,
+        titleFontFamily: themeState.titleFontFamilyName,
         pageTransitionsTheme: fullscreenSwipeBack
             ? _fullscreenSwipePageTransitionsTheme
             : _pageTransitionsTheme,
@@ -718,6 +719,17 @@ ThemeData _buildThemeForStyle(
       );
     case UiStyle.claude:
       return ClaudeTheme.build(
+        scheme: scheme,
+        fontFamily: themeState.fontFamilyName,
+        pageTransitionsTheme: fullscreenSwipeBack
+            ? _fullscreenSwipePageTransitionsTheme
+            : _pageTransitionsTheme,
+        iconTheme: _appIconTheme(scheme.onSurface),
+        primaryIconTheme: _appIconTheme(scheme.onPrimary),
+        extensions: const [M3eFlags(enabled: false)],
+      );
+    case UiStyle.vscode:
+      return VscodeTheme.build(
         scheme: scheme,
         fontFamily: themeState.fontFamilyName,
         pageTransitionsTheme: fullscreenSwipeBack
@@ -833,6 +845,7 @@ class MainApp extends ConsumerWidget {
             themeState.mode,
             black: themeState.blackEnabled,
           ),
+          UiStyle.vscode => VscodeTheme.resolve(themeState.mode),
           UiStyle.classic => ThemeResolver.resolve(
             mode: themeState.mode,
             neutral: themeState.neutralEnabled,

@@ -11,6 +11,7 @@ import '../../models/topic_card_style.dart';
 import '../../theme/mojian_theme.dart';
 import '../../utils/color_utils.dart';
 import '../../utils/number_utils.dart';
+import '../../utils/relative_time_clock.dart';
 import '../../utils/time_utils.dart';
 import 'topic_creation_time.dart';
 
@@ -152,8 +153,13 @@ class TopicCardLayout {
 
   /// 离屏缓存按实际分钟惰性失效，不为缓存永久订阅心跳。
   /// 在屏卡仍由 RenderObject 的 attach/detach 管理心跳并刷新时间。
-  static int _currentMinuteEpoch() =>
-      DateTime.now().millisecondsSinceEpoch ~/ Duration.millisecondsPerMinute;
+  /// 相对时间的分钟代:全局心跳每跳一次 +1,进 stamp —— 含时间的
+  /// 排版跨分钟自动失效,下次 build 惰性重排(消灭"自绘卡时间是
+  /// 排版快照不自刷"与 widget 路径的行为差异)。渲染对象侧由
+  /// PaintedTopicCard 订阅心跳触发 rebuild,失效与重建同源同帧。
+  /// 只读心跳计数、不挂监听:挂了永久监听会让心跳在没有在屏卡片时
+  /// 也一直跑(widget 测试里表现为「树销毁后仍有 Timer」)。
+  static int _currentMinuteEpoch() => RelativeTimeClock.instance.tick;
 
   /// 存入缓存(替换旧实例)并按需 LRU。**内容变化必产出新实例**:
   /// PaintedTopicCard 的渲染对象用 identical 判断是否重绘,若复用同一
@@ -663,7 +669,7 @@ class TopicCardLayout {
         : messageStyle
         ? subjectColor
         : titleColor;
-    final titleFamily = mj != null ? MojianTokens.serifFamily : null;
+    final titleFamily = mj?.titleFamily;
     final titleHeight = mjRow ? 1.45 : 1.3;
 
     final tb =

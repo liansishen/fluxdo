@@ -26,8 +26,11 @@ class ProxyLeafTrust {
 
   static const _channel = MethodChannel('cfluxdo/wpe_tls');
 
-  /// 必须经 ECH 的主机（后缀匹配），传给代理作为 MITM 范围
-  static const mitmHosts = ['linux.do', 'idcflare.com'];
+  /// 必须经 ECH 的主机（后缀匹配），传给代理作为 MITM 范围。
+  /// ldstatic.com 是 linux.do 的静态资源域（cdn / cdn3 图片与表情、ping 消息总线、
+  /// linuxdo-uploads.s3 直传）：高墙地区对它的明文 SNI 同样是 RST，只做隧道
+  /// 的话图片、通知、上传全挂，所以和主站一样由代理终结 TLS、经 ECH 上游
+  static const mitmHosts = ['linux.do', 'idcflare.com', 'ldstatic.com'];
 
   /// 代理启动后预先放行的主机：linux.do 主站与 App 里出现过的子域
   static const _preallowHosts = [
@@ -43,6 +46,10 @@ class ProxyLeafTrust {
     'linuxdo-uploads.s3.linux.do',
     'idcflare.com',
     'www.idcflare.com',
+    'cdn.ldstatic.com',
+    'cdn3.ldstatic.com',
+    'ping.ldstatic.com',
+    'linuxdo-uploads.s3.ldstatic.com',
   ];
 
   /// 证书出错时按「是否代理签发的那张叶子」裁定（Linux / Windows）
@@ -68,7 +75,9 @@ class ProxyLeafTrust {
         debugPrint('[ProxyLeafTrust] 放行 $host 失败: $e');
       }
     }
-    NetworkLogger.log('[ProxyLeafTrust] 已预先放行 $ok/${_preallowHosts.length} 个主机的代理叶子证书');
+    NetworkLogger.log(
+      '[ProxyLeafTrust] 已预先放行 $ok/${_preallowHosts.length} 个主机的代理叶子证书',
+    );
   }
 
   /// 主文档证书出错时的判定：[der] 与代理为 [host] 签发的叶子完全相同才返回 true
@@ -78,7 +87,9 @@ class ProxyLeafTrust {
     if (pem == null) return false;
     final expected = pemToDer(pem);
     final same = expected != null && listEquals(expected, der);
-    NetworkLogger.log('[ProxyLeafTrust] $host 主文档证书出错，与代理叶子${same ? '一致，放行' : '不一致，拒绝'}');
+    NetworkLogger.log(
+      '[ProxyLeafTrust] $host 主文档证书出错，与代理叶子${same ? '一致，放行' : '不一致，拒绝'}',
+    );
     return same;
   }
 

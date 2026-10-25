@@ -1,11 +1,14 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxdo/config/forum_site.dart';
 import 'package:fluxdo/services/credential_store_service.dart';
 import 'package:fluxdo/services/site_context.dart';
+import 'package:fluxdo/services/cdk_oauth_service.dart';
+import 'package:fluxdo/services/ldc_oauth_service.dart';
 import 'package:fluxdo/services/user_api_key_service.dart';
 import 'package:fluxdo/services/network/cookie/csrf_token_service.dart';
 import 'package:fluxdo/services/webview_session_cookie_refresh_service.dart';
@@ -33,12 +36,16 @@ void main() {
       'login_credential_password': 'linux-password',
       'user_api_key_key': 'linux-api-key',
       'user_api_key_pending_nonce': 'linux-nonce',
-      'user_api_key_rsa_private': _privateJson(linuxKeys.privateKey as RSAPrivateKey),
+      'user_api_key_rsa_private': _privateJson(
+        linuxKeys.privateKey as RSAPrivateKey,
+      ),
       'site:idcflare:login_credential_username': 'same-user',
       'site:idcflare:login_credential_password': 'idc-password',
       'site:idcflare:user_api_key_key': 'idc-api-key',
       'site:idcflare:user_api_key_pending_nonce': 'idc-nonce',
-      'site:idcflare:user_api_key_rsa_private': _privateJson(idcKeys.privateKey as RSAPrivateKey),
+      'site:idcflare:user_api_key_rsa_private': _privateJson(
+        idcKeys.privateKey as RSAPrivateKey,
+      ),
       'linux_do_csrf_token': 'linux-csrf',
       'site:idcflare:linux_do_csrf_token': 'idc-csrf',
       'ai_api_key_external': 'global-ai-secret',
@@ -47,14 +54,26 @@ void main() {
 
   test('同名账号读取和清除只作用于本站，旧站及全局AI秘密保留', () async {
     final credentials = CredentialStoreService();
-    expect(await credentials.load(), (username: 'same-user', password: 'idc-password'));
+    expect(await credentials.load(), (
+      username: 'same-user',
+      password: 'idc-password',
+    ));
     await credentials.save('new-idc-user', 'new-idc-password');
-    expect(await credentials.load(), (username: 'new-idc-user', password: 'new-idc-password'));
-    expect(await secure.read(key: 'login_credential_password'), 'linux-password');
+    expect(await credentials.load(), (
+      username: 'new-idc-user',
+      password: 'new-idc-password',
+    ));
+    expect(
+      await secure.read(key: 'login_credential_password'),
+      'linux-password',
+    );
     await credentials.clear();
     expect(await credentials.hasCredentials(), isFalse);
     expect(await secure.read(key: 'login_credential_username'), 'same-user');
-    expect(await secure.read(key: 'login_credential_password'), 'linux-password');
+    expect(
+      await secure.read(key: 'login_credential_password'),
+      'linux-password',
+    );
     expect(await secure.read(key: 'ai_api_key_external'), 'global-ai-secret');
   });
 
@@ -83,10 +102,49 @@ void main() {
     expect(result.phase, 'not_applicable');
   });
 
+  test('IDCFlare 不发起 LINUX DO 余额授权或会话请求', () async {
+    var requests = 0;
+    final dio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            requests++;
+            handler.reject(DioException(requestOptions: options));
+          },
+        ),
+      );
+    final cdk = CdkOAuthService(dio: dio);
+    final ldc = LdcOAuthService(dio: dio);
+    addTearDown(() => dio.close(force: true));
+
+    await expectLater(cdk.getAuthUrl(), throwsA(isA<UnsupportedError>()));
+    await expectLater(ldc.getAuthUrl(), throwsA(isA<UnsupportedError>()));
+    await expectLater(
+      cdk.callback('code', 'state'),
+      throwsA(isA<UnsupportedError>()),
+    );
+    await expectLater(
+      ldc.callback('code', 'state'),
+      throwsA(isA<UnsupportedError>()),
+    );
+    expect(await cdk.getUserInfo(expectedUsername: 'same-user'), isNull);
+    expect(await ldc.getUserInfo(expectedUsername: 'same-user'), isNull);
+    await cdk.logout();
+    await ldc.logout();
+    expect(requests, 0);
+  });
+
   test('加密回调只读识别各站目标，错误站点不会消费nonce或写凭据', () async {
     final service = UserApiKeyService();
-    final linuxCallback = _callback(linuxKeys.publicKey as RSAPublicKey, 'linux-nonce', 'new-linux-key');
-    expect(await service.resolveAuthRedirectSite(linuxCallback), ForumSite.linuxDo);
+    final linuxCallback = _callback(
+      linuxKeys.publicKey as RSAPublicKey,
+      'linux-nonce',
+      'new-linux-key',
+    );
+    expect(
+      await service.resolveAuthRedirectSite(linuxCallback),
+      ForumSite.linuxDo,
+    );
     expect(await secure.read(key: 'user_api_key_pending_nonce'), 'linux-nonce');
     final rejected = await service.handleAuthRedirect(linuxCallback);
     expect(rejected.stale, isTrue);
@@ -97,17 +155,31 @@ void main() {
 
   test('本站回调校验nonce，错nonce保持pending，正确nonce一次性消费', () async {
     final service = UserApiKeyService();
-    final wrong = _callback(idcKeys.publicKey as RSAPublicKey, 'linux-nonce', 'wrong-key');
+    final wrong = _callback(
+      idcKeys.publicKey as RSAPublicKey,
+      'linux-nonce',
+      'wrong-key',
+    );
     expect(await service.resolveAuthRedirectSite(wrong), isNull);
     expect((await service.handleAuthRedirect(wrong)).stale, isTrue);
-    expect(await secure.read(key: 'site:idcflare:user_api_key_pending_nonce'), 'idc-nonce');
+    expect(
+      await secure.read(key: 'site:idcflare:user_api_key_pending_nonce'),
+      'idc-nonce',
+    );
     expect(await service.readApiKey(), 'idc-api-key');
 
-    final correct = _callback(idcKeys.publicKey as RSAPublicKey, 'idc-nonce', 'new-idc-key');
+    final correct = _callback(
+      idcKeys.publicKey as RSAPublicKey,
+      'idc-nonce',
+      'new-idc-key',
+    );
     expect(await service.resolveAuthRedirectSite(correct), ForumSite.idcFlare);
     expect((await service.handleAuthRedirect(correct)).ok, isTrue);
     expect(await service.readApiKey(), 'new-idc-key');
-    expect(await secure.read(key: 'site:idcflare:user_api_key_pending_nonce'), isNull);
+    expect(
+      await secure.read(key: 'site:idcflare:user_api_key_pending_nonce'),
+      isNull,
+    );
     expect(await service.resolveAuthRedirectSite(correct), isNull);
     expect((await service.handleAuthRedirect(correct)).stale, isTrue);
     expect(await secure.read(key: 'user_api_key_key'), 'linux-api-key');
@@ -117,12 +189,16 @@ void main() {
 
 AsymmetricKeyPair<PublicKey, PrivateKey> _keyPair(int seed) {
   final random = FortunaRandom()
-    ..seed(KeyParameter(Uint8List.fromList(List.generate(32, (i) => i + seed))));
+    ..seed(
+      KeyParameter(Uint8List.fromList(List.generate(32, (i) => i + seed))),
+    );
   final generator = RSAKeyGenerator()
-    ..init(ParametersWithRandom(
-      RSAKeyGeneratorParameters(BigInt.from(65537), 1024, 64),
-      random,
-    ));
+    ..init(
+      ParametersWithRandom(
+        RSAKeyGeneratorParameters(BigInt.from(65537), 1024, 64),
+        random,
+      ),
+    );
   return generator.generateKeyPair();
 }
 
@@ -136,11 +212,11 @@ String _privateJson(RSAPrivateKey key) => jsonEncode({
 Uri _callback(RSAPublicKey publicKey, String nonce, String apiKey) {
   final cipher = PKCS1Encoding(RSAEngine())
     ..init(true, PublicKeyParameter<RSAPublicKey>(publicKey));
-  final payload = cipher.process(Uint8List.fromList(utf8.encode(jsonEncode({
-    'nonce': nonce,
-    'key': apiKey,
-  }))));
-  return Uri.parse('discourse://auth_redirect').replace(queryParameters: {
-    'payload': base64Encode(payload),
-  });
+  final payload = cipher.process(
+    Uint8List.fromList(
+      utf8.encode(jsonEncode({'nonce': nonce, 'key': apiKey})),
+    ),
+  );
+  return Uri.parse('discourse://auth_redirect')
+      .replace(queryParameters: {'payload': base64Encode(payload)});
 }

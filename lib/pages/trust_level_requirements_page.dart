@@ -29,8 +29,9 @@ class _TrustLevelRequirementsPageState
   MojianTokens? get _mj => Theme.of(context).extension<MojianTokens>();
   Color get _good => _mj?.jade ?? const Color(0xFF22c55e);
   Color get _warn => _mj?.gold ?? const Color(0xFFf59e0b);
-  Color get _bad =>
-      _mj != null ? Theme.of(context).colorScheme.error : const Color(0xFFef4444);
+  Color get _bad => _mj != null
+      ? Theme.of(context).colorScheme.error
+      : const Color(0xFFef4444);
 
   bool _isLoading = true;
   Object? _error;
@@ -561,9 +562,11 @@ class _TrustLevelRequirementsPageState
                     Text(
                       _data!.title,
                       style: TextStyle(
-                        fontFamily: mj != null ? MojianTokens.serifFamily : null,
+                        fontFamily: mj?.titleFamily,
                         fontSize: 28,
-                        fontWeight: mj != null ? FontWeight.w700 : FontWeight.w600,
+                        fontWeight: mj != null
+                            ? FontWeight.w700
+                            : FontWeight.w600,
                         color: mj?.ink ?? colorScheme.onSurface,
                         height: 1.2,
                       ),
@@ -719,7 +722,7 @@ class _TrustLevelRequirementsPageState
                   '${ring.current}',
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: mj != null ? FontWeight.w700 : FontWeight.w800,
-                    fontFamily: mj != null ? MojianTokens.serifFamily : null,
+                    fontFamily: mj?.titleFamily,
                     color: mj?.ink ?? colorScheme.onSurface,
                   ),
                 ),
@@ -800,40 +803,43 @@ class _TrustLevelRequirementsPageState
               ),
             )
           else
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: Container(
-              height: 8,
-              width: double.infinity,
-              color: colorScheme.secondaryContainer.withValues(alpha: 0.5),
-              child: FractionallySizedBox(
-                alignment: Alignment.centerLeft,
-                widthFactor: bar.progress,
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: bar.isMet
-                          ? [const Color(0xFF22c55e), const Color(0xFF4ade80)]
-                          : [const Color(0xFFf59e0b), const Color(0xFFfbbf24)],
-                      begin: Alignment.centerLeft,
-                      end: Alignment.centerRight,
-                    ),
-                    borderRadius: BorderRadius.circular(4),
-                    boxShadow: [
-                      BoxShadow(
-                        color: bar.isMet
-                            ? const Color(0xFF22c55e).withValues(alpha: 0.4)
-                            : const Color(0xFFf59e0b).withValues(alpha: 0.4),
-                        blurRadius: 6,
-                        spreadRadius: 0,
-                        offset: const Offset(0, 0),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: Container(
+                height: 8,
+                width: double.infinity,
+                color: colorScheme.secondaryContainer.withValues(alpha: 0.5),
+                child: FractionallySizedBox(
+                  alignment: Alignment.centerLeft,
+                  widthFactor: bar.progress,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: bar.isMet
+                            ? [const Color(0xFF22c55e), const Color(0xFF4ade80)]
+                            : [
+                                const Color(0xFFf59e0b),
+                                const Color(0xFFfbbf24),
+                              ],
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
                       ),
-                    ],
+                      borderRadius: BorderRadius.circular(4),
+                      boxShadow: [
+                        BoxShadow(
+                          color: bar.isMet
+                              ? const Color(0xFF22c55e).withValues(alpha: 0.4)
+                              : const Color(0xFFf59e0b).withValues(alpha: 0.4),
+                          blurRadius: 6,
+                          spreadRadius: 0,
+                          offset: const Offset(0, 0),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
         ],
       ),
     );
@@ -1023,7 +1029,7 @@ class _TrustLevelRequirementsPageState
                 veto.value,
                 style: theme.textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.w600,
-                  fontFamily: mj != null ? MojianTokens.serifFamily : null,
+                  fontFamily: mj?.titleFamily,
                   color: iconColor,
                 ),
               ),
@@ -1301,9 +1307,7 @@ class _TrustLevelRequirementsPageState
             M3eLinearProgress(
               value: progress,
               color: color,
-              trackColor: colorScheme.secondaryContainer.withValues(
-                alpha: 0.5,
-              ),
+              trackColor: colorScheme.secondaryContainer.withValues(alpha: 0.5),
             ),
           ],
         ),

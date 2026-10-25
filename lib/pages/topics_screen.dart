@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:app_icons/app_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
+
 import '../l10n/s.dart';
 import '../models/search_filter.dart';
 import '../models/category.dart';
@@ -14,6 +15,7 @@ import '../widgets/layout/master_detail_layout.dart';
 import '../widgets/topics/topics_fab.dart';
 import '../widgets/layout/pane_projection_back_scope.dart';
 import '../widgets/layout/home_workspace_scope.dart';
+import '../theme/vscode_theme.dart';
 import 'topics_page.dart';
 import 'search_page.dart';
 import 'settings_page.dart';
@@ -205,21 +207,23 @@ class _TopicsScreenState extends ConsumerState<TopicsScreen> {
           // FAB 只在 master 真的是列表时才有意义，之前没跟着切换，压栈后
           // 预览一个话题下面还挂着"新建话题"的加号，容易被当成回复按钮。
           // 保留宿主，通过活跃状态播放退场，不能直接移除 FAB 截断动画。
-          masterFloatingActionButton: TopicsFab(
-            canCreate: user != null,
-            isActive:
-                widget.isActive &&
-                !selectedTopic.isStacked &&
-                !_showEmbeddedSearch &&
-                (!selectedTopic.hasSelection ||
-                    MasterDetailLayout.canShowBothPanesFor(context)),
-            onRefresh: () {
-              ref.read(scrollToTopProvider.notifier).trigger();
-              ref.read(fabRefreshSignalProvider.notifier).trigger();
-            },
-            onCreateTopic: () => _createTopic(context, ref),
-            onOpenDrafts: () => _openDrafts(context),
-          ),
+          masterFloatingActionButton: VscodeTokens.maybeOf(context) != null
+              ? null
+              : TopicsFab(
+                  canCreate: user != null,
+                  isActive:
+                      widget.isActive &&
+                      !selectedTopic.isStacked &&
+                      !_showEmbeddedSearch &&
+                      (!selectedTopic.hasSelection ||
+                          MasterDetailLayout.canShowBothPanesFor(context)),
+                  onRefresh: () {
+                    ref.read(scrollToTopProvider.notifier).trigger();
+                    ref.read(fabRefreshSignalProvider.notifier).trigger();
+                  },
+                  onCreateTopic: () => _createTopic(context, ref),
+                  onOpenDrafts: () => _openDrafts(context),
+                ),
         ),
       ),
     );
@@ -327,6 +331,21 @@ class _TopicsScreenState extends ConsumerState<TopicsScreen> {
       externalCategoryId: _leftCategory?.id,
       externalTag: _leftTag,
       isActive: widget.isActive,
+      explorerAction: TopicsFab(
+        canCreate: ref.watch(currentUserProvider).value != null,
+        isActive:
+            widget.isActive &&
+            !_showEmbeddedSearch &&
+            !selectedTopic.isStacked &&
+            (!selectedTopic.hasSelection ||
+                MasterDetailLayout.canShowBothPanesFor(context)),
+        onRefresh: () {
+          ref.read(scrollToTopProvider.notifier).trigger();
+          ref.read(fabRefreshSignalProvider.notifier).trigger();
+        },
+        onCreateTopic: () => _createTopic(context, ref),
+        onOpenDrafts: () => _openDrafts(context),
+      ),
       onSearchRequested: (filter) => setState(() {
         _embeddedSearchFilter = filter;
         _showEmbeddedSearch = true;

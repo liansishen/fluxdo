@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:m3e_ui/m3e_ui.dart';
+
 import '../constants.dart';
 import '../providers/preferences_provider.dart';
 import '../services/credential_store_service.dart';
@@ -26,7 +27,9 @@ import '../services/webview_session_cookie_refresh_service.dart';
 import '../services/windows_webview_environment_service.dart';
 import '../services/log/log_writer.dart';
 import '../services/login_ready_coordinator.dart';
+
 import 'package:common_ui/common_ui.dart';
+
 import '../l10n/s.dart';
 import '../utils/dialog_utils.dart';
 
@@ -59,6 +62,7 @@ class _WebViewLoginPageState extends ConsumerState<WebViewLoginPage> {
   String _url = AppConstants.baseUrl;
   double _progress = 0;
   String? _savedUsername;
+
   /// 这个页面的 WebView 使用期（开始时从 jar 重灌，登录收口时回写）。
   late final WebViewUse _webViewUse;
   Completer<void>? _fingerprintCompleter;
@@ -117,7 +121,11 @@ class _WebViewLoginPageState extends ConsumerState<WebViewLoginPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(context.l10n.webviewLogin_title),
+        title: Text(
+          SiteContext.isLinuxDo
+              ? context.l10n.webviewLogin_title
+              : context.l10n.webviewLogin_titleSite(SiteContext.current.name),
+        ),
         actions: [
           IconButton(
             icon: const Icon(Symbols.content_paste_rounded),
@@ -163,9 +171,7 @@ class _WebViewLoginPageState extends ConsumerState<WebViewLoginPage> {
       body: Column(
         children: [
           if (_isLoading || _isCompletingLogin)
-            M3eLinearProgress(
-              value: _isCompletingLogin ? null : _progress,
-            ),
+            M3eLinearProgress(value: _isCompletingLogin ? null : _progress),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
@@ -230,7 +236,9 @@ class _WebViewLoginPageState extends ConsumerState<WebViewLoginPage> {
                         controller.addJavaScriptHandler(
                           handlerName: 'onLoginCredentials',
                           callback: (args) async {
-                            final pageUri = Uri.tryParse((await controller.getUrl())?.toString() ?? '');
+                            final pageUri = Uri.tryParse(
+                              (await controller.getUrl())?.toString() ?? '',
+                            );
                             if (!_isCurrentSiteUri(pageUri)) return;
                             if (args.isNotEmpty &&
                                 ref.read(preferencesProvider).autoFillLogin) {
@@ -274,9 +282,8 @@ class _WebViewLoginPageState extends ConsumerState<WebViewLoginPage> {
                         // Android: 启用 WebAuthn/PassKey 支持
                         if (Platform.isAndroid) {
                           WidgetsBinding.instance.addPostFrameCallback((_) {
-                            const MethodChannel(
-                              'com.fluxdo/webauthn',
-                            ).invokeMethod('enableWebAuthentication');
+                            const MethodChannel('com.fluxdo/webauthn')
+                                .invokeMethod('enableWebAuthentication');
                           });
                         }
                       },
@@ -333,9 +340,8 @@ class _WebViewLoginPageState extends ConsumerState<WebViewLoginPage> {
                 if (_isCompletingLogin)
                   Positioned.fill(
                     child: ColoredBox(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.surface.withValues(alpha: 0.88),
+                      color: Theme.of(context).colorScheme.surface
+                          .withValues(alpha: 0.88),
                       child: Center(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
@@ -506,7 +512,9 @@ class _WebViewLoginPageState extends ConsumerState<WebViewLoginPage> {
     _loginInProgress = true;
 
     try {
-      final pageUri = Uri.tryParse((await controller.getUrl())?.toString() ?? '');
+      final pageUri = Uri.tryParse(
+        (await controller.getUrl())?.toString() ?? '',
+      );
       if (!_isCurrentSiteUri(pageUri)) return;
       final username = await _readCurrentUsername(controller);
       if (username == null || username.isEmpty) {
@@ -573,11 +581,9 @@ class _WebViewLoginPageState extends ConsumerState<WebViewLoginPage> {
       );
       String? pageHtml;
       try {
-        pageHtml =
-            await controller.evaluateJavascript(
-                  source: 'window.__rawPreloaded || null',
-                )
-                as String?;
+        pageHtml = await controller.evaluateJavascript(
+          source: 'window.__rawPreloaded || null',
+        ) as String?;
       } catch (_) {}
 
       await _finalizeLoginBootstrap(
@@ -1059,15 +1065,16 @@ class _WebViewLoginPageState extends ConsumerState<WebViewLoginPage> {
   }) async {
     final cookieManager =
         WindowsWebViewEnvironmentService.instance.cookieManager;
-    final cookies = await PlatformCookieStrategy.create().readCookiesFromWebView(
-      cookieManager,
-      AppConstants.baseUrl,
-    );
+    final cookies = await PlatformCookieStrategy.create()
+        .readCookiesFromWebView(cookieManager, AppConstants.baseUrl);
     for (final cookie in cookies) {
       if (cookie.name == '_t' &&
           cookie.value.isNotEmpty &&
           (cookie.domain == null ||
-              CookieJarService.cookieDomainMatchesHost(cookie.domain, _baseUri.host))) {
+              CookieJarService.cookieDomainMatchesHost(
+                cookie.domain,
+                _baseUri.host,
+              ))) {
         return cookie.value;
       }
     }

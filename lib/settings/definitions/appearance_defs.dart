@@ -13,6 +13,7 @@ import 'package:ai_model_manager/ai_model_manager.dart';
 import 'package:m3e_ui/m3e_ui.dart';
 
 import '../../l10n/s.dart';
+import '../../models/vscode_body_style.dart';
 import '../../pages/topic_card_style_settings_page.dart';
 import '../../providers/app_icon_provider.dart';
 import '../../providers/locale_provider.dart';
@@ -20,12 +21,14 @@ import '../../providers/preferences_provider.dart';
 import '../../providers/theme_provider.dart';
 import '../../services/app_background_service.dart';
 import '../../services/custom_font_service.dart';
+import '../../services/recommended_font_service.dart';
 import '../../services/fonts/system_font_service.dart';
 import '../../services/toast_service.dart';
 import '../../theme/app_background.dart';
 import '../../theme/app_palettes.dart';
 import '../../theme/mojian_theme.dart';
 import '../../theme/claude_theme.dart';
+import '../../theme/vscode_theme.dart';
 import '../../theme/theme_resolver.dart';
 import '../../utils/dialog_utils.dart';
 import '../../widgets/common/app_bottom_sheet.dart';
@@ -76,8 +79,84 @@ List<SettingsGroup> buildAppearanceGroups(BuildContext context) {
           id: 'uiStyle',
           title: l10n.appearance_uiStyle,
           subtitle:
-              '${l10n.appearance_styleMojian} ${l10n.appearance_styleClaude} ${l10n.appearance_styleClassic}',
+              '${l10n.appearance_styleMojian} ${l10n.appearance_styleClaude} ${l10n.appearance_styleClassic}'
+              '${ThemeState.supportsVscode ? ' ${l10n.appearance_styleVscode}' : ''}',
           builder: (context, ref) => const _UiStyleSection(),
+        ),
+      ],
+    ),
+
+    // ── VS Code 正文 ───────────────────────────────────────────────
+    SettingsGroup(
+      title: l10n.appearance_vscodeBody,
+      icon: Symbols.code_rounded,
+      visibleWhen: (ref) =>
+          ref.watch(themeProvider.select((state) => state.isVscode)),
+      items: [
+        CustomModel(
+          id: 'vscodeBodyStyle',
+          title: l10n.appearance_vscodeBodyStyle,
+          subtitle:
+              '${l10n.appearance_vscodeBodyCompact} ${l10n.appearance_vscodeBodyProgramming} Java Python',
+          builder: (context, ref) {
+            final style = ref.watch(
+              preferencesProvider.select((state) => state.vscodeBodyStyle),
+            );
+            final language = ref.watch(
+              preferencesProvider.select((state) => state.vscodeCodeLanguage),
+            );
+            return Column(
+              children: [
+                ListTile(
+                  title: Text(l10n.appearance_vscodeBodyStyle),
+                  trailing: DropdownButton<VscodeBodyStyle>(
+                    value: style,
+                    items: [
+                      DropdownMenuItem(
+                        value: VscodeBodyStyle.compact,
+                        child: Text(l10n.appearance_vscodeBodyCompact),
+                      ),
+                      DropdownMenuItem(
+                        value: VscodeBodyStyle.programming,
+                        child: Text(l10n.appearance_vscodeBodyProgramming),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        ref
+                            .read(preferencesProvider.notifier)
+                            .setVscodeBodyStyle(value);
+                      }
+                    },
+                  ),
+                ),
+                if (style == VscodeBodyStyle.programming)
+                  ListTile(
+                    title: Text(l10n.appearance_vscodeCodeLanguage),
+                    trailing: DropdownButton<VscodeCodeLanguage>(
+                      value: language,
+                      items: const [
+                        DropdownMenuItem(
+                          value: VscodeCodeLanguage.java,
+                          child: Text('Java'),
+                        ),
+                        DropdownMenuItem(
+                          value: VscodeCodeLanguage.python,
+                          child: Text('Python'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) {
+                          ref
+                              .read(preferencesProvider.notifier)
+                              .setVscodeCodeLanguage(value);
+                        }
+                      },
+                    ),
+                  ),
+              ],
+            );
+          },
         ),
       ],
     ),
@@ -109,6 +188,7 @@ List<SettingsGroup> buildAppearanceGroups(BuildContext context) {
                 currentMode,
                 black: themeState.blackEnabled,
               ),
+              UiStyle.vscode => VscodeTheme.resolve(currentMode),
               UiStyle.classic => ThemeResolver.resolve(
                 mode: currentMode,
                 neutral: themeState.neutralEnabled,
@@ -180,6 +260,8 @@ List<SettingsGroup> buildAppearanceGroups(BuildContext context) {
     SettingsGroup(
       title: l10n.appearance_surfaceStyle,
       icon: Symbols.contrast_rounded,
+      visibleWhen: (ref) =>
+          ref.watch(themeProvider.select((state) => !state.isVscode)),
       items: [
         SwitchModel(
           id: 'neutral',
@@ -397,8 +479,9 @@ List<SettingsGroup> buildAppearanceGroups(BuildContext context) {
     SettingsGroup(
       title: l10n.appearance_glass,
       icon: Symbols.blur_on_rounded,
-      visibleWhen: (ref) =>
-          ref.watch(themeProvider.select((state) => !state.isMojian)),
+      visibleWhen: (ref) => ref.watch(
+        themeProvider.select((state) => !state.isMojian && !state.isVscode),
+      ),
       items: [
         SwitchModel(
           id: 'glassEnabled',
@@ -1317,123 +1400,465 @@ class _FontSection extends ConsumerWidget {
     final state = ref.watch(themeProvider);
     final customPath = state.customFontPath;
     final customExists = customPath != null && File(customPath).existsSync();
-    final installedFamily = state.installedFontFamily;
-    final hintStyle = theme.textTheme.bodySmall?.copyWith(
-      color: cs.onSurfaceVariant,
+    final customIsRecommended = RecommendedFontService.isRecommendedFontPath(
+      customPath,
     );
+    final installedFamily = state.installedFontFamily;
+    final notifier = ref.read(themeProvider.notifier);
 
-    // 每项的标签都用该字体自身的 family 渲染（未选中也生效，先看到效果）
-    final customFamily = state.customFontFamilyName;
-    final options = <(String, AppFontFamily, String?)>[
-      (l10n.appearance_fontSystem, AppFontFamily.system, null),
-      ('MiSans', AppFontFamily.miSans, 'MiSans'),
-      (l10n.appearance_fontInstalled, AppFontFamily.installed, installedFamily),
-      (l10n.appearance_fontCustom, AppFontFamily.custom, customFamily),
-    ];
-
-    return RadioGroup<AppFontFamily>(
-      groupValue: state.fontFamily,
-      onChanged: (value) {
-        if (value == null) return;
-        // 还没选过字体就把选择入口先拉起来，取消则保持原选择
-        if (value == AppFontFamily.custom && !customExists) {
-          unawaited(_pickCustomFont(context, ref));
-          return;
-        }
-        if (value == AppFontFamily.installed && installedFamily == null) {
-          unawaited(_pickInstalledFont(context, ref));
-          return;
-        }
-        ref.read(themeProvider.notifier).setFontFamily(value);
-      },
-      child: Column(
-        children: [
-          for (final (label, family, previewFamily) in options)
-            RadioListTile<AppFontFamily>(
-              title: Text(
-                label,
-                style: previewFamily == null
-                    ? null
-                    : TextStyle(fontFamily: previewFamily),
-              ),
-              subtitle: switch (family) {
-                AppFontFamily.custom when customPath == null => Text(
-                  l10n.appearance_fontCustomHint,
-                  style: hintStyle,
-                ),
-                AppFontFamily.installed when installedFamily == null => Text(
-                  l10n.appearance_fontInstalledHint,
-                  style: hintStyle,
-                ),
-                _ => null,
-              },
-              value: family,
-            ),
-          if (installedFamily != null) ...[
-            const SizedBox(height: 4),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Row(
-                children: [
-                  Icon(
-                    Symbols.text_fields_rounded,
-                    size: 20,
-                    color: cs.primary,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      state.installedFontName ?? installedFamily,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        fontFamily: installedFamily,
-                      ),
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: () => _pickInstalledFont(context, ref),
-                    child: Text(l10n.appearance_fontInstalledChange),
-                  ),
-                ],
-              ),
-            ),
-          ],
-          if (customPath != null) ...[
-            const SizedBox(height: 4),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Row(
-                children: [
-                  Icon(
-                    Symbols.font_download_rounded,
-                    size: 20,
-                    color: customExists ? cs.primary : cs.error,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      customExists
-                          ? state.customFontName ?? l10n.appearance_fontCustom
-                          : l10n.appearance_fontCustomMissing,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: customExists ? cs.onSurface : cs.error,
-                      ),
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: () => _pickCustomFont(context, ref),
-                    child: Text(l10n.appearance_fontCustomChange),
-                  ),
-                  TextButton(
-                    onPressed: () =>
-                        ref.read(themeProvider.notifier).removeCustomFont(),
-                    child: Text(l10n.appearance_fontCustomRemove),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ],
+    // 当前字体：名字 + 来源，预览用它自己渲染
+    final previewFamily = state.fontFamilyName;
+    final (
+      String currentName,
+      String? currentSource,
+    ) = switch (state.fontFamily) {
+      AppFontFamily.system => (l10n.appearance_fontSystem, null),
+      AppFontFamily.miSans => ('MiSans', l10n.appearance_fontMiSansDesc),
+      AppFontFamily.installed => (
+        state.installedFontName ??
+            installedFamily ??
+            l10n.appearance_fontInstalled,
+        l10n.appearance_fontInstalled,
       ),
+      AppFontFamily.custom => (
+        customExists
+            ? (state.customFontName ?? l10n.appearance_fontCustomTitle)
+            : l10n.appearance_fontCustomMissing,
+        customIsRecommended
+            ? l10n.appearance_recommendedFonts
+            : l10n.appearance_fontCustomTitle,
+      ),
+    };
+    final currentBroken =
+        state.fontFamily == AppFontFamily.custom && !customExists;
+
+    final selectedInstalled = state.fontFamily == AppFontFamily.installed;
+    final selectedCustomFile =
+        state.fontFamily == AppFontFamily.custom && !customIsRecommended;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // ── 当前字体 ──
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+            decoration: BoxDecoration(
+              color: cs.surfaceContainerHigh.withValues(alpha: 0.55),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  l10n.appearance_fontPreviewText,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontFamily: previewFamily,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  currentSource == null
+                      ? l10n.appearance_fontCurrent(currentName)
+                      : '${l10n.appearance_fontCurrent(currentName)} · $currentSource',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: currentBroken ? cs.error : cs.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  l10n.appearance_fontCurrentHint,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: cs.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        // ── 选项 ──
+        _FontChoiceTile(
+          selected: state.fontFamily == AppFontFamily.system,
+          title: l10n.appearance_fontSystem,
+          subtitle: l10n.appearance_fontSystemDesc,
+          onTap: () => notifier.setFontFamily(AppFontFamily.system),
+        ),
+        _FontChoiceTile(
+          selected: state.fontFamily == AppFontFamily.miSans,
+          title: 'MiSans',
+          titleFamily: 'MiSans',
+          subtitle: l10n.appearance_fontMiSansDesc,
+          onTap: () => notifier.setFontFamily(AppFontFamily.miSans),
+        ),
+        _FontChoiceTile(
+          selected: selectedInstalled,
+          title: l10n.appearance_fontInstalled,
+          titleFamily: selectedInstalled ? installedFamily : null,
+          subtitle: installedFamily == null
+              ? l10n.appearance_fontInstalledHint
+              : l10n.appearance_fontPicked(
+                  state.installedFontName ?? installedFamily,
+                ),
+          picker: true,
+          // 已经选过：点一下切回去；再点一次打开选择器换别的
+          onTap: () => installedFamily == null || selectedInstalled
+              ? _pickInstalledFont(context, ref)
+              : notifier.setFontFamily(AppFontFamily.installed),
+          onPick: installedFamily == null
+              ? null
+              : () => _pickInstalledFont(context, ref),
+        ),
+        _FontChoiceTile(
+          selected: selectedCustomFile,
+          title: l10n.appearance_fontCustomTitle,
+          titleFamily: selectedCustomFile && customExists
+              ? state.customFontFamilyName
+              : null,
+          subtitle: customPath == null || customIsRecommended
+              ? l10n.appearance_fontCustomHint
+              : customExists
+              ? l10n.appearance_fontPicked(
+                  state.customFontName ?? l10n.appearance_fontCustomTitle,
+                )
+              : l10n.appearance_fontCustomMissing,
+          subtitleError: selectedCustomFile && !customExists,
+          picker: true,
+          onTap: () =>
+              customPath == null || customIsRecommended || selectedCustomFile
+              ? _pickCustomFont(context, ref)
+              : notifier.setFontFamily(AppFontFamily.custom),
+          onPick: customPath == null || customIsRecommended
+              ? null
+              : () => _pickCustomFont(context, ref),
+          onRemove: selectedCustomFile && customPath != null
+              ? () => notifier.removeCustomFont()
+              : null,
+        ),
+        const _RecommendedFontsBlock(),
+      ],
+    );
+  }
+}
+
+/// 字体选项行：左侧单选圆点，右侧可选「更换」「移除」与展开箭头
+class _FontChoiceTile extends StatelessWidget {
+  const _FontChoiceTile({
+    required this.selected,
+    required this.title,
+    required this.onTap,
+    this.titleFamily,
+    this.subtitle,
+    this.subtitleError = false,
+    this.picker = false,
+    this.onPick,
+    this.onRemove,
+  });
+
+  final bool selected;
+  final String title;
+  final String? titleFamily;
+  final String? subtitle;
+  final bool subtitleError;
+  final bool picker;
+  final VoidCallback onTap;
+  final VoidCallback? onPick;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final l10n = context.l10n;
+    final actions = <Widget>[
+      if (onPick != null)
+        TextButton(
+          onPressed: onPick,
+          child: Text(l10n.appearance_fontCustomChange),
+        ),
+      if (onRemove != null)
+        TextButton(
+          onPressed: onRemove,
+          child: Text(l10n.appearance_fontCustomRemove),
+        ),
+      if (picker && onPick == null)
+        Icon(Symbols.chevron_right_rounded, color: cs.onSurfaceVariant),
+    ];
+    return ListTile(
+      contentPadding: const EdgeInsets.fromLTRB(16, 0, 8, 0),
+      leading: Icon(
+        selected
+            ? Symbols.radio_button_checked_rounded
+            : Symbols.radio_button_unchecked_rounded,
+        color: selected ? cs.primary : cs.onSurfaceVariant,
+        fill: selected ? 1 : 0,
+      ),
+      title: Text(
+        title,
+        style: theme.textTheme.bodyLarge?.copyWith(fontFamily: titleFamily),
+      ),
+      subtitle: subtitle == null
+          ? null
+          : Text(
+              subtitle!,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: subtitleError ? cs.error : cs.onSurfaceVariant,
+              ),
+            ),
+      trailing: actions.isEmpty
+          ? null
+          : Row(mainAxisSize: MainAxisSize.min, children: actions),
+      onTap: onTap,
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 推荐字体
+// ══════════════════════════════════════════════════════════════════
+
+/// 推荐字体列表：下载 → 校验 → 注册进引擎 → 作为「自定义字体」启用。
+/// 文件由 [RecommendedFontService] 管理，启用只是把它设成当前自定义字体。
+class _RecommendedFontsBlock extends ConsumerStatefulWidget {
+  const _RecommendedFontsBlock();
+
+  @override
+  ConsumerState<_RecommendedFontsBlock> createState() =>
+      _RecommendedFontsBlockState();
+}
+
+class _RecommendedFontsBlockState
+    extends ConsumerState<_RecommendedFontsBlock> {
+  RecommendedFontService get _service => RecommendedFontService.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_service.ensureLoaded());
+  }
+
+  Future<void> _download(RecommendedFont font) async {
+    final l10n = context.l10n;
+    String path;
+    try {
+      path = await _service.download(font);
+    } catch (_) {
+      // 用户取消时 error 为 null，不提示
+      if (mounted && _service.progressOf(font.id)?.error != null) {
+        ToastService.showError(l10n.appearance_recommendedFontFailed);
+      }
+      return;
+    }
+    if (!mounted) return;
+    await _use(font, path);
+  }
+
+  Future<void> _use(RecommendedFont font, String path) async {
+    final l10n = context.l10n;
+    final loaded = await CustomFontService.load(path);
+    if (!mounted) return;
+    if (!loaded) {
+      ToastService.showError(l10n.appearance_recommendedFontLoadFailed);
+      return;
+    }
+    await ref
+        .read(themeProvider.notifier)
+        .setCustomFont(path: path, name: font.name);
+  }
+
+  Future<void> _delete(RecommendedFont font) async {
+    final path = _service.installedPath(font);
+    if (path != null && ref.read(themeProvider).customFontPath == path) {
+      // 正在用它：先退回系统字体并清掉记录（CustomFontService 不会删这个目录里的文件）
+      await ref.read(themeProvider.notifier).removeCustomFont();
+    }
+    await _service.remove(font);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final l10n = context.l10n;
+    final activePath = ref.watch(
+      themeProvider.select(
+        (s) => s.fontFamily == AppFontFamily.custom ? s.customFontPath : null,
+      ),
+    );
+    return ListenableBuilder(
+      listenable: _service,
+      builder: (context, _) {
+        final fonts = _service.fonts;
+        if (fonts.isEmpty) return const SizedBox.shrink();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 2),
+              child: Text(
+                l10n.appearance_recommendedFonts,
+                style: theme.textTheme.titleSmall,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+              child: Text(
+                l10n.appearance_recommendedFontsHint,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: cs.onSurfaceVariant,
+                ),
+              ),
+            ),
+            for (final font in fonts)
+              _RecommendedFontRow(
+                font: font,
+                installedPath: _service.installedPath(font),
+                active:
+                    activePath != null &&
+                    _service.installedPath(font) == activePath,
+                downloading: _service.isDownloading(font.id),
+                progress: _service.progressOf(font.id),
+                onDownload: () => _download(font),
+                onCancel: () => _service.cancel(font.id),
+                onUse: (path) => _use(font, path),
+                onDelete: () => _delete(font),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _RecommendedFontRow extends StatelessWidget {
+  const _RecommendedFontRow({
+    required this.font,
+    required this.installedPath,
+    required this.active,
+    required this.downloading,
+    required this.progress,
+    required this.onDownload,
+    required this.onCancel,
+    required this.onUse,
+    required this.onDelete,
+  });
+
+  final RecommendedFont font;
+  final String? installedPath;
+  final bool active;
+  final bool downloading;
+  final RecommendedFontProgress? progress;
+  final VoidCallback onDownload;
+  final VoidCallback onCancel;
+  final void Function(String path) onUse;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final l10n = context.l10n;
+    final path = installedPath;
+    final family = path == null
+        ? null
+        : RecommendedFontService.familyNameFor(path);
+    final meta = [
+      if (font.nameEn.isNotEmpty) font.nameEn,
+      if (font.sizeLabel.isNotEmpty) font.sizeLabel,
+      if (font.license.isNotEmpty) font.license,
+      if (font.domesticMirror) l10n.appearance_recommendedFontDomestic,
+    ].join(' · ');
+    final fraction = progress?.fraction;
+
+    Widget trailing;
+    if (downloading) {
+      trailing = IconButton(
+        tooltip: l10n.appearance_recommendedFontCancel,
+        onPressed: onCancel,
+        icon: SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(value: fraction, strokeWidth: 2.5),
+        ),
+      );
+    } else if (path == null) {
+      trailing = IconButton(
+        tooltip: l10n.appearance_recommendedFontDownload,
+        onPressed: onDownload,
+        icon: Icon(Symbols.download_rounded, color: cs.primary),
+      );
+    } else {
+      trailing = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (active)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Icon(Symbols.check_circle_rounded, color: cs.primary),
+            )
+          else
+            TextButton(
+              onPressed: () => onUse(path),
+              child: Text(l10n.appearance_recommendedFontUse),
+            ),
+          IconButton(
+            tooltip: l10n.appearance_recommendedFontDelete,
+            onPressed: onDelete,
+            icon: Icon(Symbols.delete_rounded, color: cs.onSurfaceVariant),
+          ),
+        ],
+      );
+    }
+
+    return ListTile(
+      dense: true,
+      contentPadding: const EdgeInsets.fromLTRB(16, 0, 8, 0),
+      leading: Container(
+        width: 40,
+        height: 40,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerHighest.withValues(alpha: 0.6),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Text(
+          '字',
+          style: TextStyle(
+            fontSize: 20,
+            fontFamily: family,
+            color: family == null ? cs.onSurfaceVariant : cs.onSurface,
+          ),
+        ),
+      ),
+      title: Text(
+        font.name,
+        style: theme.textTheme.bodyLarge?.copyWith(fontFamily: family),
+      ),
+      subtitle: downloading
+          ? Padding(
+              padding: const EdgeInsets.only(top: 6, right: 8),
+              child: LinearProgressIndicator(value: fraction, minHeight: 3),
+            )
+          : Text(
+              family == null ? meta : '${font.preview}\n$meta',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: cs.onSurfaceVariant,
+                fontFamily: family,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+      trailing: trailing,
+      onTap: downloading
+          ? null
+          : path == null
+          ? onDownload
+          : active
+          ? null
+          : () => onUse(path),
     );
   }
 }
@@ -2130,9 +2555,9 @@ class _ThemeColorSectionState extends ConsumerState<_ThemeColorSection> {
                                         .titleMedium
                                         ?.copyWith(
                                           fontWeight: FontWeight.w500,
-                                          color: Theme.of(
-                                            context,
-                                          ).colorScheme.onSurfaceVariant,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurfaceVariant,
                                         ),
                                   ),
                                   const SizedBox(width: 4),
@@ -2177,9 +2602,9 @@ class _ThemeColorSectionState extends ConsumerState<_ThemeColorSection> {
                                 'B:${(value * 100).round()}%',
                                 style: Theme.of(context).textTheme.bodySmall
                                     ?.copyWith(
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurfaceVariant,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant,
                                     ),
                               ),
                             ],
@@ -2714,7 +3139,7 @@ class _TransparentTrackShape extends RoundedRectSliderTrackShape {
   }
 }
 
-/// 界面风格：墨笺 / 经典两张卡；墨笺下再给出强调色。
+/// 各风格按可用宽度换行，Windows 额外提供编辑器风格。
 class _UiStyleSection extends ConsumerWidget {
   const _UiStyleSection();
 
@@ -2747,53 +3172,82 @@ class _UiStyleSection extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 620),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: _StyleCard(
-                  selected: s.isMojian,
-                  title: l10n.appearance_styleMojian,
-                  description: l10n.appearance_styleMojianDesc,
-                  preview: _MojianMiniPreview(
-                    tokens: MojianTokens.of(
-                      brightness,
-                      s.mojianAccent,
-                      black: s.blackEnabled,
-                      accentColor: switch (s.mojianAccentPair) {
-                        final p? =>
-                          brightness == Brightness.light ? p.$1 : p.$2,
-                        null => null,
-                      },
+          constraints: const BoxConstraints(maxWidth: 820),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final count = ThemeState.supportsVscode ? 4 : 3;
+              final columns = math.min(
+                count,
+                math.max(1, ((constraints.maxWidth + 12) / 172).floor()),
+              );
+              final width =
+                  (constraints.maxWidth - 12 * (columns - 1)) / columns;
+              return Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  SizedBox(
+                    width: width,
+                    child: _StyleCard(
+                      selected: s.isMojian,
+                      title: l10n.appearance_styleMojian,
+                      description: l10n.appearance_styleMojianDesc,
+                      preview: _MojianMiniPreview(
+                        tokens: MojianTokens.of(
+                          brightness,
+                          s.mojianAccent,
+                          black: s.blackEnabled,
+                          accentColor: switch (s.mojianAccentPair) {
+                            final p? =>
+                              brightness == Brightness.light ? p.$1 : p.$2,
+                            null => null,
+                          },
+                        ),
+                      ),
+                      onTap: () => notifier.setUiStyle(UiStyle.mojian),
                     ),
                   ),
-                  onTap: () => notifier.setUiStyle(UiStyle.mojian),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _StyleCard(
-                  selected: s.isClaude,
-                  title: l10n.appearance_styleClaude,
-                  description: l10n.appearance_styleClaudeDesc,
-                  preview: _ClaudeMiniPreview(
-                    tokens: ClaudeTokens.of(brightness, black: s.blackEnabled),
+                  SizedBox(
+                    width: width,
+                    child: _StyleCard(
+                      selected: s.isClaude,
+                      title: l10n.appearance_styleClaude,
+                      description: l10n.appearance_styleClaudeDesc,
+                      preview: _ClaudeMiniPreview(
+                        tokens: ClaudeTokens.of(
+                          brightness,
+                          black: s.blackEnabled,
+                        ),
+                      ),
+                      onTap: () => notifier.setUiStyle(UiStyle.claude),
+                    ),
                   ),
-                  onTap: () => notifier.setUiStyle(UiStyle.claude),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _StyleCard(
-                  selected: s.isClassic,
-                  title: l10n.appearance_styleClassic,
-                  description: l10n.appearance_styleClassicDesc,
-                  preview: _ClassicMiniPreview(scheme: classicScheme),
-                  onTap: () => notifier.setUiStyle(UiStyle.classic),
-                ),
-              ),
-            ],
+                  SizedBox(
+                    width: width,
+                    child: _StyleCard(
+                      selected: s.isClassic,
+                      title: l10n.appearance_styleClassic,
+                      description: l10n.appearance_styleClassicDesc,
+                      preview: _ClassicMiniPreview(scheme: classicScheme),
+                      onTap: () => notifier.setUiStyle(UiStyle.classic),
+                    ),
+                  ),
+                  if (ThemeState.supportsVscode)
+                    SizedBox(
+                      width: width,
+                      child: _StyleCard(
+                        selected: s.isVscode,
+                        title: l10n.appearance_styleVscode,
+                        description: l10n.appearance_styleVscodeDesc,
+                        preview: _VscodeMiniPreview(
+                          tokens: VscodeTokens.of(brightness),
+                        ),
+                        onTap: () => notifier.setUiStyle(UiStyle.vscode),
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
         ),
         if (s.isMojian) ...[
@@ -2838,7 +3292,106 @@ class _UiStyleSection extends ConsumerWidget {
             ),
           ),
         ],
+        if (s.isVscode) ...[
+          const SizedBox(height: 14),
+          Text(
+            l10n.appearance_vscodeFixedThemeHint,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
       ],
+    );
+  }
+}
+
+/// 以活动栏、资源列表和语法色线条展示主题，不依赖任何论坛示例数据。
+class _VscodeMiniPreview extends StatelessWidget {
+  const _VscodeMiniPreview({required this.tokens});
+
+  final VscodeTokens tokens;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    return ColoredBox(
+      color: t.background,
+      child: Column(
+        children: [
+          Container(height: 10, color: t.panel),
+          Expanded(
+            child: Row(
+              children: [
+                Container(
+                  width: 15,
+                  color: t.sidebar,
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.description_outlined,
+                        size: 9,
+                        color: t.foreground,
+                      ),
+                      const SizedBox(height: 8),
+                      Icon(Icons.search, size: 9, color: t.muted),
+                    ],
+                  ),
+                ),
+                Container(
+                  width: 31,
+                  color: t.sidebar,
+                  padding: const EdgeInsets.fromLTRB(3, 6, 3, 0),
+                  child: Column(
+                    children: [
+                      for (var i = 0; i < 4; i++)
+                        Container(
+                          height: 3,
+                          margin: const EdgeInsets.only(bottom: 6),
+                          color: i == 1 ? t.selection : t.border,
+                        ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(6),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        for (final color in [
+                          t.syntaxKeyword,
+                          t.foreground,
+                          t.syntaxComment,
+                          t.syntaxString,
+                        ])
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 7),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 3,
+                                  height: 3,
+                                  color: t.lineNumber,
+                                ),
+                                const SizedBox(width: 5),
+                                Expanded(
+                                  child: Container(height: 3, color: color),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(height: 5, color: t.accent),
+        ],
+      ),
     );
   }
 }
@@ -2937,7 +3490,7 @@ class _MojianMiniPreview extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = tokens;
     TextStyle serif(double size) => TextStyle(
-      fontFamily: MojianTokens.serifFamily,
+      fontFamily: t.titleFamily,
       fontWeight: FontWeight.w600,
       fontSize: size,
       height: 1.2,

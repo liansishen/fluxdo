@@ -105,7 +105,7 @@ class _MoreTopicsSectionState extends ConsumerState<MoreTopicsSection> {
                           : l10n.topicDetail_suggestedTopics,
                       style: theme.textTheme.titleSmall?.copyWith(
                         fontWeight: FontWeight.w600,
-                        fontFamily: mj != null ? MojianTokens.serifFamily : null,
+                        fontFamily: mj?.titleFamily,
                         color: mj?.ink,
                       ),
                     ),
@@ -174,17 +174,13 @@ class _MoreTopicsTab extends StatelessWidget {
                 children: [
                   // 「相关」是 AI 推荐,和经典一样带小星标
                   if (icon != null) ...[
-                    Icon(
-                      icon,
-                      size: 13,
-                      color: selected ? mj.accent : mj.ink3,
-                    ),
+                    Icon(icon, size: 13, color: selected ? mj.accent : mj.ink3),
                     const SizedBox(width: 4),
                   ],
                   Text(
                     label,
                     style: theme.textTheme.titleSmall?.copyWith(
-                      fontFamily: MojianTokens.serifFamily,
+                      fontFamily: mj.titleFamily,
                       fontWeight: FontWeight.w600,
                       color: selected ? mj.ink : mj.ink3,
                     ),
@@ -321,7 +317,7 @@ class _MoreTopicTile extends StatelessWidget {
           topic.title,
           style: mj != null
               ? theme.textTheme.bodyMedium?.copyWith(
-                  fontFamily: MojianTokens.serifFamily,
+                  fontFamily: mj.titleFamily,
                   fontWeight: FontWeight.w600,
                   fontSize: 15.5,
                   height: 1.45,
@@ -407,29 +403,35 @@ class _MoreTopicTile extends StatelessWidget {
 
     final rightSpans = <InlineSpan>[];
     if (density.replyCount > 0) {
-      rightSpans.add(iconGlyphSpan(
-        context,
-        Symbols.chat_bubble_rounded,
-        size: 12,
-        color: metaColor,
-        gap: 3,
-        textStyle: rightStyle,
-      ));
-      rightSpans.add(TextSpan(
-        text: NumberUtils.formatCount(density.replyCount),
-        style: rightStyle,
-      ));
+      rightSpans.add(
+        iconGlyphSpan(
+          context,
+          Symbols.chat_bubble_rounded,
+          size: 12,
+          color: metaColor,
+          gap: 3,
+          textStyle: rightStyle,
+        ),
+      );
+      rightSpans.add(
+        TextSpan(
+          text: NumberUtils.formatCount(density.replyCount),
+          style: rightStyle,
+        ),
+      );
     }
     if (density.showTime) {
       if (rightSpans.isNotEmpty) {
         rightSpans.add(TextSpan(text: ' · ', style: rightStyle));
       }
-      rightSpans.add(TextSpan(
-        text: TimeUtils.formatRelativeTime(
-          topic.lastPostedAt ?? topic.createdAt,
+      rightSpans.add(
+        TextSpan(
+          text: TimeUtils.formatRelativeTime(
+            topic.lastPostedAt ?? topic.createdAt,
+          ),
+          style: rightStyle,
         ),
-        style: rightStyle,
-      ));
+      );
     }
 
     return Row(

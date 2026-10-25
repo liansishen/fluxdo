@@ -34,7 +34,6 @@ enum ForumSite {
 
   /// 验证页必须访问本站受 CF 保护的入口，不能假定各站都有 /challenge。
   final String cfVerificationPath;
-
   bool get isLinuxDo => this == linuxDo;
 
   /// 旧版数据原地归属 LINUX DO，不让新站读取或覆盖旧站键。

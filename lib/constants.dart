@@ -1,11 +1,16 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' show Locale, PlatformDispatcher;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'config/site_customization.dart';
 import 'config/sites/linuxdo.dart';
+import 'services/app_logger.dart';
 import 'config/sites/idcflare.dart';
 import 'services/site_context.dart';
 import 'services/windows_webview_environment_service.dart';
@@ -13,9 +18,8 @@ import 'services/windows_webview_environment_service.dart';
 /// 应用常量
 class AppConstants {
   /// 当前站点自定义配置
-  static SiteCustomization get siteCustomization => SiteContext.isLinuxDo
-      ? linuxdoCustomization
-      : idcflareCustomization;
+  static SiteCustomization get siteCustomization =>
+      SiteContext.isLinuxDo ? linuxdoCustomization : idcflareCustomization;
 
   /// 是否启用 WebView Cookie 同步（启动时预热 WebView）
   /// 设为 false 时，不使用 WebView 同步，Cookie 由 Dio Set-Cookie 与本地存储维护
@@ -31,7 +35,9 @@ class AppConstants {
   static String? _cachedMacSafariVersion;
 
   /// 与原生层通信的系统信息 channel（目前只有 macOS 用到）
-  static const MethodChannel _systemInfoChannel = MethodChannel('com.fluxdo/system_info');
+  static const MethodChannel _systemInfoChannel = MethodChannel(
+    'com.fluxdo/system_info',
+  );
 
   /// 拿不到系统语言列表（引擎尚未就绪）时的 Accept-Language 兜底值
   static const String _defaultAcceptLanguage = 'zh-CN,zh;q=0.9,en;q=0.8';
@@ -43,6 +49,21 @@ class AppConstants {
     _uaInitialized = true;
 
     if (Platform.isWindows || Platform.isLinux) {
+      // 探 UA 要起一个无头 WebView（Windows 还要先建 WebView2 环境），每次
+      // 冷启动都付一遍没有意义：UA 只随运行时版本变。探到的值按版本号缓存，
+      // 版本没变直接用；换了版本或没缓存才真的探一次
+      final runtimeVersion = await _readDesktopWebViewVersion();
+      final cachedUa = await _readDesktopUaCache(runtimeVersion);
+      if (cachedUa != null) {
+        _cachedUserAgent = cachedUa;
+        AppLogger.info(
+          '桌面 WebView UA 命中缓存',
+          tag: 'UserAgent',
+          fields: {'version': runtimeVersion},
+        );
+        _uaCompleter.complete(_cachedUserAgent!);
+        return;
+      }
       try {
         final runtimeUa = await _getDesktopWebViewUserAgent();
         if (runtimeUa != null && runtimeUa.isNotEmpty) {
@@ -50,6 +71,12 @@ class AppConstants {
           debugPrint(
             '[AppConstants] Desktop WebView runtime UA: $_cachedUserAgent',
           );
+          AppLogger.info(
+            '桌面 WebView UA 探测完成',
+            tag: 'UserAgent',
+            fields: {'version': runtimeVersion, 'ua': runtimeUa},
+          );
+          await _writeDesktopUaCache(runtimeVersion, runtimeUa);
         } else {
           _cachedUserAgent = _buildDefaultUserAgent();
           debugPrint(
@@ -84,6 +111,60 @@ class AppConstants {
     _uaCompleter.complete(_cachedUserAgent!);
   }
 
+  /// 桌面 WebView UA 缓存：`{"version": 运行时版本, "ua": 探到的 UA}`
+  static const String _desktopUaCacheKey = 'desktop_webview_ua_cache';
+
+  /// WebView 运行时版本（Windows 是 WebView2 运行时，Linux 是 WPE WebKit）；
+  /// 读不到返回 null，此时不用缓存、每次都探
+  static Future<String?> _readDesktopWebViewVersion() async {
+    try {
+      final version = await WebViewEnvironment.getAvailableVersion();
+      final trimmed = version?.trim();
+      return (trimmed == null || trimmed.isEmpty) ? null : trimmed;
+    } catch (e) {
+      debugPrint('[AppConstants] 读取桌面 WebView 运行时版本失败: $e');
+      return null;
+    }
+  }
+
+  static Future<String?> _readDesktopUaCache(String? version) async {
+    if (version == null) return null;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return desktopUaFromCache(prefs.getString(_desktopUaCacheKey), version);
+    } catch (e) {
+      debugPrint('[AppConstants] 读取桌面 WebView UA 缓存失败: $e');
+      return null;
+    }
+  }
+
+  /// 缓存里的 UA 只在运行时版本一致时可用（纯函数，便于测试）
+  @visibleForTesting
+  static String? desktopUaFromCache(String? cached, String version) {
+    if (cached == null || cached.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(cached);
+      if (decoded is! Map || decoded['version'] != version) return null;
+      final ua = decoded['ua'];
+      return (ua is String && ua.isNotEmpty) ? ua : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> _writeDesktopUaCache(String? version, String ua) async {
+    if (version == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _desktopUaCacheKey,
+        jsonEncode({'version': version, 'ua': ua}),
+      );
+    } catch (e) {
+      debugPrint('[AppConstants] 写桌面 WebView UA 缓存失败: $e');
+    }
+  }
+
   static Future<String?> _getDesktopWebViewUserAgent() async {
     if (Platform.isWindows) {
       await WindowsWebViewEnvironmentService.instance.initialize();
@@ -113,9 +194,7 @@ class AppConstants {
             );
             completer.complete(result?.toString());
           } catch (e) {
-            debugPrint(
-              '[AppConstants] 读取 WebView navigator.userAgent 失败: $e',
-            );
+            debugPrint('[AppConstants] 读取 WebView navigator.userAgent 失败: $e');
             completer.complete(null);
           }
         },
@@ -219,9 +298,8 @@ class AppConstants {
       // 不跟 iOS 的补丁号（iOS 18_3_2 → Version/18.3）
 
       // 提取 iOS 主版本号和次版本号（仅取前两段）
-      final versionMatch = RegExp(
-        r'CPU (?:iPhone )?OS (\d+)[_\.](\d+)',
-      ).firstMatch(sanitized);
+      final versionMatch = RegExp(r'CPU (?:iPhone )?OS (\d+)[_\.](\d+)')
+          .firstMatch(sanitized);
       final version = versionMatch != null
           ? '${versionMatch.group(1)}.${versionMatch.group(2)}'
           : '18.0';
@@ -246,7 +324,8 @@ class AppConstants {
       sanitized = sanitized.replaceAll(RegExp(r'\s*Electron/[\d.]+'), '');
       if (!sanitized.contains('Safari/')) {
         // 从原始 UA 抓 AppleWebKit 版本号，真 Safari 里 Safari/<num> 永远等于 AppleWebKit/<num>
-        final webKitMatch = RegExp(r'AppleWebKit/([^\s]+)').firstMatch(sanitized);
+        final webKitMatch = RegExp(r'AppleWebKit/([^\s]+)')
+            .firstMatch(sanitized);
         final webKitVersion = webKitMatch?.group(1) ?? '605.1.15';
         final safariVersion = _cachedMacSafariVersion ?? '18.5';
         sanitized = '$sanitized Version/$safariVersion Safari/$webKitVersion';
@@ -261,7 +340,9 @@ class AppConstants {
   /// 读不到时返回 null，由 sanitize / fallback 处使用保守默认值。
   static Future<String?> _readMacSafariVersion() async {
     try {
-      final version = await _systemInfoChannel.invokeMethod<String>('getSafariVersion');
+      final version = await _systemInfoChannel.invokeMethod<String>(
+        'getSafariVersion',
+      );
       if (version == null || version.isEmpty) return null;
       debugPrint('[AppConstants] macOS Safari version: $version');
       return version;

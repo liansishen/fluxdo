@@ -94,20 +94,19 @@ class ClaudeTokens extends ThemeExtension<ClaudeTokens> {
             error: Color(0xFFC93B2B),
           )
         : ClaudeTokens(
-            background:
-                oled ? const Color(0xFF000000) : const Color(0xFF181614),
-            surface1:
-                oled ? const Color(0xFF12100E) : const Color(0xFF201D1B),
-            surface2:
-                oled ? const Color(0xFF1C1917) : const Color(0xFF2A2623),
-            surface3:
-                oled ? const Color(0xFF262320) : const Color(0xFF38332F),
+            background: oled
+                ? const Color(0xFF000000)
+                : const Color(0xFF181614),
+            surface1: oled ? const Color(0xFF12100E) : const Color(0xFF201D1B),
+            surface2: oled ? const Color(0xFF1C1917) : const Color(0xFF2A2623),
+            surface3: oled ? const Color(0xFF262320) : const Color(0xFF38332F),
             textPrimary: const Color(0xFFF0EDE6),
             textSecondary: const Color(0xFFB8B0A5),
             textMuted: const Color(0xFF7D756C),
             border: oled ? const Color(0xFF262320) : const Color(0xFF38332F),
-            borderStrong:
-                oled ? const Color(0xFF38332F) : const Color(0xFF4A443F),
+            borderStrong: oled
+                ? const Color(0xFF38332F)
+                : const Color(0xFF4A443F),
             accent: const Color(0xFFE07A5F),
             accentSoft: const Color(0x26E07A5F),
             success: const Color(0xFF52B788),
@@ -187,10 +186,7 @@ class ClaudeTheme {
   /// - surface 是温润羊皮纸（日间）或暖炭咖啡黑（夜间）；
   /// - [black] 为 true 时，深色表面换用 OLED 纯黑梯级；
   /// - surfaceTint 设为透明（不给卡片涂额外的种子色调）。
-  static ColorScheme colorScheme(
-    Brightness brightness, {
-    bool black = false,
-  }) {
+  static ColorScheme colorScheme(Brightness brightness, {bool black = false}) {
     final t = ClaudeTokens.of(brightness, black: black);
     final light = brightness == Brightness.light;
     final oled = !light && black;
@@ -203,8 +199,9 @@ class ClaudeTheme {
       primary: t.accent,
       onPrimary: onAccent,
       primaryContainer: tint(t.accent, light ? 0.14 : 0.22),
-      onPrimaryContainer:
-          light ? const Color(0xFF8B351B) : const Color(0xFFF5BAA8),
+      onPrimaryContainer: light
+          ? const Color(0xFF8B351B)
+          : const Color(0xFFF5BAA8),
       secondary: t.textSecondary,
       onSecondary: onAccent,
       secondaryContainer: light
@@ -216,13 +213,15 @@ class ClaudeTheme {
       tertiary: t.success,
       onTertiary: onAccent,
       tertiaryContainer: tint(t.success, light ? 0.14 : 0.22),
-      onTertiaryContainer:
-          light ? const Color(0xFF0E3B13) : const Color(0xFFB2E3CB),
+      onTertiaryContainer: light
+          ? const Color(0xFF0E3B13)
+          : const Color(0xFFB2E3CB),
       error: t.error,
       onError: light ? const Color(0xFFFFFFFF) : const Color(0xFF181614),
       errorContainer: tint(t.error, light ? 0.12 : 0.22),
-      onErrorContainer:
-          light ? const Color(0xFF5E120A) : const Color(0xFFF7C2B8),
+      onErrorContainer: light
+          ? const Color(0xFF5E120A)
+          : const Color(0xFFF7C2B8),
       surface: t.background,
       onSurface: t.textPrimary,
       onSurfaceVariant: t.textSecondary,
@@ -253,8 +252,7 @@ class ClaudeTheme {
       outlineVariant: t.border,
       inverseSurface: light ? t.textPrimary : t.background,
       onInverseSurface: light ? t.background : t.textPrimary,
-      inversePrimary:
-          light ? const Color(0xFFE07A5F) : const Color(0xFFDA7756),
+      inversePrimary: light ? const Color(0xFFE07A5F) : const Color(0xFFDA7756),
       surfaceTint: Colors.transparent,
       shadow: Colors.black,
       scrim: Colors.black,
@@ -295,7 +293,8 @@ class ClaudeTheme {
     List<ThemeExtension<dynamic>> extensions = const [],
   }) {
     // 纯黑由配色带进来（深色且底色为纯黑），令牌跟着取同一套
-    final black = scheme.brightness == Brightness.dark &&
+    final black =
+        scheme.brightness == Brightness.dark &&
         scheme.surface.toARGB32() == 0xFF000000;
     final t = ClaudeTokens.of(scheme.brightness, black: black);
     final roundedPill = WidgetStatePropertyAll<OutlinedBorder>(
@@ -360,11 +359,7 @@ class ClaudeTheme {
           side: BorderSide(color: t.border),
         ),
       ),
-      dividerTheme: DividerThemeData(
-        color: t.border,
-        thickness: 1,
-        space: 1,
-      ),
+      dividerTheme: DividerThemeData(color: t.border, thickness: 1, space: 1),
       filledButtonTheme: FilledButtonThemeData(
         style: ButtonStyle(
           backgroundColor: WidgetStateProperty.resolveWith(
@@ -394,8 +389,9 @@ class ClaudeTheme {
           foregroundColor: WidgetStatePropertyAll(t.textPrimary),
           side: WidgetStateProperty.resolveWith(
             (s) => BorderSide(
-              color:
-                  s.contains(WidgetState.disabled) ? t.border : t.borderStrong,
+              color: s.contains(WidgetState.disabled)
+                  ? t.border
+                  : t.borderStrong,
             ),
           ),
           shape: roundedPill,
@@ -503,8 +499,10 @@ class ClaudeTheme {
       inputDecorationTheme: InputDecorationThemeData(
         filled: true,
         fillColor: t.surface1,
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 10,
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
           borderSide: BorderSide(color: t.border),

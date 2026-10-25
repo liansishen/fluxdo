@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:app_icons/app_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../pages/topics_page.dart';
 import '../../providers/category_provider.dart';
 import '../../providers/preferences_provider.dart';
@@ -16,6 +17,9 @@ import '../topic/category_drawer.dart';
 import '../../utils/platform_utils.dart';
 import '../../theme/mojian_theme.dart';
 import 'site_switch_button.dart';
+import '../../theme/vscode_theme.dart';
+import 'vscode_workbench_chrome.dart';
+import 'vscode_reader_status_scope.dart';
 
 /// 自适应 Scaffold
 ///
@@ -58,8 +62,10 @@ class AdaptiveScaffold extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final isVscode = VscodeTokens.maybeOf(context) != null;
     final showRail =
-        Responsive.showNavigationRail(context) && !hideNavigationRail;
+        (isVscode || Responsive.showNavigationRail(context)) &&
+        !hideNavigationRail;
     final sidebarCategoryController = ref.read(
       activeSidebarCategoryIdProvider.notifier,
     );
@@ -70,8 +76,12 @@ class AdaptiveScaffold extends ConsumerWidget {
         : selectedIndex;
 
     final hasAcrylic = PlatformUtils.hasWindowAcrylic;
-    final useAcrylicRail = showRail && hasAcrylic;
-    final railWidth = extendedRail ? 180.0 : 72.0;
+    final useAcrylicRail = showRail && hasAcrylic && !isVscode;
+    final railWidth = isVscode
+        ? VscodeActivityBar.width
+        : extendedRail
+        ? 180.0
+        : 72.0;
     // 双栏判定的「Rail 应占宽」记账(判定轴与分配轴同轴,见
     // NavChromeMetrics 注释)。写形态宽而非可见宽:hideNavigationRail
     // 临时隐藏不改判定,避免 pop→Rail 回来→塌成投影的反馈环。
@@ -96,61 +106,74 @@ class AdaptiveScaffold extends ConsumerWidget {
           body: Row(
             children: [
               if (showRail) ...[
-                AdaptiveNavigationRail(
-                  selectedIndex: railSelectedIndex,
-                  onDestinationSelected: (index) {
-                    sidebarCategoryController.state = null;
-                    onDestinationSelected(index);
-                  },
-                  destinations: destinations,
-                  topDestinationCount: destinations.isEmpty ? 0 : 1,
-                  bottomDestinationCount: destinations.length <= 1
-                      ? 0
-                      : destinations.length - 1,
-                  categoryShortcuts: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CategoryShortcuts(
-                        extended: extendedRail,
-                        onCategorySelected: (categoryId) {
-                          sidebarCategoryController.state = categoryId;
-                          // 再次点击当前板块也必须形成一次明确导航事件（高亮
-                          // 状态 provider 同值会被去重），首页靠 tap 事件从
-                          // 深层平行视界退回板块列表。
-                          final tap = ref.read(sidebarCategoryTapProvider);
-                          ref.read(sidebarCategoryTapProvider.notifier).state = (
-                            categoryId: categoryId,
-                            nonce: (tap?.nonce ?? 0) + 1,
-                          );
-                          if (selectedIndex != 0) {
-                            onDestinationSelected(0);
-                          }
-                          ref
-                                  .read(currentTabCategoryIdProvider.notifier)
-                                  .state =
-                              categoryId;
-                        },
-                      ),
-                      _SidebarCategoryAddButton(
-                        extended: extendedRail,
-                        onOpenCategoryManager: () async {
-                          sidebarCategoryController.state = null;
-                          if (selectedIndex != 0) {
-                            onDestinationSelected(0);
-                          }
-                          await Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => const PinnedCategoryEditPage(),
-                            ),
-                          );
-                        },
-                      ),
-                    ],
+                if (isVscode)
+                  VscodeActivityBar(
+                    destinations: destinations,
+                    selectedIndex: railSelectedIndex,
+                    onDestinationSelected: (index) {
+                      sidebarCategoryController.state = null;
+                      onDestinationSelected(index);
+                    },
+                    bottomLeading: railBottomLeading,
+                  )
+                else
+                  AdaptiveNavigationRail(
+                    selectedIndex: railSelectedIndex,
+                    onDestinationSelected: (index) {
+                      sidebarCategoryController.state = null;
+                      onDestinationSelected(index);
+                    },
+                    destinations: destinations,
+                    topDestinationCount: destinations.isEmpty ? 0 : 1,
+                    bottomDestinationCount: destinations.length <= 1
+                        ? 0
+                        : destinations.length - 1,
+                    categoryShortcuts: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CategoryShortcuts(
+                          extended: extendedRail,
+                          onCategorySelected: (categoryId) {
+                            sidebarCategoryController.state = categoryId;
+                            // 再次点击当前板块也必须形成一次明确导航事件（高亮
+                            // 状态 provider 同值会被去重），首页靠 tap 事件从
+                            // 深层平行视界退回板块列表。
+                            final tap = ref.read(sidebarCategoryTapProvider);
+                            ref
+                                .read(sidebarCategoryTapProvider.notifier)
+                                .state = (
+                              categoryId: categoryId,
+                              nonce: (tap?.nonce ?? 0) + 1,
+                            );
+                            if (selectedIndex != 0) {
+                              onDestinationSelected(0);
+                            }
+                            ref
+                                    .read(currentTabCategoryIdProvider.notifier)
+                                    .state =
+                                categoryId;
+                          },
+                        ),
+                        _SidebarCategoryAddButton(
+                          extended: extendedRail,
+                          onOpenCategoryManager: () async {
+                            sidebarCategoryController.state = null;
+                            if (selectedIndex != 0) {
+                              onDestinationSelected(0);
+                            }
+                            await Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const PinnedCategoryEditPage(),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                    extended: extendedRail,
+                    leading: railLeading,
+                    bottomLeading: railBottomLeading,
                   ),
-                  extended: extendedRail,
-                  leading: railLeading,
-                  bottomLeading: railBottomLeading,
-                ),
                 if (!useAcrylicRail)
                   const VerticalDivider(thickness: 1, width: 1),
               ],
@@ -171,24 +194,30 @@ class AdaptiveScaffold extends ConsumerWidget {
                   color: useAcrylicRail
                       ? Theme.of(context).colorScheme.surface
                       : null,
-                  child: Column(
-                    children: [
-                      if (!showRail && !hideNavigationRail)
-                        SafeArea(
-                          bottom: false,
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: SiteSwitchButton(extended: true),
+                  child: VscodeReaderStatusHost(
+                    child: Column(
+                      children: [
+                        if (!showRail && !hideNavigationRail)
+                          SafeArea(
+                            bottom: false,
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: SiteSwitchButton(extended: true),
+                            ),
+                          ),
+                        Expanded(
+                          child: Builder(
+                            // 保留 Scaffold 为底栏注入的 inset，避免首页按钮被遮挡。
+                            builder: (bodyContext) => MediaQuery.removePadding(
+                              context: bodyContext,
+                              removeTop: !showRail && !hideNavigationRail,
+                              child: body,
+                            ),
                           ),
                         ),
-                      Expanded(
-                        child: MediaQuery.removePadding(
-                          context: context,
-                          removeTop: !showRail && !hideNavigationRail,
-                          child: body,
-                        ),
-                      ),
-                    ],
+                        if (isVscode) const VscodeStatusBar(),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -245,7 +274,10 @@ class _SidebarCategoryAddButton extends StatelessWidget {
     final mj = Theme.of(context).extension<MojianTokens>();
     final accent = mj?.ink3 ?? Theme.of(context).colorScheme.primary;
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 12, vertical: mj == null ? 4 : 1),
+      padding: EdgeInsets.symmetric(
+        horizontal: 12,
+        vertical: mj == null ? 4 : 1,
+      ),
       child: Material(
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(mj == null ? 16 : 8),

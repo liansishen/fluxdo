@@ -469,11 +469,13 @@ void main() {
         .read(preferencesProvider.notifier)
         .setShowTopicCreationTime(false);
     final hidden = await mount(light, 400);
+
     expect(hidden.creationTime, isNull);
     await container
         .read(preferencesProvider.notifier)
         .setShowTopicCreationTime(true);
     final dark = await mount(_theme('墨笺', Brightness.dark), 240);
+
     expect(dark.creationTime, isNotNull);
     expect(dark.layoutWidth, 240);
     expect(
