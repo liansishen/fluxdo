@@ -2,6 +2,7 @@ import UIKit
 import UniformTypeIdentifiers
 import Photos
 import ImageIO
+import WebKit
 
 @MainActor
 final class ShareViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, UIDocumentPickerDelegate, UIAdaptivePresentationControllerDelegate {
@@ -18,6 +19,15 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
     private var workingDirectory: URL?
     private var previousDirectories: [URL] = []
     private var retryAction: (() -> Void)?
+    private var webSession: ShareWebSession?
+    private var preparedHost: String?
+    private var browserHost: String?
+    private var sessionDiagnostic = "SESSION_NOT_READ"
+    private let verificationContainer = UIStackView()
+    private let verificationButton = UIButton(type: .system)
+    private let continueButton = UIButton(type: .system)
+    private let clearSessionButton = UIButton(type: .system)
+    private let diagnosticButton = UIButton(type: .system)
 
     private let titleLabel = UILabel()
     private let statusLabel = UILabel()
@@ -96,6 +106,23 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
         sessionHint.isHidden = true
         stack.addArrangedSubview(sessionHint)
         stack.addArrangedSubview(spinner)
+        configureButton(verificationButton, title: "验证 / 登录", action: #selector(showVerification))
+        stack.addArrangedSubview(verificationButton)
+        verificationContainer.axis = .vertical
+        verificationContainer.spacing = 10
+        verificationContainer.isHidden = true
+        let verificationHint = UILabel()
+        verificationHint.text = "请在此网页完成验证或登录，帖子可正常打开后点击继续。扩展会保留自己的登录状态，下次分享可复用。"
+        verificationHint.numberOfLines = 0
+        verificationHint.font = .preferredFont(forTextStyle: .footnote)
+        verificationContainer.addArrangedSubview(verificationHint)
+        configureButton(continueButton, title: "验证完成，继续保存", action: #selector(continueAfterVerification))
+        verificationContainer.addArrangedSubview(continueButton)
+        stack.addArrangedSubview(verificationContainer)
+        configureButton(clearSessionButton, title: "退出扩展登录", action: #selector(clearExtensionSession))
+        stack.addArrangedSubview(clearSessionButton)
+        configureButton(diagnosticButton, title: "分享扩展诊断", action: #selector(shareDiagnostics))
+        stack.addArrangedSubview(diagnosticButton)
 
         let pictureHint = UILabel()
         pictureHint.text = "分享图片：包含主帖标题、作者、来源及完整正文。长文会自动分为多张 PNG，不会截断。"
@@ -191,42 +218,109 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
             guard let self = self else { return }
             let link = try await self.receiveLink()
             try self.ensureActive(id)
+            self.link = link
+            self.topic = nil
+            self.client = nil
+            let browser: ShareWebSession
+            if let existing = self.webSession, self.browserHost == link.host {
+                browser = existing
+            } else {
+                self.webSession?.cancel()
+                self.webSession?.webView.removeFromSuperview()
+                browser = ShareWebSession(host: link.host)
+                self.webSession = browser
+                self.browserHost = link.host
+                self.preparedHost = nil
+                browser.webView.heightAnchor.constraint(equalToConstant: 420).isActive = true
+                self.verificationContainer.insertArrangedSubview(browser.webView, at: 1)
+            }
+            var seed: ShareSession?
             do {
-                _ = try ShareSessionStore.readSession(host: link.host)
+                seed = try ShareSessionStore.readSession(host: link.host)
+                self.sessionDiagnostic = "SHARED_SESSION_READ"
                 self.sessionHint.isHidden = true
             } catch {
-                let message: String
-                if let storeError = error as? ShareSessionStore.StoreError {
-                    switch storeError {
-                    case .unavailableGroup:
-                        message = "SideStore 共享组权限不可用，无法读取 FluxDO 分享会话；请检查主应用与分享扩展的 App Groups 签名权限。"
-                    case .missingSession:
-                        message = "尚未同步 \(link.host) 的分享会话，请打开 FluxDO，切换至该站点并完成登录与会话同步后重新分享。"
-                    case .expiredSession:
-                        message = "\(link.host) 的分享会话已过期，请打开 FluxDO，切换至该站点并重新登录、同步会话后重新分享。"
-                    case .invalidSession:
-                        message = "\(link.host) 的分享会话已损坏或格式无效，请打开 FluxDO，切换至该站点并重新同步会话后重新分享。"
-                    case .fileOperation(let code):
-                        message = "无法读取 \(link.host) 的分享会话文件（诊断码：FILE_OPERATION_\(code)），请解锁设备后重试，或打开 FluxDO 重新同步会话。"
-                    case .unsupportedHost:
-                        message = "该站点不支持 FluxDO 分享会话（诊断码：UNSUPPORTED_HOST）。"
-                    }
-                } else {
-                    // 仅展示固定诊断码，不泄露底层路径或认证信息。
-                    message = "无法读取 FluxDO 分享会话（诊断码：SESSION_READ_FAILED）。"
-                }
-                self.sessionHint.text = "\(message)当前仅尝试匿名加载公开帖子。"
+                self.sessionDiagnostic = self.sessionCode(error)
+                self.sessionHint.text = "共享会话暂不可用，已使用扩展自身的网页会话；需要时可直接在此验证或登录。"
                 self.sessionHint.isHidden = false
             }
-            let client = ForumShareClient(link: link)
+            if self.preparedHost == nil {
+                self.verificationContainer.isHidden = false
+                try await browser.prepare(url: link.url, session: self.preparedHost == nil ? seed : nil)
+                try self.ensureActive(id)
+                self.preparedHost = link.host
+            }
+            let client = ForumShareClient(link: link, loader: { [weak browser] url in
+                guard let browser = browser else { throw CancellationError() }
+                return try await browser.request(url)
+            })
+            self.client = client
             let topic = try await client.loadTopic()
             try self.ensureActive(id)
-            self.link = link
-            self.client = client
             self.topic = topic
+            self.verificationContainer.isHidden = true
             self.titleLabel.text = topic.title
             self.statusLabel.text = "\(link.host) · 已加载主帖。请选择生成图片或导出文章。"
         }
+    }
+
+    private func sessionCode(_ error: Error) -> String {
+        guard let error = error as? ShareSessionStore.StoreError else { return "SESSION_READ_FAILED" }
+        switch error {
+        case .unavailableGroup: return "SHARE_SESSION_UNAVAILABLE"
+        case .missingSession: return "SESSION_MISSING"
+        case .expiredSession: return "SESSION_EXPIRED"
+        case .invalidSession: return "SESSION_INVALID"
+        case .unsupportedHost: return "UNSUPPORTED_HOST"
+        case .fileOperation(let code): return "SESSION_FILE_\(code)"
+        }
+    }
+
+    @objc private func showVerification() {
+        guard webSession != nil else { beginLoading(); return }
+        verificationContainer.isHidden = false
+        if webSession?.webView.isLoading == false { webSession?.webView.reload() }
+    }
+
+    @objc private func continueAfterVerification() { retryAction?() }
+
+    @objc private func clearExtensionSession() {
+        let alert = UIAlertController(title: "退出扩展登录？", message: "将清除分享扩展内两个站点的登录和验证状态。主应用的登录保持原样。", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "退出", style: .destructive) { [weak self] _ in
+            guard let self = self, let browser = self.webSession else { return }
+            self.start(message: "正在清除扩展会话…", retry: { [weak self] in self?.beginLoading() }) { [weak self] id in
+                await browser.clear()
+                guard let self = self else { return }
+                try self.ensureActive(id)
+                self.preparedHost = nil
+                self.topic = nil
+                self.client = nil
+                self.sessionDiagnostic = "EXTENSION_SESSION_CLEARED"
+                self.verificationContainer.isHidden = true
+                self.statusLabel.text = "已退出扩展登录。下次加载可使用共享会话或在扩展内重新登录。"
+                self.retryButton.isHidden = false
+            }
+        })
+        present(alert, animated: true)
+    }
+
+    @objc private func shareDiagnostics() {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "未知"
+        let report = """
+        FluxDO 分享扩展
+        版本：\(version)+\(build)
+        站点：\(link?.host ?? "未知")
+        共享会话：\(sessionDiagnostic)
+        请求通道：WebKit
+        最近 HTTP 状态：\((client?.lastHTTPStatus).map { String($0) } ?? "尚无响应")
+        验证界面：\(verificationContainer.isHidden ? "隐藏" : "显示")
+        """
+        let activity = UIActivityViewController(activityItems: [report], applicationActivities: nil)
+        activity.popoverPresentationController?.sourceView = diagnosticButton
+        activity.popoverPresentationController?.sourceRect = diagnosticButton.bounds
+        present(activity, animated: true)
     }
 
     private func receiveLink() async throws -> SharedTopicLink {
@@ -294,10 +388,15 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
             let renderer = ShareImageRenderer()
             self.renderer = renderer
             let html = client.html(topic: topic, posts: posts, imageScheme: "fluxdo-share-image")
-            let files = try await renderer.render(html: html, host: link.host, directory: directory, container: self.renderContainer) { [weak self] message in
+            let browser = self.webSession
+            let files = try await renderer.render(html: html, host: link.host, directory: directory,
+                                                  container: self.renderContainer, progress: { [weak self] message in
                 guard let self = self, !self.closed, self.operationID == id else { return }
                 self.statusLabel.text = message
-            }
+            }, imageLoader: { [weak browser] url in
+                guard let browser = browser else { throw CancellationError() }
+                return try await browser.image(url)
+            })
             try self.ensureActive(id)
             self.renderer = nil
             self.showOutput(files, images: true)
@@ -353,7 +452,14 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
                 if error is CancellationError {
                     self.statusLabel.text = "已停止操作，可重试。"
                 } else {
-                    self.statusLabel.text = "\(error.localizedDescription)\n若提示未登录或 Cloudflare 验证，请先在 FluxDO 完成验证并同步会话，再重新分享；扩展不会打开登录页或主应用。"
+                    self.statusLabel.text = error is ForumShareError ? error.localizedDescription : "操作失败，请重试或分享扩展诊断。"
+                    if let forumError = error as? ForumShareError {
+                        switch forumError {
+                        case .cloudflare, .loginRequired, .accessDenied:
+                            self.verificationContainer.isHidden = false
+                        default: break
+                        }
+                    }
                 }
                 self.retryButton.isHidden = false
             }
@@ -376,12 +482,17 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
         savePhotosButton.isEnabled = !busy
         cancelWorkButton.isHidden = !busy
         doneItem.isEnabled = !busy
+        verificationButton.isEnabled = !busy
+        continueButton.isEnabled = !busy
+        clearSessionButton.isEnabled = !busy
+        diagnosticButton.isEnabled = !busy
         if busy { spinner.startAnimating() } else { spinner.stopAnimating() }
     }
 
     private func stopWork() {
         operationID = UUID()
         work?.cancel()
+        webSession?.cancel()
         work = nil
         renderer?.cancel()
         renderer = nil

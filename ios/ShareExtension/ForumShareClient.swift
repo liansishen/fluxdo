@@ -90,9 +90,9 @@ enum ForumShareError: LocalizedError {
         case .invalidLink: return "请分享 linux.do 或 idcflare.com 的 HTTPS 话题链接。暂不支持其他站点或链接格式。"
         case .invalidResponse: return "论坛返回的数据不完整或格式异常，请稍后重试。"
         case .network: return "无法连接论坛，请检查网络后重试。"
-        case .loginRequired: return "此内容需要登录。请先在 FluxDO 中登录对应站点并同步会话，再重新分享。"
-        case .accessDenied: return "当前会话无权访问此内容，请先在 FluxDO 中确认账号权限。"
-        case .cloudflare: return "论坛需要 Cloudflare 验证。请先在 FluxDO 中完成验证，再重新分享。"
+        case .loginRequired: return "此内容需要登录。请在下方网页登录对应站点，再点击“验证完成，继续保存”。"
+        case .accessDenied: return "当前会话无权访问此内容，可在下方网页确认登录账号和帖子权限。"
+        case .cloudflare: return "请在下方网页完成 Cloudflare 验证，再点击“验证完成，继续保存”。"
         case .rateLimited: return "论坛请求过于频繁，请稍后再试。"
         case .unavailable: return "话题或帖子不存在、已删除，或当前账号无法访问。"
         case .unsafeRedirect: return "论坛返回了不安全或不支持的跳转，已停止请求以保护登录信息。"
@@ -136,9 +136,13 @@ private final class ShareRedirectPolicy: NSObject, URLSessionTaskDelegate {
 final class ForumShareClient {
     private let link: SharedTopicLink
     private let session: URLSession
+    typealias Loader = (URL) async throws -> (Data, HTTPURLResponse)
+    private let loader: Loader?
+    private(set) var lastHTTPStatus: Int?
 
-    init(link: SharedTopicLink) {
+    init(link: SharedTopicLink, loader: Loader? = nil) {
         self.link = link
+        self.loader = loader
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
@@ -284,17 +288,26 @@ final class ForumShareClient {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            try Task.checkCancellation()
+            if let loader = loader {
+                (data, response) = try await loader(url)
+            } else {
+                (data, response) = try await session.data(for: request)
+            }
+            try Task.checkCancellation()
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as URLError where error.code == .cancelled {
             throw CancellationError()
+        } catch let error as ForumShareError {
+            throw error
         } catch {
             // 不向 UI 传递含 URL、响应内容或凭据的底层错误。
             throw ForumShareError.network
         }
         guard let http = response as? HTTPURLResponse,
               let finalURL = http.url, ShareRedirectPolicy.isAllowed(finalURL, host: link.host) else { throw ForumShareError.unsafeRedirect }
+        lastHTTPStatus = http.statusCode
         let sample = String(decoding: data.prefix(65536), as: UTF8.self).lowercased()
         let looksLikeHTML = sample.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<")
         if http.value(forHTTPHeaderField: "cf-mitigated")?.lowercased() == "challenge"

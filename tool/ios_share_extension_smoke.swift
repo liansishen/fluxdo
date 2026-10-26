@@ -137,7 +137,78 @@ struct ShareExtensionSmoke {
         print("通过：会话有效期、Cookie 名称与内容隔离，以及匿名读取包装")
     }
 
-    static func main() throws {
+    static func checkRequestRecovery() async throws {
+        let link = try SharedTopicLink.parse("https://linux.do/t/12345")
+        let post: [String: Any] = ["id": 123, "topic_id": 12345, "post_number": 1,
+                                   "username": "reader", "cooked": "<p>完整正文</p>"]
+        let topic: [String: Any] = ["id": 12345, "title": "测试主题",
+                                    "post_stream": ["stream": [123], "posts": [post]]]
+        let payload = try JSONSerialization.data(withJSONObject: topic)
+        actor Responses {
+            var count = 0
+            func next(_ url: URL, payload: Data) -> (Data, HTTPURLResponse) {
+                count += 1
+                if count == 1 {
+                    return (Data("<html>challenge</html>".utf8), HTTPURLResponse(url: url, statusCode: 403,
+                            httpVersion: "HTTP/1.1", headerFields: ["cf-mitigated": "challenge"])!)
+                }
+                return (payload, HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1",
+                                                headerFields: ["Content-Type": "application/json"])!)
+            }
+        }
+        let responses = Responses()
+        let client = ForumShareClient(link: link, loader: { url in
+            try require(url.host == "linux.do" && url.path == "/t/12345.json", "请求离开原始主题接口")
+            return await responses.next(url, payload: payload)
+        })
+        do {
+            _ = try await client.loadTopic()
+            try require(false, "Cloudflare 挑战被误判为成功")
+        } catch ForumShareError.cloudflare {}
+        try require(client.lastHTTPStatus == 403, "诊断未记录挑战状态码")
+        let loaded = try await client.loadTopic()
+        try require(loaded.id == 12345 && loaded.posts.first?.cooked == "<p>完整正文</p>",
+                    "验证后继续未读取完整主帖")
+        try require(client.lastHTTPStatus == 200, "恢复后未更新 HTTP 诊断")
+        let cases: [(Int, String, ForumShareError)] = [
+            (401, "{}", .loginRequired), (403, "{}", .accessDenied),
+            (429, "{}", .rateLimited), (404, "{}", .unavailable), (200, "not json", .invalidResponse),
+        ]
+        for (status, body, expected) in cases {
+            let client = ForumShareClient(link: link, loader: { url in
+                (Data(body.utf8), HTTPURLResponse(url: url, statusCode: status,
+                                                httpVersion: "HTTP/1.1", headerFields: nil)!)
+            })
+            do {
+                _ = try await client.loadTopic()
+                try require(false, "失败响应被误判为主题")
+            } catch let error as ForumShareError {
+                try require(String(describing: error) == String(describing: expected), "恢复错误分类发生回归")
+            }
+        }
+        let unsafe = ForumShareClient(link: link, loader: { _ in
+            (payload, HTTPURLResponse(url: URL(string: "https://evil.example/t/12345")!, statusCode: 200,
+                                      httpVersion: "HTTP/1.1", headerFields: nil)!)
+        })
+        do {
+            _ = try await unsafe.loadTopic()
+            try require(false, "接受了跨站响应")
+        } catch ForumShareError.unsafeRedirect {}
+        let cancelled = ForumShareClient(link: link, loader: { _ in throw CancellationError() })
+        do {
+            _ = try await cancelled.loadTopic()
+            try require(false, "取消请求被当作成功")
+        } catch is CancellationError {}
+        let authentication = ForumShareClient(link: link, loader: { _ in throw ForumShareError.loginRequired })
+        do {
+            _ = try await authentication.loadTopic()
+            try require(false, "WebKit 登录错误丢失")
+        } catch ForumShareError.loginRequired {}
+        print("通过：挑战后继续、登录与权限错误、HTTP 诊断、跨站响应拒绝和取消")
+    }
+
+    static func main() async throws {
+        try await checkRequestRecovery()
         try checkSharedGroups()
         try checkStoredSessions()
         let links: [(String, String, Int, Int?)] = [

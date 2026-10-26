@@ -12,9 +12,10 @@ final class ShareImageRenderer: NSObject, WKNavigationDelegate {
     private var cancelPending: ((Error) -> Void)?
 
     func render(html: String, host: String, directory: URL, container: UIView,
-                progress: @escaping (String) -> Void) async throws -> [URL] {
+                progress: @escaping (String) -> Void,
+                imageLoader: ForumShareClient.Loader? = nil) async throws -> [URL] {
         cancelled = false
-        let proxy = ShareImageProxy(host: host, session: ShareSessionStore.read(host: host))
+        let proxy = ShareImageProxy(host: host, session: ShareSessionStore.read(host: host), loader: imageLoader)
         imageProxy = proxy
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
@@ -217,15 +218,19 @@ private final class ShareImageProxy: NSObject, WKURLSchemeHandler, URLSessionDat
         let schemeTask: WKURLSchemeTask
         var bytes = 0
     }
+    private static let imageTypes: Set<String> = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/heic", "image/heif", "image/svg+xml"]
     private let host: String
     private let authentication: ShareSession?
+    private let loader: ForumShareClient.Loader?
+    private var browserTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
     private var transfers: [Int: Transfer] = [:]
     private var tasks: [ObjectIdentifier: URLSessionDataTask] = [:]
     private var session: URLSession!
 
-    init(host: String, session authentication: ShareSession?) {
+    init(host: String, session authentication: ShareSession?, loader: ForumShareClient.Loader?) {
         self.host = host.lowercased()
         self.authentication = authentication
+        self.loader = loader
         super.init()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieStorage = nil
@@ -250,6 +255,31 @@ private final class ShareImageProxy: NSObject, WKURLSchemeHandler, URLSessionDat
             urlSchemeTask.didFailWithError(ShareImageError.message("文章图片地址无效。"))
             return
         }
+        if url.host?.lowercased() == host, let loader = loader {
+            let key = ObjectIdentifier(urlSchemeTask)
+            browserTasks[key] = Task { @MainActor [weak self] in
+                do {
+                    let (data, response) = try await loader(url)
+                    try Task.checkCancellation()
+                    guard let self = self, self.browserTasks.removeValue(forKey: key) != nil else { return }
+                    let mime = response.mimeType?.lowercased() ?? ""
+                    guard (200..<300).contains(response.statusCode),
+                          Self.imageTypes.contains(mime), data.count <= 16 * 1024 * 1024 else {
+                        urlSchemeTask.didFailWithError(ShareImageError.message("正文图片无法加载，请在扩展内验证后重试。"))
+                        return
+                    }
+                    let safe = URLResponse(url: urlSchemeTask.request.url!, mimeType: mime,
+                                           expectedContentLength: data.count, textEncodingName: nil)
+                    urlSchemeTask.didReceive(safe)
+                    urlSchemeTask.didReceive(data)
+                    urlSchemeTask.didFinish()
+                } catch {
+                    guard let self = self, self.browserTasks.removeValue(forKey: key) != nil else { return }
+                    urlSchemeTask.didFailWithError(ShareImageError.message("正文图片加载失败，请在扩展内验证后重试。"))
+                }
+            }
+            return
+        }
         var request = URLRequest(url: url)
         request.httpShouldHandleCookies = false
         applyAuthentication(to: &request)
@@ -260,12 +290,15 @@ private final class ShareImageProxy: NSObject, WKURLSchemeHandler, URLSessionDat
     }
 
     func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {
+        browserTasks.removeValue(forKey: ObjectIdentifier(urlSchemeTask))?.cancel()
         guard let task = tasks.removeValue(forKey: ObjectIdentifier(urlSchemeTask)) else { return }
         transfers.removeValue(forKey: task.taskIdentifier)
         task.cancel()
     }
 
     func cancel() {
+        browserTasks.values.forEach { $0.cancel() }
+        browserTasks.removeAll()
         transfers.removeAll()
         tasks.removeAll()
         session.invalidateAndCancel()
@@ -302,9 +335,9 @@ private final class ShareImageProxy: NSObject, WKURLSchemeHandler, URLSessionDat
         guard let transfer = transfers[dataTask.taskIdentifier] else { completionHandler(.cancel); return }
         let mime = response.mimeType?.lowercased() ?? ""
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-              ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/heic", "image/heif", "image/svg+xml"].contains(mime),
+              Self.imageTypes.contains(mime),
               response.expectedContentLength <= 16 * 1024 * 1024 else {
-            fail(dataTask, error: ShareImageError.message("正文图片无法加载；如需登录或 Cloudflare 验证，请先到 FluxDO 完成验证并同步会话，再重新分享。"))
+            fail(dataTask, error: ShareImageError.message("正文图片无法加载；可在扩展内验证或登录后重试。"))
             completionHandler(.cancel)
             return
         }

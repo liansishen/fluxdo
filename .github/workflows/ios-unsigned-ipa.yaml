@@ -60,6 +60,7 @@ jobs:
 
       - name: Exercise share link and export behavior
         run: |
+          node tool/ios_share_web_fetch_test.mjs
           plutil -lint ios/Runner.xcodeproj/project.pbxproj ios/ShareExtension/Info.plist ios/ShareExtension/ShareExtension.entitlements
           swiftc ios/Shared/ShareSessionStore.swift ios/ShareExtension/ForumShareClient.swift tool/ios_share_extension_smoke.swift -o "$RUNNER_TEMP/share-extension-smoke"
           "$RUNNER_TEMP/share-extension-smoke"
@@ -69,7 +70,8 @@ jobs:
           swiftc -typecheck -swift-version 5 -application-extension \
             -target arm64-apple-ios15.0 -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" \
             ios/Shared/ShareSessionStore.swift ios/ShareExtension/ForumShareClient.swift \
-            ios/ShareExtension/ShareImageRenderer.swift ios/ShareExtension/ShareViewController.swift
+            ios/ShareExtension/ShareImageRenderer.swift ios/ShareExtension/ShareWebSession.swift \
+            ios/ShareExtension/ShareViewController.swift
 
       - name: Cache iOS engine artifacts
         run: flutter precache --ios
