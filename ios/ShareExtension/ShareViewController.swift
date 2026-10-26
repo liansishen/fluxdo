@@ -1,11 +1,9 @@
 import UIKit
 import UniformTypeIdentifiers
-import Photos
-import ImageIO
 import WebKit
 
 @MainActor
-final class ShareViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, UIDocumentPickerDelegate, UIAdaptivePresentationControllerDelegate {
+final class ShareViewController: UIViewController, UIAdaptivePresentationControllerDelegate {
     private var work: Task<Void, Never>?
     private var operationID = UUID()
     private var closed = false
@@ -13,9 +11,7 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
     private var client: ForumShareClient?
     private var topic: SharedTopic?
     private var link: SharedTopicLink?
-    private var renderer: ShareImageRenderer?
-    private var output: [URL] = []
-    private var outputIsImages = false
+    private var activePreview: UIViewController?
     private var workingDirectory: URL?
     private var previousDirectories: [URL] = []
     private var retryAction: (() -> Void)?
@@ -36,17 +32,7 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
     private let exportButton = UIButton(type: .system)
     private let retryButton = UIButton(type: .system)
     private let cancelWorkButton = UIButton(type: .system)
-    private let shareButton = UIButton(type: .system)
-    private let saveFilesButton = UIButton(type: .system)
-    private let savePhotosButton = UIButton(type: .system)
-    private let formatControl = UISegmentedControl(items: ["Markdown", "HTML"])
-    private let scopeControl = UISegmentedControl(items: ["仅主帖", "全部楼层"])
-    private let scopeHint = UILabel()
-    private let pageLabel = UILabel()
     private let spinner = UIActivityIndicatorView(style: .medium)
-    private let renderContainer = UIView()
-    private var preview: UICollectionView!
-    private var previewHeight: NSLayoutConstraint!
     private var navigationBar: UINavigationBar!
     private var doneItem: UIBarButtonItem!
 
@@ -124,33 +110,11 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
         configureButton(diagnosticButton, title: "分享扩展诊断", action: #selector(shareDiagnostics))
         stack.addArrangedSubview(diagnosticButton)
 
-        let pictureHint = UILabel()
-        pictureHint.text = "分享图片：包含主帖标题、作者、来源及完整正文。长文会自动分为多张 PNG，不会截断。"
-        pictureHint.numberOfLines = 0
-        pictureHint.font = .preferredFont(forTextStyle: .subheadline)
-        stack.addArrangedSubview(pictureHint)
-        configureButton(imageButton, title: "生成分享图片", action: #selector(generateImages))
+        configureButton(imageButton, title: "分享图片", action: #selector(generateImages))
+        imageButton.accessibilityIdentifier = "shareEntry.image"
         stack.addArrangedSubview(imageButton)
-        let separator = UIView()
-        separator.backgroundColor = .separator
-        separator.heightAnchor.constraint(equalToConstant: 1).isActive = true
-        stack.addArrangedSubview(separator)
-        let exportTitle = UILabel()
-        exportTitle.text = "导出文章"
-        exportTitle.font = .preferredFont(forTextStyle: .headline)
-        stack.addArrangedSubview(exportTitle)
-        formatControl.selectedSegmentIndex = 0
-        scopeControl.selectedSegmentIndex = 0
-        formatControl.addTarget(self, action: #selector(updateScopeHint), for: .valueChanged)
-        scopeControl.addTarget(self, action: #selector(updateScopeHint), for: .valueChanged)
-        stack.addArrangedSubview(formatControl)
-        stack.addArrangedSubview(scopeControl)
-        scopeHint.font = .preferredFont(forTextStyle: .footnote)
-        scopeHint.textColor = .secondaryLabel
-        scopeHint.numberOfLines = 0
-        stack.addArrangedSubview(scopeHint)
-        updateScopeHint()
-        configureButton(exportButton, title: "生成文章文件", action: #selector(generateExport))
+        configureButton(exportButton, title: "导出文章", action: #selector(generateExport))
+        exportButton.accessibilityIdentifier = "shareEntry.export"
         stack.addArrangedSubview(exportButton)
         configureButton(cancelWorkButton, title: "停止当前操作", action: #selector(cancelCurrentWork))
         stack.addArrangedSubview(cancelWorkButton)
@@ -158,42 +122,6 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
         stack.addArrangedSubview(retryButton)
         retryButton.isHidden = true
         cancelWorkButton.isHidden = true
-
-        let layout = UICollectionViewFlowLayout()
-        layout.scrollDirection = .horizontal
-        layout.minimumLineSpacing = 0
-        layout.minimumInteritemSpacing = 0
-        preview = UICollectionView(frame: .zero, collectionViewLayout: layout)
-        preview.backgroundColor = .secondarySystemBackground
-        preview.isPagingEnabled = true
-        preview.showsHorizontalScrollIndicator = true
-        preview.register(SharePreviewCell.self, forCellWithReuseIdentifier: "image")
-        preview.dataSource = self
-        preview.delegate = self
-        previewHeight = preview.heightAnchor.constraint(equalToConstant: 0)
-        previewHeight.isActive = true
-        stack.addArrangedSubview(preview)
-        pageLabel.font = .preferredFont(forTextStyle: .footnote)
-        pageLabel.numberOfLines = 0
-        pageLabel.isHidden = true
-        stack.addArrangedSubview(pageLabel)
-        configureButton(saveFilesButton, title: "保存到文件", action: #selector(saveFiles))
-        configureButton(savePhotosButton, title: "保存全部图片到相册", action: #selector(savePhotos))
-        configureButton(shareButton, title: "系统分享", action: #selector(shareOutput))
-        [saveFilesButton, savePhotosButton, shareButton].forEach {
-            $0.isHidden = true
-            stack.addArrangedSubview($0)
-        }
-        renderContainer.translatesAutoresizingMaskIntoConstraints = false
-        renderContainer.clipsToBounds = true
-        renderContainer.isUserInteractionEnabled = false
-        view.insertSubview(renderContainer, at: 0)
-        NSLayoutConstraint.activate([
-            renderContainer.topAnchor.constraint(equalTo: view.topAnchor),
-            renderContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            renderContainer.widthAnchor.constraint(equalTo: view.widthAnchor),
-            renderContainer.heightAnchor.constraint(equalToConstant: 1000)
-        ])
     }
 
     private func configureButton(_ button: UIButton, title: String, action: Selector) {
@@ -203,14 +131,6 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
         button.configuration = configuration
         button.addTarget(self, action: action, for: .touchUpInside)
         button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
-    }
-
-    @objc private func updateScopeHint() {
-        if formatControl.selectedSegmentIndex == 0 {
-            scopeHint.text = "Markdown 最多导出 10 条帖子；选择全部楼层时仅包含前 10 条。需要完整长帖请选 HTML。"
-        } else {
-            scopeHint.text = "HTML 选择全部楼层会分批读取完整主题，任一批次失败将明确报错，不会导出残缺文章。"
-        }
     }
 
     private func beginLoading() {
@@ -390,49 +310,44 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
     }
 
     @objc private func generateImages() {
-        guard let client = client, let topic = topic, let link = link else { return }
-        start(message: "正在准备主帖图片…", retry: { [weak self] in self?.generateImages() }) { [weak self] id in
-            guard let self = self else { return }
-            let posts = try await client.posts(topic: topic, all: false, markdown: false)
-            try self.ensureActive(id)
-            let directory = try self.makeDirectory()
-            let renderer = ShareImageRenderer()
-            self.renderer = renderer
-            let html = client.html(topic: topic, posts: posts, imageScheme: "fluxdo-share-image")
-            let browser = self.webSession
-            let files = try await renderer.render(html: html, host: link.host, directory: directory,
-                                                  container: self.renderContainer, progress: { [weak self] message in
-                guard let self = self, !self.closed, self.operationID == id else { return }
-                self.statusLabel.text = message
-            }, imageLoader: { [weak browser] url in
-                guard let browser = browser else { throw CancellationError() }
-                return try await browser.image(url)
-            })
-            try self.ensureActive(id)
-            self.renderer = nil
-            self.showOutput(files, images: true)
-            self.statusLabel.text = "已生成 \(files.count) 张 PNG，覆盖完整主帖正文。可左右滑动预览，保存或分享时将包含全部 \(files.count) 张。"
-        }
+        guard let topic = topic, let post = topic.posts.first(where: { $0.postNumber == 1 }),
+              presentedViewController == nil else { return }
+        do {
+            let browser = webSession
+            let preview = ShareImagePreviewController(topic: topic, post: post, directory: try makeDirectory(),
+                imageLoader: { [weak browser] url in
+                    guard let browser = browser else { throw CancellationError() }
+                    return try await browser.image(url)
+                }, onAuthenticationRequired: { [weak self] in self?.verifyForPreview() })
+            activePreview = preview
+            present(preview, animated: true)
+        } catch { statusLabel.text = "无法创建图片预览，请重试。" }
     }
 
     @objc private func generateExport() {
-        guard let client = client, let topic = topic else { return }
-        let all = scopeControl.selectedSegmentIndex == 1
-        let markdown = formatControl.selectedSegmentIndex == 0
-        start(message: all && !markdown ? "正在分批加载全部楼层…" : "正在准备文章…", retry: { [weak self] in self?.generateExport() }) { [weak self] id in
-            guard let self = self else { return }
-            let posts = try await client.posts(topic: topic, all: all, markdown: markdown)
-            try self.ensureActive(id)
-            let text: String
-            if markdown { text = try await client.markdown(topic: topic, posts: posts) }
-            else { text = client.html(topic: topic, posts: posts) }
-            try self.ensureActive(id)
-            let directory = try self.makeDirectory()
-            let file = directory.appendingPathComponent(self.safeFilename(topic.title) + (markdown ? ".md" : ".html"))
-            try text.write(to: file, atomically: true, encoding: .utf8)
-            try self.ensureActive(id)
-            self.showOutput([file], images: false)
-            self.statusLabel.text = "已生成 \(markdown ? "Markdown" : "HTML") 文件，包含 \(posts.count) 条帖子。\(markdown && all ? "Markdown 最多包含前 10 条；完整主题请使用 HTML。" : "")"
+        guard let client = client, let topic = topic, presentedViewController == nil else { return }
+        do {
+            let preview = ShareExportViewController(topic: topic, client: client, directory: try makeDirectory(),
+                onAuthenticationRequired: { [weak self] in self?.verifyForPreview() })
+            activePreview = preview
+            present(preview, animated: true)
+        } catch { statusLabel.text = "无法创建导出界面，请重试。" }
+    }
+
+    private func verifyForPreview() {
+        guard let preview = activePreview else { return }
+        dismiss(animated: true) { [weak self] in
+            guard let self = self, !self.closed else { return }
+            self.verificationContainer.isHidden = false
+            self.statusLabel.text = "请完成网页验证，再点击“验证完成，继续保存”返回原界面。"
+            self.retryAction = { [weak self, preview] in
+                guard let self = self, !self.closed, self.presentedViewController == nil else { return }
+                self.verificationContainer.isHidden = true
+                self.present(preview, animated: true) {
+                    (preview as? ShareImagePreviewController)?.resumeAfterAuthentication()
+                    (preview as? ShareExportViewController)?.resumeAfterAuthentication()
+                }
+            }
         }
     }
 
@@ -455,8 +370,6 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
                 self.providerProgress.removeAll()
             } catch {
                 guard let self = self, !self.closed, self.operationID == id else { return }
-                self.renderer?.cancel()
-                self.renderer = nil
                 self.setBusy(false)
                 self.work = nil
                 self.providerProgress.removeAll()
@@ -492,11 +405,6 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
         let ready = topic != nil && client != nil
         imageButton.isEnabled = !busy && ready
         exportButton.isEnabled = !busy && ready
-        formatControl.isEnabled = !busy
-        scopeControl.isEnabled = !busy
-        shareButton.isEnabled = !busy
-        saveFilesButton.isEnabled = !busy
-        savePhotosButton.isEnabled = !busy
         cancelWorkButton.isHidden = !busy
         doneItem.isEnabled = !busy
         verificationButton.isEnabled = !busy
@@ -511,8 +419,6 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
         work?.cancel()
         webSession?.cancel()
         work = nil
-        renderer?.cancel()
-        renderer = nil
         providerProgress.forEach { $0.cancel() }
         providerProgress.removeAll()
     }
@@ -549,112 +455,6 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
         return directory
     }
 
-    private func safeFilename(_ name: String) -> String {
-        let invalid = CharacterSet(charactersIn: "/\\:?%*|\"<>\n\r")
-        let result = name.components(separatedBy: invalid).joined(separator: "-").trimmingCharacters(in: .whitespacesAndNewlines)
-        return result.isEmpty ? "FluxDO文章" : String(result.prefix(80))
-    }
-
-    private func showOutput(_ files: [URL], images: Bool) {
-        output = files
-        outputIsImages = images
-        previewHeight.constant = images ? 320 : 0
-        preview.isHidden = !images
-        preview.reloadData()
-        preview.setContentOffset(.zero, animated: false)
-        pageLabel.isHidden = false
-        pageLabel.text = images ? "第 1 / \(files.count) 张 · 左右滑动查看全部分片" : files.first?.lastPathComponent
-        saveFilesButton.isHidden = false
-        shareButton.isHidden = false
-        savePhotosButton.isHidden = !images
-        shareButton.configuration?.title = images ? "系统分享全部 \(files.count) 张图片" : "系统分享文章文件"
-    }
-
-    @objc private func shareOutput() {
-        guard !closed, !output.isEmpty, presentedViewController == nil else { return }
-        let activity = UIActivityViewController(activityItems: output, applicationActivities: nil)
-        activity.popoverPresentationController?.sourceView = shareButton
-        activity.popoverPresentationController?.sourceRect = shareButton.bounds
-        activity.completionWithItemsHandler = { [weak self] _, completed, _, error in
-            Task { @MainActor in
-                guard let self = self, !self.closed else { return }
-                if let error = error { self.statusLabel.text = "分享失败：\(error.localizedDescription)。文件仍保留，可重试。" }
-                else { self.statusLabel.text = completed ? "分享已完成，文件仍可再次保存或分享。" : "已取消系统分享，文件仍保留，可继续操作。" }
-            }
-        }
-        present(activity, animated: true)
-    }
-
-    @objc private func saveFiles() {
-        guard !closed, !output.isEmpty, presentedViewController == nil else { return }
-        let picker = UIDocumentPickerViewController(forExporting: output, asCopy: true)
-        picker.delegate = self
-        picker.shouldShowFileExtensions = true
-        present(picker, animated: true)
-    }
-
-    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-        guard !closed else { return }
-        statusLabel.text = "已取消保存，文件仍保留，可重新保存或分享。"
-    }
-
-    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-        guard !closed else { return }
-        statusLabel.text = "已保存 \(urls.count) 个文件，可继续分享或点击完成。"
-    }
-
-    @objc private func savePhotos() {
-        guard outputIsImages, !output.isEmpty else { return }
-        let files = output
-        start(message: "正在保存全部 \(files.count) 张图片到相册…", retry: { [weak self] in self?.savePhotos() }) { [weak self] id in
-            guard let self = self else { return }
-            let authorization = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
-            try self.ensureActive(id)
-            guard authorization == .authorized || authorization == .limited else {
-                throw ShareUIError.message("未获得添加照片权限。可选择保存到文件或系统分享。")
-            }
-            self.cancelWorkButton.isHidden = true
-            self.statusLabel.text = "正在保存全部 \(files.count) 张图片；相册写入开始后无法撤回。"
-            try await PHPhotoLibrary.shared().performChanges {
-                for file in files { PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: file) }
-            }
-            try self.ensureActive(id)
-            self.statusLabel.text = "已保存全部 \(files.count) 张图片到相册。"
-        }
-    }
-
-    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        outputIsImages ? output.count : 0
-    }
-
-    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "image", for: indexPath) as! SharePreviewCell
-        cell.show(output[indexPath.item])
-        cell.accessibilityLabel = "第 \(indexPath.item + 1) 张，共 \(output.count) 张"
-        return cell
-    }
-
-    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
-                        sizeForItemAt indexPath: IndexPath) -> CGSize {
-        CGSize(width: max(1, collectionView.bounds.width), height: 320)
-    }
-
-    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { updatePage(scrollView) }
-    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        if !decelerate { updatePage(scrollView) }
-    }
-
-    private func updatePage(_ scroll: UIScrollView) {
-        guard scroll === preview, outputIsImages, !output.isEmpty else { return }
-        let page = min(output.count, max(1, Int((scroll.contentOffset.x / max(1, scroll.bounds.width)).rounded()) + 1))
-        pageLabel.text = "第 \(page) / \(output.count) 张 · 保存和分享均包含全部分片"
-    }
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        preview?.collectionViewLayout.invalidateLayout()
-    }
-
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         presentationController?.delegate = self
@@ -681,8 +481,6 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
     deinit {
         work?.cancel()
         providerProgress.forEach { $0.cancel() }
-        let renderer = renderer
-        Task { @MainActor in renderer?.cancel() }
     }
 
     @objc private func closeCancelled() { close(cancelled: true) }
@@ -713,42 +511,6 @@ private enum ShareUIError: LocalizedError {
     }
 }
 
-private final class SharePreviewCell: UICollectionViewCell {
-    private let imageView = UIImageView()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        imageView.contentMode = .scaleAspectFit
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(imageView)
-        NSLayoutConstraint.activate([
-            imageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            imageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            imageView.topAnchor.constraint(equalTo: contentView.topAnchor),
-            imageView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
-        ])
-        isAccessibilityElement = true
-    }
-
-    required init?(coder: NSCoder) { fatalError("不支持 storyboard") }
-
-    override func prepareForReuse() {
-        super.prepareForReuse()
-        imageView.image = nil
-    }
-
-    func show(_ file: URL) {
-        guard let source = CGImageSourceCreateWithURL(file as CFURL, nil),
-              let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceThumbnailMaxPixelSize: 1000,
-                kCGImageSourceCreateThumbnailWithTransform: true
-              ] as CFDictionary) else { return }
-        imageView.image = UIImage(cgImage: thumbnail)
-    }
-}
-
-/// 提供方取消不保证回调，因此主动结束等待，并忽略迟到或重复的回调。
 private final class ShareInputContinuation: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<String, Error>?

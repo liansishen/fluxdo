@@ -79,6 +79,9 @@ struct SharedPost {
     let postNumber: Int
     let username: String
     let cooked: String
+    var name: String? = nil
+    var avatarTemplate: String? = nil
+    var createdAt: String? = nil
 }
 
 enum ForumShareError: LocalizedError {
@@ -269,7 +272,10 @@ final class ForumShareClient {
               let username = json["username"] as? String,
               let cooked = json["cooked"] as? String,
               json["topic_id"] == nil || json["topic_id"] as? Int == topicID else { throw ForumShareError.invalidResponse }
-        return SharedPost(id: id, postNumber: number, username: username, cooked: cooked)
+        return SharedPost(id: id, postNumber: number, username: username, cooked: cooked,
+                          name: json["name"] as? String,
+                          avatarTemplate: json["avatar_template"] as? String,
+                          createdAt: json["created_at"] as? String)
     }
 
     private func request(path: String, query: [URLQueryItem] = []) async throws -> [String: Any] {
@@ -353,7 +359,7 @@ final class ForumShareClient {
 }
 
 // 不依赖 WebKit 的 HTML 解析容错规则：仅重建允许的标签和属性，其他输入不会进入标签上下文。
-private enum SafeShareHTML {
+enum SafeShareHTML {
     private static let allowed: Set<String> = ["p", "div", "span", "a", "img", "pre", "code", "br", "hr", "strong", "em", "b", "i", "s", "del", "blockquote", "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "details", "summary", "figure", "figcaption", "sup", "sub", "time", "abbr", "kbd", "mark", "small", "dl", "dt", "dd"]
     private static let void: Set<String> = ["img", "br", "hr"]
     private static let discardContent: Set<String> = ["script", "style", "iframe", "object", "svg", "math", "template", "noscript", "textarea", "title", "xmp", "plaintext", "select", "button", "video", "audio", "canvas"]

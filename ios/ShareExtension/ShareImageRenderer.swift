@@ -11,9 +11,12 @@ final class ShareImageRenderer: NSObject, WKNavigationDelegate {
     private var navigationTimeout: Task<Void, Never>?
     private var cancelPending: ((Error) -> Void)?
 
-    func render(html: String, host: String, directory: URL, container: UIView,
-                progress: @escaping (String) -> Void,
-                imageLoader: ForumShareClient.Loader? = nil) async throws -> [URL] {
+    var previewView: WKWebView? { webView }
+    private var contentHeight: CGFloat = 0
+
+    func prepare(html: String, host: String, container: UIView,
+                 imageLoader: ForumShareClient.Loader? = nil) async throws {
+        cancel()
         cancelled = false
         let proxy = ShareImageProxy(host: host, session: ShareSessionStore.read(host: host), loader: imageLoader)
         imageProxy = proxy
@@ -22,98 +25,138 @@ final class ShareImageRenderer: NSObject, WKNavigationDelegate {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         configuration.setURLSchemeHandler(proxy, forURLScheme: "fluxdo-share-image")
-        let width = min(430, max(320, container.bounds.width))
-        let pageHeight: CGFloat = 1000
-        let web = WKWebView(frame: CGRect(x: 0, y: 0, width: width, height: pageHeight), configuration: configuration)
-        web.isUserInteractionEnabled = false
-        web.scrollView.isScrollEnabled = false
+        let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 375, height: 600), configuration: configuration)
         web.scrollView.contentInsetAdjustmentBehavior = .never
         web.navigationDelegate = self
-        web.backgroundColor = .white
         web.isOpaque = true
-        container.insertSubview(web, at: 0)
+        web.accessibilityIdentifier = "shareImage.preview"
+        container.addSubview(web)
         webView = web
-        defer { cancel() }
-        progress("正在排版并加载正文图片…")
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             navigation = continuation
             navigationTimeout = Task { [weak self] in
-                do { try await Task.sleep(nanoseconds: 60_000_000_000) }
-                catch { return }
-                guard let self = self else { return }
-                self.navigation?.resume(throwing: ShareImageError.message("正文排版加载超时，请重试。"))
-                self.navigation = nil
-                self.webView?.stopLoading()
+                do { try await Task.sleep(nanoseconds: 60_000_000_000) } catch { return }
+                self?.navigation?.resume(throwing: ShareImageError.message("正文排版加载超时，请重试。"))
+                self?.navigation = nil
+                self?.webView?.stopLoading()
             }
             web.loadHTMLString(html, baseURL: nil)
         }
         navigationTimeout?.cancel()
         navigationTimeout = nil
         try checkCancellation()
-        // 这里只执行固定的可信脚本，正文脚本和所有页面导航均被禁用。
-        let readiness = """
+        contentHeight = try await measureContent(in: web)
+    }
+
+    func selectTheme(_ theme: ShareImagePalette) async throws {
+        guard let web = webView else { throw ShareImageError.message("图片预览尚未准备好。") }
+        try checkCancellation()
+        _ = try await execute(ShareImagePalette.themeUpdateScript(theme), in: web)
+    }
+
+    private func measureContent(in web: WKWebView) async throws -> CGFloat {
+        let script = """
         const ready = async () => {
+          document.querySelectorAll('details').forEach(details => { details.open = true; });
           await document.fonts.ready;
-          const images = Array.from(document.images);
-          await Promise.all(images.map(image => {
+          await Promise.all(Array.from(document.images).map(image => {
             image.loading = 'eager';
-            return image.decode().catch(() => { throw new Error('正文图片加载失败，请重试'); });
+            return image.decode().catch(() => {
+              if (image.classList.contains('avatar')) {
+                const fallback=document.createElement('div');
+                fallback.className='avatar avatar-fallback';
+                fallback.textContent=(document.querySelector('.display-name')?.textContent || '?').slice(0,1);
+                image.replaceWith(fallback);
+                return;
+              }
+              throw new Error('正文图片加载失败');
+            });
           }));
           await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
           if (Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) > window.innerWidth + 1) {
-            throw new Error('正文包含超宽内容，无法完整截图，请改用 HTML 导出');
+            throw new Error('正文包含超宽内容');
           }
-          return Math.ceil(Math.max(document.body.scrollHeight, document.body.getBoundingClientRect().bottom + window.scrollY));
+          return Math.ceil(document.getElementById('share-card').getBoundingClientRect().height);
         };
-        return await Promise.race([ready(), new Promise((_, reject) => setTimeout(() => reject(new Error('图片或字体加载超时，请重试')), 45000))]);
+        return await Promise.race([ready(), new Promise((_, reject) => setTimeout(() => reject(new Error('图片或字体加载超时')), 45000))]);
         """
-        let value: Any?
-        do {
-            value = try await execute(readiness, in: web)
-        } catch {
-            if let failure = proxy.authenticationFailure { throw failure }
-            throw error
+        let result: Any?
+        do { result = try await execute(script, in: web) }
+        catch {
+            if let error = imageProxy?.authenticationFailure { throw error }
+            throw ShareImageError.message("正文排版或图片加载失败，请重试；超宽内容可使用 HTML 导出。")
         }
         try checkCancellation()
-        guard let number = value as? NSNumber, number.doubleValue.isFinite, number.doubleValue > 0 else {
-            throw ShareImageError.message("无法获取文章排版高度，请重试。")
+        guard let height = result as? NSNumber, height.doubleValue.isFinite, height.doubleValue > 0 else {
+            throw ShareImageError.message("无法获取完整正文高度。")
         }
-        let height = CGFloat(number.doubleValue)
-        guard height <= pageHeight * 200 else {
-            throw ShareImageError.message("文章过长，预计超过 200 张图片，未生成不完整结果。请改用 HTML 导出。")
+        return CGFloat(height.doubleValue)
+    }
+
+    func capture(to file: URL, progress: @escaping (String) -> Void) async throws -> URL {
+        guard let web = webView else { throw ShareImageError.message("图片预览尚未准备好。") }
+        try checkCancellation()
+        contentHeight = try await measureContent(in: web)
+        let oldBounds = web.bounds
+        let oldCenter = web.center
+        let oldTransform = web.transform
+        let oldOffset = web.scrollView.contentOffset
+        web.transform = .identity
+        web.frame = CGRect(x: 0, y: 0, width: 375, height: 1000)
+        web.scrollView.isScrollEnabled = false
+        defer {
+            web.bounds = oldBounds
+            web.center = oldCenter
+            web.transform = oldTransform
+            web.scrollView.isScrollEnabled = true
+            web.scrollView.setContentOffset(oldOffset, animated: false)
         }
-        let count = Int(ceil(height / pageHeight))
-        var files: [URL] = []
+        let totalPixels = Int(ceil(contentHeight * 2))
+        guard totalPixels <= 200_000 else {
+            throw ShareImageError.message("文章超过长图安全尺寸，请使用 HTML 导出。")
+        }
+        let writer = try ShareLongImageEncoder(url: file, width: 750, height: totalPixels)
+        var complete = false
+        defer { if !complete { Task { await writer.cancel() } } }
+        let count = Int(ceil(CGFloat(totalPixels) / 2000))
         for index in 0..<count {
             try checkCancellation()
-            progress("正在生成第 \(index + 1)/\(count) 张图片…")
-            let start = CGFloat(index) * pageHeight
-            let sliceHeight = min(pageHeight, height - start)
-            let scrollOffset = min(start, max(0, height - pageHeight))
+            progress("正在生成完整长图 \(index + 1)/\(count)…")
+            let startPixels = index * 2000
+            let rows = min(2000, totalPixels - startPixels)
+            let start = CGFloat(startPixels) / 2
+            let sliceHeight = CGFloat(rows) / 2
+            let scrollOffset = min(start, max(0, contentHeight - 1000))
             web.scrollView.setContentOffset(CGPoint(x: 0, y: scrollOffset), animated: false)
             _ = try await execute("await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); return true;", in: web)
             try checkCancellation()
-            let actualOffset = web.scrollView.contentOffset.y
-            let sliceOrigin = start - actualOffset
-            guard sliceOrigin >= -0.5, sliceOrigin + sliceHeight <= pageHeight + 0.5 else {
-                throw ShareImageError.message("正文分片位置无法完整呈现，未输出截断结果。请重试或使用 HTML 导出。")
+            let origin = start - web.scrollView.contentOffset.y
+            guard origin >= -0.5, origin + sliceHeight <= 1000.5 else {
+                throw ShareImageError.message("无法取得完整长图，已停止输出以避免截断。")
             }
-            let snapshot = WKSnapshotConfiguration()
-            snapshot.rect = CGRect(x: 0, y: max(0, sliceOrigin), width: width, height: sliceHeight)
-            snapshot.snapshotWidth = NSNumber(value: Double(width))
-            snapshot.afterScreenUpdates = true
-            let image = try await takeSnapshot(of: web, configuration: snapshot)
+            let configuration = WKSnapshotConfiguration()
+            configuration.rect = CGRect(x: 0, y: max(0, origin), width: 375, height: sliceHeight)
+            configuration.snapshotWidth = 375
+            configuration.afterScreenUpdates = true
+            let image = try await takeSnapshot(of: web, configuration: configuration)
             try checkCancellation()
-            let file = directory.appendingPathComponent(String(format: "FluxDO-%03d.png", index + 1))
-            try autoreleasepool {
-                guard let data = image.pngData() else {
-                    throw ShareImageError.message("PNG 图片编码失败，请重试。")
+            let pixels = try autoreleasepool { () throws -> CGImage in
+                let format = UIGraphicsImageRendererFormat()
+                format.scale = 2
+                format.opaque = true
+                let size = CGSize(width: 375, height: CGFloat(rows) / 2)
+                let normalized = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+                    image.draw(in: CGRect(origin: .zero, size: size))
                 }
-                try data.write(to: file, options: .atomic)
+                guard let pixels = normalized.cgImage else { throw ShareImageError.message("无法读取截图像素。") }
+                return pixels
             }
-            files.append(file)
+            try await writer.append(pixels, rows: rows)
+            try checkCancellation()
         }
-        return files
+        try await writer.finish()
+        complete = true
+        return file
     }
 
     func cancel() {
@@ -287,6 +330,12 @@ private final class ShareImageProxy: NSObject, WKURLSchemeHandler, URLSessionDat
                     urlSchemeTask.didFinish()
                 } catch {
                     guard let self = self, self.browserTasks.removeValue(forKey: key) != nil else { return }
+                    if let forum = error as? ForumShareError {
+                        switch forum {
+                        case .cloudflare, .loginRequired, .accessDenied: self.authenticationFailure = forum
+                        default: break
+                        }
+                    }
                     urlSchemeTask.didFailWithError(ShareImageError.message("正文图片加载失败，请在扩展内验证后重试。"))
                 }
             }
@@ -401,4 +450,15 @@ private final class ShareRenderCompletion<Value>: @unchecked Sendable {
         lock.unlock()
         continuation?.resume(with: result)
     }
+}
+
+/// 逐行像素转换与 zlib 压缩在串行 actor 上执行，截图和预览交互保留在主线程。
+private actor ShareLongImageEncoder {
+    private let writer: ShareLongImageWriter
+    init(url: URL, width: Int, height: Int) throws {
+        writer = try ShareLongImageWriter(url: url, width: width, height: height)
+    }
+    func append(_ image: CGImage, rows: Int) throws { try writer.append(image, rows: rows) }
+    func finish() throws { try writer.finish() }
+    func cancel() { writer.cancel() }
 }

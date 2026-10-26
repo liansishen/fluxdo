@@ -207,7 +207,28 @@ struct ShareExtensionSmoke {
         print("通过：挑战后继续、登录与权限错误、HTTP 诊断、跨站响应拒绝和取消")
     }
 
+    static func checkShareCards() throws {
+        let post = SharedPost(id: 123, postNumber: 1, username: "reader", cooked: "<p>正文末尾标记</p><script>unsafe()</script>",
+                              name: "测试作者", avatarTemplate: "/avatar/{size}.png", createdAt: "2026-10-26T00:00:00Z")
+        let topic = SharedTopic(id: 12345, title: "标题<script>", slug: "topic", posts: [post], postIDs: [123],
+                                url: URL(string: "https://linux.do/t/12345")!)
+        let expected = ["#F9F1E4", "#FFFFFF", "#1E1E1E", "#000000", "#E8F4FC", "#E8F5E9", "#F6F2EA"]
+        try require(ShareImagePalette.allCases.count == 7, "分享图主题数量与主应用不一致")
+        for (index, palette) in ShareImagePalette.allCases.enumerated() {
+            let html = ShareImageDocument.html(topic: topic, post: post, palette: palette)
+            try require(palette.background == expected[index], "分享配色与主应用不一致")
+            try require(html.contains("data-theme=\"\(palette.themeKey)\"") && html.contains("width:375px"), "主题或固定卡片尺寸缺失")
+            try require(html.contains("标题&lt;script&gt;") && html.contains("测试作者") && html.contains("正文末尾标记"), "卡片缺少作者、标题或完整正文")
+            try require(!html.contains("<script>"), "未隔离正文脚本")
+            try require(html.contains("fluxdo-share-image://linux.do/avatar/120.png"), "头像未通过认证隔离代理")
+            let update = ShareImagePalette.themeUpdateScript(palette)
+            try require(update.contains("data-theme") && !update.contains("src="), "换色导致重建图片地址")
+        }
+        print("通过：七套主应用配色、375逻辑像素版式、作者/头像/完整正文、脚本隔离与即时换色")
+    }
+
     static func main() async throws {
+        try checkShareCards()
         try await checkRequestRecovery()
         try checkSharedGroups()
         try checkStoredSessions()

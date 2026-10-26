@@ -62,8 +62,10 @@ jobs:
         run: |
           node tool/ios_share_web_fetch_test.mjs
           plutil -lint ios/Runner.xcodeproj/project.pbxproj ios/ShareExtension/Info.plist ios/ShareExtension/ShareExtension.entitlements
-          swiftc ios/Shared/ShareSessionStore.swift ios/ShareExtension/ForumShareClient.swift tool/ios_share_extension_smoke.swift -o "$RUNNER_TEMP/share-extension-smoke"
+          swiftc ios/Shared/ShareSessionStore.swift ios/ShareExtension/ForumShareClient.swift ios/ShareExtension/ShareImageDocument.swift tool/ios_share_extension_smoke.swift -o "$RUNNER_TEMP/share-extension-smoke"
           "$RUNNER_TEMP/share-extension-smoke"
+          swiftc ios/ShareExtension/ShareLongImageWriter.swift tool/ios_share_image_smoke.swift -lz -o "$RUNNER_TEMP/share-image-smoke"
+          "$RUNNER_TEMP/share-image-smoke"
 
       - name: Typecheck native iOS share extension
         run: |
@@ -71,7 +73,21 @@ jobs:
             -target arm64-apple-ios15.0 -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" \
             ios/Shared/ShareSessionStore.swift ios/ShareExtension/ForumShareClient.swift \
             ios/ShareExtension/ShareImageRenderer.swift ios/ShareExtension/ShareWebSession.swift \
+            ios/ShareExtension/ShareImageDocument.swift ios/ShareExtension/ShareLongImageWriter.swift \
+            ios/ShareExtension/ShareImagePreviewController.swift ios/ShareExtension/ShareExportViewController.swift \
             ios/ShareExtension/ShareViewController.swift
+
+      - name: Exercise native preview on iPhone and iPad
+        run: tool/ios_share_preview_tests/run_ios_ui_tests.sh
+
+      - name: Upload native preview test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-share-preview-tests
+          path: ${{ runner.temp }}/fluxdo-share-preview-tests/*.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Cache iOS engine artifacts
         run: flutter precache --ios

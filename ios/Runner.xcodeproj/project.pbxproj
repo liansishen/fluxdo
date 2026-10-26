@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+EFD000000000000000000053 /* ShareExportViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFD000000000000000000063 /* ShareExportViewController.swift */; };
+EFD000000000000000000052 /* ShareImagePreviewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFD000000000000000000062 /* ShareImagePreviewController.swift */; };
+EFD000000000000000000051 /* ShareLongImageWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFD000000000000000000061 /* ShareLongImageWriter.swift */; };
+EFD000000000000000000050 /* ShareImageDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFD000000000000000000060 /* ShareImageDocument.swift */; };
 EFD000000000000000000007 /* ShareWebSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFD000000000000000000019 /* ShareWebSession.swift */; };
 		1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */ = {isa = PBXBuildFile; fileRef = 1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */; };
 		331C808B294A63AB00263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C807B294A618700263BE5 /* RunnerTests.swift */; };
@@ -69,6 +73,10 @@ EFD000000000000000000007 /* ShareWebSession.swift in Sources */ = {isa = PBXBuil
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+EFD000000000000000000063 /* ShareExportViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareExportViewController.swift; sourceTree = "<group>"; };
+EFD000000000000000000062 /* ShareImagePreviewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareImagePreviewController.swift; sourceTree = "<group>"; };
+EFD000000000000000000061 /* ShareLongImageWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareLongImageWriter.swift; sourceTree = "<group>"; };
+EFD000000000000000000060 /* ShareImageDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareImageDocument.swift; sourceTree = "<group>"; };
 EFD000000000000000000019 /* ShareWebSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareWebSession.swift; sourceTree = "<group>"; };
 		1498D2321E8E86230040F4C2 /* GeneratedPluginRegistrant.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GeneratedPluginRegistrant.h; sourceTree = "<group>"; };
 		1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GeneratedPluginRegistrant.m; sourceTree = "<group>"; };
@@ -176,6 +184,10 @@ EFD000000000000000000019 /* ShareWebSession.swift */ = {isa = PBXFileReference; 
 			children = (
 				EFD000000000000000000011 /* ShareViewController.swift */,
 EFD000000000000000000019 /* ShareWebSession.swift */,
+EFD000000000000000000063 /* ShareExportViewController.swift */,
+EFD000000000000000000062 /* ShareImagePreviewController.swift */,
+EFD000000000000000000061 /* ShareLongImageWriter.swift */,
+EFD000000000000000000060 /* ShareImageDocument.swift */,
 				EFD000000000000000000012 /* ForumShareClient.swift */,
 				EFD000000000000000000013 /* ShareImageRenderer.swift */,
 				EFD000000000000000000016 /* Info.plist */,
@@ -480,6 +492,10 @@ EFD000000000000000000019 /* ShareWebSession.swift */,
 			files = (
 				EFD000000000000000000001 /* ShareViewController.swift in Sources */,
 EFD000000000000000000007 /* ShareWebSession.swift in Sources */,
+EFD000000000000000000053 /* ShareExportViewController.swift in Sources */,
+EFD000000000000000000052 /* ShareImagePreviewController.swift in Sources */,
+EFD000000000000000000051 /* ShareLongImageWriter.swift in Sources */,
+EFD000000000000000000050 /* ShareImageDocument.swift in Sources */,
 				EFD000000000000000000002 /* ForumShareClient.swift in Sources */,
 				EFD000000000000000000003 /* ShareImageRenderer.swift in Sources */,
 				EFD000000000000000000004 /* ShareSessionStore.swift in Sources */,
