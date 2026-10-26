@@ -44,6 +44,7 @@ final class ShareImagePreviewController: UIViewController, UIAdaptivePresentatio
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
+        view.tintColor = .systemOrange
         if let sheet = sheetPresentationController {
             sheet.detents = [.large()]
             sheet.prefersGrabberVisible = true
@@ -110,7 +111,11 @@ final class ShareImagePreviewController: UIViewController, UIAdaptivePresentatio
         configure(shareButton, title: "分享", symbol: "square.and.arrow.up", action: #selector(shareImage))
         saveButton.accessibilityIdentifier = "shareImage.save"
         shareButton.accessibilityIdentifier = "shareImage.share"
-        var filled = shareButton.configuration!
+        var filled = UIButton.Configuration.filled()
+        filled.title = "分享"
+        filled.image = UIImage(systemName: "square.and.arrow.up")
+        filled.imagePadding = 6
+        filled.cornerStyle = .capsule
         filled.baseBackgroundColor = .systemOrange
         filled.baseForegroundColor = .white
         shareButton.configuration = filled

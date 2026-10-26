@@ -69,6 +69,7 @@ final class ShareExportViewController: UIViewController, UIDocumentPickerDelegat
     }
     private func configureUI() {
         view.backgroundColor = .systemBackground
+        view.tintColor = .systemOrange
         navigationBar.translatesAutoresizingMaskIntoConstraints = false
         let item = UINavigationItem(title: "导出文章")
         item.leftBarButtonItem = UIBarButtonItem(title: "关闭", style: .plain, target: self, action: #selector(closeTapped))
