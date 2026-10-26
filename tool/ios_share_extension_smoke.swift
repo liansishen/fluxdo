@@ -1,7 +1,11 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// 在 macOS CI 直接运行生产解析器、共享会话与 HTML 导出器，不依赖主应用或登录凭据。
 @main
+@MainActor
 struct ShareExtensionSmoke {
     static func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
         if !condition() {

@@ -17,7 +17,9 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
     private var retryAction: (() -> Void)?
     private var webSession: ShareWebSession?
     private var preparedHost: String?
+    private var preferredBrowserHost: String?
     private var browserHost: String?
+    private var browserPreparation: (id: UUID, task: Task<Void, Error>)?
     private var sessionDiagnostic = "SESSION_NOT_READ"
     private let verificationContainer = UIStackView()
     private let verificationButton = UIButton(type: .system)
@@ -151,6 +153,7 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
                 self.webSession = browser
                 self.browserHost = link.host
                 self.preparedHost = nil
+                self.preferredBrowserHost = nil
                 browser.webView.heightAnchor.constraint(equalToConstant: 420).isActive = true
                 self.verificationContainer.insertArrangedSubview(browser.webView, at: 1)
             }
@@ -161,19 +164,28 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
                 self.sessionHint.isHidden = true
             } catch {
                 self.sessionDiagnostic = self.sessionCode(error)
-                self.sessionHint.text = "共享会话暂不可用，已使用扩展自身的网页会话；需要时可直接在此验证或登录。"
+                self.sessionHint.text = "共享会话暂不可用，将使用扩展自身会话尝试接口；需要时会自动打开验证网页。"
                 self.sessionHint.isHidden = false
             }
-            if self.preparedHost == nil {
-                self.verificationContainer.isHidden = false
-                try await browser.prepare(url: link.url, session: self.preparedHost == nil ? seed : nil)
-                try self.ensureActive(id)
-                self.preparedHost = link.host
-            }
-            let client = ForumShareClient(link: link, loader: { [weak browser] url in
-                guard let browser = browser else { throw CancellationError() }
-                return try await browser.request(url)
-            })
+            self.verificationContainer.isHidden = true
+            try await browser.seed(session: seed)
+            try self.ensureActive(id)
+            let cookieEpoch = browser.cookieEpoch
+            let client = ForumShareClient(link: link,
+                sessionProvider: { [weak browser] url in
+                    guard let browser = browser else { throw CancellationError() }
+                    return try await browser.nativeSession(for: url)
+                }, responseHandler: { [weak browser] response in
+                    await browser?.receiveCookies(from: response, epoch: cookieEpoch)
+                }, fallbackLoader: { [weak self, weak browser] url in
+                    guard let self = self, let browser = browser else { throw CancellationError() }
+                    try await self.prepareBrowser(link: link)
+                    return try await browser.request(url)
+                }, fallbackImageLoader: { [weak self, weak browser] url in
+                    guard let self = self, let browser = browser else { throw CancellationError() }
+                    try await self.prepareBrowser(link: link)
+                    return try await browser.image(url)
+                }, startsInBrowser: self.preferredBrowserHost == link.host)
             self.client = client
             let topic = try await client.loadTopic()
             try self.ensureActive(id)
@@ -182,6 +194,35 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
             self.titleLabel.text = topic.title
             self.statusLabel.text = "\(link.host) · 已加载主帖。请选择生成图片或导出文章。"
         }
+    }
+
+    private func prepareBrowser(link: SharedTopicLink) async throws {
+        try Task.checkCancellation()
+        guard !closed, let browser = webSession, browserHost == link.host else { throw CancellationError() }
+        preferredBrowserHost = link.host
+        if preparedHost == link.host { return }
+        if let preparation = browserPreparation {
+            try await preparation.task.value
+            try Task.checkCancellation()
+            return
+        }
+        let id = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self = self else { throw CancellationError() }
+            self.verificationContainer.isHidden = false
+            self.statusLabel.text = "接口读取失败，正在使用网页会话重试…"
+            try await browser.prepare(url: link.url, session: nil)
+            try Task.checkCancellation()
+            guard !self.closed else { throw CancellationError() }
+            self.preparedHost = link.host
+            self.verificationContainer.isHidden = true
+        }
+        browserPreparation = (id, task)
+        defer { if browserPreparation?.id == id { browserPreparation = nil } }
+        try await withTaskCancellationHandler(operation: {
+            try await task.value
+            try Task.checkCancellation()
+        }, onCancel: { task.cancel() })
     }
 
     private func sessionCode(_ error: Error) -> String {
@@ -197,9 +238,19 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
     }
 
     @objc private func showVerification() {
-        guard webSession != nil else { beginLoading(); return }
-        verificationContainer.isHidden = false
-        if webSession?.webView.isLoading == false { webSession?.webView.reload() }
+        guard let link = link, webSession != nil else { beginLoading(); return }
+        if preparedHost == link.host {
+            verificationContainer.isHidden = false
+            if webSession?.webView.isLoading == false { webSession?.webView.reload() }
+        } else {
+            start(message: "正在打开验证网页…", retry: retryAction ?? { [weak self] in self?.beginLoading() }) { [weak self] id in
+                guard let self = self else { return }
+                try await self.prepareBrowser(link: link)
+                try self.ensureActive(id)
+                self.verificationContainer.isHidden = false
+                self.statusLabel.text = "请完成验证或登录，再点击“验证完成，继续保存”。"
+            }
+        }
     }
 
     @objc private func continueAfterVerification() {
@@ -225,6 +276,7 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
                 guard let self = self else { return }
                 try self.ensureActive(id)
                 self.preparedHost = nil
+                self.preferredBrowserHost = nil
                 self.topic = nil
                 self.client = nil
                 self.sessionDiagnostic = "EXTENSION_SESSION_CLEARED"
@@ -244,7 +296,8 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
         版本：\(version)+\(build)
         站点：\(link?.host ?? "未知")
         共享会话：\(sessionDiagnostic)
-        请求通道：WebKit
+        请求通道：\(client?.requestChannel ?? "尚未请求")
+        接口回退原因：\(client?.nativeFailure ?? "无")
         最近 HTTP 状态：\((client?.lastHTTPStatus).map { String($0) } ?? "尚无响应")
         验证界面：\(verificationContainer.isHidden ? "隐藏" : "显示")
         """
@@ -310,15 +363,12 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
     }
 
     @objc private func generateImages() {
-        guard let topic = topic, let post = topic.posts.first(where: { $0.postNumber == 1 }),
+        guard let client = client, let topic = topic, let post = topic.posts.first(where: { $0.postNumber == 1 }),
               presentedViewController == nil else { return }
         do {
-            let browser = webSession
             let preview = ShareImagePreviewController(topic: topic, post: post, directory: try makeDirectory(),
-                imageLoader: { [weak browser] url in
-                    guard let browser = browser else { throw CancellationError() }
-                    return try await browser.image(url)
-                }, onAuthenticationRequired: { [weak self] in self?.verifyForPreview() })
+                imageLoader: { url in try await client.image(url) },
+                onAuthenticationRequired: { [weak self] in self?.verifyForPreview() })
             activePreview = preview
             present(preview, animated: true)
         } catch { statusLabel.text = "无法创建图片预览，请重试。" }
@@ -418,6 +468,8 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
         operationID = UUID()
         work?.cancel()
         webSession?.cancel()
+        browserPreparation?.task.cancel()
+        browserPreparation = nil
         work = nil
         providerProgress.forEach { $0.cancel() }
         providerProgress.removeAll()
@@ -431,7 +483,7 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
     }
 
     @objc private func retry() {
-        if webSession != nil && link != nil { continueAfterVerification() }
+        if webSession?.webView.url != nil && link != nil && !verificationContainer.isHidden { continueAfterVerification() }
         else { retryAction?() }
     }
 

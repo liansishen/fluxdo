@@ -64,6 +64,8 @@ jobs:
           plutil -lint ios/Runner.xcodeproj/project.pbxproj ios/ShareExtension/Info.plist ios/ShareExtension/ShareExtension.entitlements
           swiftc ios/Shared/ShareSessionStore.swift ios/ShareExtension/ForumShareClient.swift ios/ShareExtension/ShareImageDocument.swift tool/ios_share_extension_smoke.swift -o "$RUNNER_TEMP/share-extension-smoke"
           "$RUNNER_TEMP/share-extension-smoke"
+          swiftc -swift-version 5 ios/Shared/ShareSessionStore.swift ios/ShareExtension/ForumShareClient.swift tool/ios_share_native_first_smoke.swift -o "$RUNNER_TEMP/share-native-first-smoke"
+          "$RUNNER_TEMP/share-native-first-smoke"
           swiftc ios/ShareExtension/ShareLongImageWriter.swift tool/ios_share_image_smoke.swift -lz -o "$RUNNER_TEMP/share-image-smoke"
           "$RUNNER_TEMP/share-image-smoke"
 

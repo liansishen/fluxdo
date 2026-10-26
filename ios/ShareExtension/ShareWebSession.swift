@@ -1,18 +1,19 @@
 import Foundation
 import WebKit
 
-/// 分享扩展自己的 WebKit 会话：先在扩展容器内完成 Cloudflare 校验与登录，
-/// 再用同一 WebKit 会话发起同源 fetch 读取 JSON，避免 URLSession 的 TLS 指纹不匹配。
-/// 页面仅用于验证/登录，正常取数时应由父级保持 WebView 隐藏。
+/// 分享扩展持久会话：原生接口复用 Cookie，失败后再导航网页并使用同源 fetch。
+/// 网页用于 Cloudflare 验证与登录，正常取数时由父级保持 WebView 隐藏。
 @MainActor
 final class ShareWebSession: NSObject, WKNavigationDelegate {
     let webView: WKWebView
 
-    private static let cookieNames = ["_t", "_forum_session", "cf_clearance"]
+    private static let cookieNames = ["_t", "_forum_session", "cf_clearance", "_rt"]
     private static let maxResponseBytes = 8 * 1024 * 1024
 
     private let host: String
     private let cookieStore: WKHTTPCookieStore
+    private(set) var cookieEpoch = UUID()
+    private var cookieTail: Task<Void, Never>?
     private var prepareToken: UUID?
     private var navigationToken: UUID?
     private var navigationGate: ShareWebGate<Void>?
@@ -35,6 +36,70 @@ final class ShareWebSession: NSObject, WKNavigationDelegate {
         self.cookieStore = WKWebsiteDataStore.default().httpCookieStore
         super.init()
         web.navigationDelegate = self
+    }
+
+    /// 播种只写 Cookie，不导航帖子网页。
+    func seed(session: ShareSession?) async throws {
+        try Task.checkCancellation()
+        try await apply(session: session)
+        try Task.checkCancellation()
+    }
+
+    func nativeSession(for url: URL) async throws -> ShareSession? {
+        guard Self.isAllowedOriginURL(url, host: host) else { throw ForumShareError.invalidLink }
+        try Task.checkCancellation()
+        let cookies = await allCookies().filter { cookie in
+            Self.cookieNames.contains(cookie.name) && Self.normalizedDomain(cookie.domain) == host &&
+                !cookie.value.isEmpty && (cookie.expiresDate.map { $0 > Date() } ?? true) &&
+                (url.path == cookie.path || url.path.hasPrefix(cookie.path.hasSuffix("/") ? cookie.path : cookie.path + "/"))
+        }.sorted { $0.path.count > $1.path.count }
+        var names = Set<String>()
+        let selected = cookies.filter { names.insert($0.name).inserted }
+        guard !selected.isEmpty else { return nil }
+        let agent: String
+        if let custom = webView.customUserAgent { agent = custom }
+        else {
+            agent = await withCheckedContinuation { continuation in
+                webView.evaluateJavaScript("navigator.userAgent") { value, _ in
+                    continuation.resume(returning: value as? String ?? "")
+                }
+            }
+        }
+        try Task.checkCancellation()
+        guard Self.isValidUserAgent(agent) else { throw ForumShareError.network }
+        return ShareSession(cookieHeader: selected.map { "\($0.name)=\($0.value)" }.joined(separator: "; "), userAgent: agent)
+    }
+
+    /// 原生响应的同站 Cookie 回写扩展容器，供后续补帖和浏览器回退使用。
+    func receiveCookies(from response: HTTPURLResponse, epoch: UUID) async {
+        guard epoch == cookieEpoch else { return }
+        let previous = cookieTail
+        let write = Task { @MainActor [weak self] in
+            await previous?.value
+            guard let self = self, epoch == self.cookieEpoch else { return }
+            await self.storeCookies(from: response, epoch: epoch)
+        }
+        cookieTail = write
+        await write.value
+    }
+
+    private func storeCookies(from response: HTTPURLResponse, epoch: UUID) async {
+        guard let url = response.url, Self.isAllowedOriginURL(url, host: host) else { return }
+        var headers: [String: String] = [:]
+        for (key, value) in response.allHeaderFields {
+            if let key = key as? String, let value = value as? String { headers[key] = value }
+        }
+        for cookie in HTTPCookie.cookies(withResponseHeaderFields: headers, for: url)
+            where Self.cookieNames.contains(cookie.name) && Self.normalizedDomain(cookie.domain) == host {
+            guard epoch == cookieEpoch else { return }
+            if cookie.expiresDate.map({ $0 <= Date() }) == true {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    cookieStore.delete(cookie) { continuation.resume() }
+                }
+            } else {
+                await setCookie(cookie)
+            }
+        }
     }
 
     /// 注入共享会话后导航到帖子地址，等待 didFinish；重复调用会先终止上一次等待。
@@ -237,6 +302,9 @@ final class ShareWebSession: NSObject, WKNavigationDelegate {
     /// 清理扩展自己的默认 WebKit 容器和自定义 UA，不接触主应用共享文件或 App Group。
     func clear() async {
         cancel()
+        cookieEpoch = UUID()
+        await cookieTail?.value
+        cookieTail = nil
         webView.customUserAgent = nil
         for host in SharedTopicLink.supportedHosts {
             UserDefaults.standard.removeObject(forKey: "ShareWebUserAgent." + host)
@@ -277,6 +345,7 @@ final class ShareWebSession: NSObject, WKNavigationDelegate {
         }
         for name in Self.cookieNames {
             guard !existingNames.contains(name), let value = values[name] else { continue }
+            try Task.checkCancellation()
             // 已有验证 Cookie 时保持其 UA，等待网页自行续签同一浏览器的验证状态。
             if name == "cf_clearance", !existingNames.isEmpty { continue }
             guard let cookie = Self.makeCookie(name: name, value: value, host: host) else {

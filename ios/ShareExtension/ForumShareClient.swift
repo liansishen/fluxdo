@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 struct SharedTopicLink {
     let url: URL
@@ -88,6 +91,13 @@ enum ForumShareError: LocalizedError {
     case invalidLink, invalidResponse, network, loginRequired, accessDenied
     case cloudflare, rateLimited, unavailable, unsafeRedirect, incompletePosts, missingRaw
 
+    var allowsBrowserFallback: Bool {
+        switch self {
+        case .network, .loginRequired, .accessDenied, .cloudflare, .invalidResponse: return true
+        default: return false
+        }
+    }
+
     var errorDescription: String? {
         switch self {
         case .invalidLink: return "请分享 linux.do 或 idcflare.com 的 HTTPS 话题链接。暂不支持其他站点或链接格式。"
@@ -105,10 +115,18 @@ enum ForumShareError: LocalizedError {
     }
 }
 
-private final class ShareRedirectPolicy: NSObject, URLSessionTaskDelegate {
+final class ShareRedirectPolicy: NSObject, URLSessionTaskDelegate {
     let host: String
 
-    init(host: String) { self.host = host }
+    private let sessionProvider: (@MainActor @Sendable (URL) async throws -> ShareSession?)?
+    private let responseHandler: (@MainActor @Sendable (HTTPURLResponse) async -> Void)?
+
+    init(host: String, sessionProvider: (@MainActor @Sendable (URL) async throws -> ShareSession?)? = nil,
+         responseHandler: (@MainActor @Sendable (HTTPURLResponse) async -> Void)? = nil) {
+        self.host = host
+        self.sessionProvider = sessionProvider
+        self.responseHandler = responseHandler
+    }
 
     static func isAllowed(_ url: URL, host: String) -> Bool {
         guard SharedTopicLink.supportedHosts.contains(host),
@@ -121,45 +139,87 @@ private final class ShareRedirectPolicy: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
                     completionHandler: @escaping (URLRequest?) -> Void) {
-        guard let url = request.url, Self.isAllowed(url, host: host) else {
-            completionHandler(nil)
-            return
+        Task { @MainActor in
+            guard let source = response.url, Self.isAllowed(source, host: host) else {
+                completionHandler(nil)
+                return
+            }
+            await responseHandler?(response)
+            guard let url = request.url, Self.isAllowed(url, host: host) else {
+                completionHandler(nil)
+                return
+            }
+            do {
+                let saved: ShareSession?
+                if let provider = sessionProvider { saved = try await provider(url) }
+                else { saved = ShareSessionStore.read(host: host) }
+                var next = request
+                // 先接收轮换，再按目标路径选择当前扩展凭据。
+                next.setValue(saved?.cookieHeader, forHTTPHeaderField: "Cookie")
+                next.setValue(saved?.userAgent, forHTTPHeaderField: "User-Agent")
+                completionHandler(next)
+            } catch {
+                completionHandler(nil)
+            }
         }
-        var next = request
-        // 系统 Cookie 存储完全关闭，只向原始、精确匹配的站点显式附加共享会话。
-        next.setValue(nil, forHTTPHeaderField: "Cookie")
-        if let saved = ShareSessionStore.read(host: host) {
-            next.setValue(saved.cookieHeader, forHTTPHeaderField: "Cookie")
-            next.setValue(saved.userAgent, forHTTPHeaderField: "User-Agent")
-        }
-        completionHandler(next)
     }
 }
 
+@MainActor
 final class ForumShareClient {
     private let link: SharedTopicLink
     private let session: URLSession
     typealias Loader = (URL) async throws -> (Data, HTTPURLResponse)
     private let loader: Loader?
     private(set) var lastHTTPStatus: Int?
+    typealias RequestLoader = (URLRequest) async throws -> (Data, HTTPURLResponse)
+    private let nativeLoader: RequestLoader?
+    private let sessionProvider: (@MainActor @Sendable (URL) async throws -> ShareSession?)?
+    private let responseHandler: (@MainActor @Sendable (HTTPURLResponse) async -> Void)?
+    private let fallbackLoader: Loader?
+    private let fallbackImageLoader: Loader?
+    private(set) var usesBrowser = false
+    private var imageTail: Task<Void, Never>?
+    private(set) var nativeFailure: String?
+    var requestChannel: String { usesBrowser ? "WebKit（接口失败后回退）" : "原生 HTTP 接口" }
 
-    init(link: SharedTopicLink, loader: Loader? = nil) {
+    init(link: SharedTopicLink, loader: Loader? = nil, nativeLoader: RequestLoader? = nil,
+         sessionProvider: (@MainActor @Sendable (URL) async throws -> ShareSession?)? = nil,
+         responseHandler: (@MainActor @Sendable (HTTPURLResponse) async -> Void)? = nil,
+         fallbackLoader: Loader? = nil, fallbackImageLoader: Loader? = nil,
+         startsInBrowser: Bool = false) {
         self.link = link
         self.loader = loader
+        self.nativeLoader = nativeLoader
+        self.sessionProvider = sessionProvider
+        self.responseHandler = responseHandler
+        self.fallbackLoader = fallbackLoader
+        self.fallbackImageLoader = fallbackImageLoader
+        self.usesBrowser = startsInBrowser
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
         configuration.urlCache = nil
         configuration.urlCredentialStorage = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.timeoutIntervalForRequest = 30
-        configuration.timeoutIntervalForResource = 90
-        session = URLSession(configuration: configuration, delegate: ShareRedirectPolicy(host: link.host), delegateQueue: nil)
+        configuration.timeoutIntervalForRequest = 12
+        configuration.timeoutIntervalForResource = 20
+        let policy = ShareRedirectPolicy(host: link.host, sessionProvider: sessionProvider, responseHandler: responseHandler)
+        session = URLSession(configuration: configuration, delegate: policy, delegateQueue: nil)
     }
 
     deinit { session.invalidateAndCancel() }
 
     func loadTopic() async throws -> SharedTopic {
+        do {
+            return try await loadTopicContents()
+        } catch {
+            try activateBrowser(after: error, available: fallbackLoader != nil)
+            return try await loadTopicContents()
+        }
+    }
+
+    private func loadTopicContents() async throws -> SharedTopic {
         let suffix = link.postNumber.map { "/\($0)" } ?? ""
         let json = try await request(path: "/t/\(link.topicID)\(suffix).json")
         guard let id = json["id"] as? Int, id == link.topicID,
@@ -284,21 +344,123 @@ final class ForumShareClient {
         components.path = path
         components.queryItems = query.isEmpty ? nil : query
         guard let url = components.url, ShareRedirectPolicy.isAllowed(url, host: link.host) else { throw ForumShareError.invalidLink }
-        var request = URLRequest(url: url)
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
-        if let saved = ShareSessionStore.read(host: link.host) {
-            request.setValue(saved.cookieHeader, forHTTPHeaderField: "Cookie")
-            request.setValue(saved.userAgent, forHTTPHeaderField: "User-Agent")
+        do {
+            return try await requestJSON(url)
+        } catch {
+            try activateBrowser(after: error, available: fallbackLoader != nil)
+            return try await requestJSON(url)
         }
+    }
+
+    private func activateBrowser(after error: Error, available: Bool) throws {
+        try Task.checkCancellation()
+        guard !usesBrowser, available, let failure = error as? ForumShareError,
+              failure.allowsBrowserFallback else { throw error }
+        nativeFailure = String(describing: failure)
+        usesBrowser = true
+    }
+
+    /// 在后台逐字节读取系统缓冲流，越界立即结束，限制扩展内存峰值。
+    nonisolated private static func boundedData(for request: URLRequest, session: URLSession,
+                                               maxBytes: Int,
+                                               onResponse: (HTTPURLResponse) async throws -> Void) async throws -> (Data, URLResponse) {
+        #if os(Linux)
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw ForumShareError.invalidResponse }
+        try await onResponse(http)
+        guard data.count <= maxBytes else { throw ForumShareError.invalidResponse }
+        return (data, response)
+        #else
+        let (bytes, response) = try await session.bytes(for: request)
+        guard let http = response as? HTTPURLResponse else { bytes.task.cancel(); throw ForumShareError.invalidResponse }
+        do { try await onResponse(http) }
+        catch { bytes.task.cancel(); throw error }
+        guard response.expectedContentLength <= Int64(maxBytes) else {
+            bytes.task.cancel()
+            throw ForumShareError.invalidResponse
+        }
+        var data = Data()
+        data.reserveCapacity(min(maxBytes, max(0, Int(response.expectedContentLength))))
+        do {
+            for try await byte in bytes {
+                guard data.count < maxBytes else { throw ForumShareError.invalidResponse }
+                data.append(byte)
+            }
+            try Task.checkCancellation()
+            return (data, response)
+        } catch {
+            bytes.task.cancel()
+            throw error
+        }
+        #endif
+    }
+    func image(_ url: URL) async throws -> (Data, HTTPURLResponse) {
+        let previous = imageTail
+        let transfer = Task { @MainActor in
+            await previous?.value
+            try Task.checkCancellation()
+            return try await loadImage(url)
+        }
+        imageTail = Task { _ = try? await transfer.value }
+        return try await withTaskCancellationHandler(operation: {
+            try await transfer.value
+        }, onCancel: { transfer.cancel() })
+    }
+
+    private func loadImage(_ url: URL) async throws -> (Data, HTTPURLResponse) {
+        guard ShareRedirectPolicy.isAllowed(url, host: link.host) else { throw ForumShareError.invalidLink }
+        do {
+            return try await requestImage(url)
+        } catch {
+            try activateBrowser(after: error, available: fallbackImageLoader != nil)
+            return try await requestImage(url)
+        }
+    }
+
+    private func requestImage(_ url: URL) async throws -> (Data, HTTPURLResponse) {
+        let (data, response) = try await load(url, binary: true)
+        _ = try validateResponse(data, response: response)
+        guard data.count <= 16 * 1024 * 1024,
+              response.mimeType?.lowercased().hasPrefix("image/") == true else { throw ForumShareError.invalidResponse }
+        return (data, response)
+    }
+
+    private func requestJSON(_ url: URL) async throws -> [String: Any] {
+        let (data, response) = try await load(url, binary: false)
+        guard data.count <= 8 * 1024 * 1024 else { throw ForumShareError.invalidResponse }
+        guard let json = try validateResponse(data, response: response) else { throw ForumShareError.invalidResponse }
+        return json
+    }
+
+    private func load(_ url: URL, binary: Bool) async throws -> (Data, HTTPURLResponse) {
         let data: Data
         let response: URLResponse
         do {
             try Task.checkCancellation()
-            if let loader = loader {
+            if usesBrowser {
+                guard let fallback = binary ? fallbackImageLoader : fallbackLoader else { throw ForumShareError.network }
+                (data, response) = try await fallback(url)
+            } else if let loader = loader {
                 (data, response) = try await loader(url)
             } else {
-                (data, response) = try await session.data(for: request)
+                var request = URLRequest(url: url)
+                request.setValue(binary ? "image/*" : "application/json, text/javascript, */*; q=0.01", forHTTPHeaderField: "Accept")
+                request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
+                let saved: ShareSession?
+                if let provider = sessionProvider { saved = try await provider(url) }
+                else { saved = ShareSessionStore.read(host: link.host) }
+                request.setValue(saved?.cookieHeader, forHTTPHeaderField: "Cookie")
+                request.setValue(saved?.userAgent, forHTTPHeaderField: "User-Agent")
+                try Task.checkCancellation()
+                if let nativeLoader = nativeLoader {
+                    (data, response) = try await nativeLoader(request)
+                    guard let http = response as? HTTPURLResponse else { throw ForumShareError.invalidResponse }
+                    try await receiveNativeResponse(http)
+                } else {
+                    (data, response) = try await Self.boundedData(for: request, session: session,
+                        maxBytes: binary ? 16 * 1024 * 1024 : 8 * 1024 * 1024,
+                        onResponse: { [self] response in try await receiveNativeResponse(response) })
+                }
             }
             try Task.checkCancellation()
         } catch is CancellationError {
@@ -314,6 +476,20 @@ final class ForumShareClient {
         guard let http = response as? HTTPURLResponse,
               let finalURL = http.url, ShareRedirectPolicy.isAllowed(finalURL, host: link.host) else { throw ForumShareError.unsafeRedirect }
         lastHTTPStatus = http.statusCode
+        try Task.checkCancellation()
+        return (data, http)
+    }
+
+    private func receiveNativeResponse(_ response: HTTPURLResponse) async throws {
+        guard let url = response.url, ShareRedirectPolicy.isAllowed(url, host: link.host) else {
+            throw ForumShareError.unsafeRedirect
+        }
+        lastHTTPStatus = response.statusCode
+        await responseHandler?(response)
+    }
+
+    private func validateResponse(_ data: Data, response http: HTTPURLResponse) throws -> [String: Any]? {
+        guard let finalURL = http.url else { throw ForumShareError.unsafeRedirect }
         let sample = String(decoding: data.prefix(65536), as: UTF8.self).lowercased()
         let looksLikeHTML = sample.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<")
         if http.value(forHTTPHeaderField: "cf-mitigated")?.lowercased() == "challenge"
@@ -338,15 +514,16 @@ final class ForumShareClient {
         }
         if finalURL.path.lowercased().contains("login") { throw ForumShareError.loginRequired }
         guard (200..<300).contains(http.statusCode) else { throw ForumShareError.network }
-        guard let json = object else { throw ForumShareError.invalidResponse }
-        if let kind = json["error_type"] as? String {
-            if kind == "not_logged_in" || kind == "login_required" { throw ForumShareError.loginRequired }
-            if kind == "rate_limit" { throw ForumShareError.rateLimited }
-            if kind == "invalid_access" { throw ForumShareError.accessDenied }
-            throw ForumShareError.invalidResponse
+        if let json = object {
+            if let kind = json["error_type"] as? String {
+                if kind == "not_logged_in" || kind == "login_required" { throw ForumShareError.loginRequired }
+                if kind == "rate_limit" { throw ForumShareError.rateLimited }
+                if kind == "invalid_access" { throw ForumShareError.accessDenied }
+                throw ForumShareError.invalidResponse
+            }
+            if json["errors"] != nil { throw ForumShareError.invalidResponse }
         }
-        if json["errors"] != nil { throw ForumShareError.invalidResponse }
-        return json
+        return object
     }
 
     private func markdownText(_ value: String) -> String {

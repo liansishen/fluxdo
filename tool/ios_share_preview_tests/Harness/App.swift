@@ -97,6 +97,7 @@ final class HarnessViewController: UIViewController {
 }
 
 /// 固定离线数据：40 段正文、代码块、表格、本地 PNG，以及末尾正文标记。
+@MainActor
 enum OfflineFixtures {
     static let host = "linux.do"
     static let topicID = 4242
