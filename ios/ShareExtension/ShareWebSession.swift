@@ -146,10 +146,13 @@ final class ShareWebSession: NSObject, WKNavigationDelegate {
               "X-Requested-With": "XMLHttpRequest"
             },
             credentials: "same-origin",
-            redirect: "error",
+            redirect: "manual",
             cache: "no-store",
             signal: controller.signal
           });
+          if (response.type === "opaqueredirect") {
+            return { ok: false, reason: "redirect" };
+          }
           let body = "";
           let total = 0;
           if (response.body) {
@@ -259,19 +262,23 @@ final class ShareWebSession: NSObject, WKNavigationDelegate {
             webView.customUserAgent = savedAgent
         }
         let existing = await allCookies()
-        let hasSession = existing.contains {
+        let existingNames = Set(existing.filter {
             Self.cookieNames.contains($0.name) && Self.normalizedDomain($0.domain) == host &&
                 !$0.value.isEmpty && ($0.expiresDate.map { $0 > Date() } ?? true)
-        }
-        // 扩展内已完成的验证优先保留，避免主应用旧快照覆盖现有 Cookie/UA。
-        guard !hasSession, let session = session else { return }
+        }.map { $0.name })
+        // 扩展内已完成的验证优先保留；共享快照只补齐缺失的凭据。
+        guard let session = session else { return }
         guard Self.isValidUserAgent(session.userAgent) else { throw ForumShareError.loginRequired }
         let values = Self.parseCookieHeader(session.cookieHeader)
         guard !values.isEmpty else { throw ForumShareError.loginRequired }
-        webView.customUserAgent = session.userAgent
-        UserDefaults.standard.set(session.userAgent, forKey: "ShareWebUserAgent." + host)
+        if existingNames.isEmpty {
+            webView.customUserAgent = session.userAgent
+            UserDefaults.standard.set(session.userAgent, forKey: "ShareWebUserAgent." + host)
+        }
         for name in Self.cookieNames {
-            guard let value = values[name] else { continue }
+            guard !existingNames.contains(name), let value = values[name] else { continue }
+            // 已有验证 Cookie 时保持其 UA，等待网页自行续签同一浏览器的验证状态。
+            if name == "cf_clearance", !existingNames.isEmpty { continue }
             guard let cookie = Self.makeCookie(name: name, value: value, host: host) else {
                 throw ForumShareError.loginRequired
             }
@@ -410,7 +417,7 @@ final class ShareWebSession: NSObject, WKNavigationDelegate {
                 throw ForumShareError.network
             case "tooLarge":
                 throw ForumShareError.invalidResponse
-            case "origin":
+            case "origin", "redirect":
                 throw ForumShareError.loginRequired
             default:
                 throw ForumShareError.network

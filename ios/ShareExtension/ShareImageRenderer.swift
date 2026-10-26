@@ -67,7 +67,13 @@ final class ShareImageRenderer: NSObject, WKNavigationDelegate {
         };
         return await Promise.race([ready(), new Promise((_, reject) => setTimeout(() => reject(new Error('图片或字体加载超时，请重试')), 45000))]);
         """
-        let value = try await execute(readiness, in: web)
+        let value: Any?
+        do {
+            value = try await execute(readiness, in: web)
+        } catch {
+            if let failure = proxy.authenticationFailure { throw failure }
+            throw error
+        }
         try checkCancellation()
         guard let number = value as? NSNumber, number.doubleValue.isFinite, number.doubleValue > 0 else {
             throw ShareImageError.message("无法获取文章排版高度，请重试。")
@@ -205,7 +211,7 @@ final class ShareImageRenderer: NSObject, WKNavigationDelegate {
     }
 }
 
-private enum ShareImageError: LocalizedError {
+enum ShareImageError: LocalizedError {
     case message(String)
     var errorDescription: String? {
         switch self { case .message(let message): return message }
@@ -219,6 +225,7 @@ private final class ShareImageProxy: NSObject, WKURLSchemeHandler, URLSessionDat
         var bytes = 0
     }
     private static let imageTypes: Set<String> = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/heic", "image/heif", "image/svg+xml"]
+    private(set) var authenticationFailure: ForumShareError?
     private let host: String
     private let authentication: ShareSession?
     private let loader: ForumShareClient.Loader?
@@ -263,6 +270,11 @@ private final class ShareImageProxy: NSObject, WKURLSchemeHandler, URLSessionDat
                     try Task.checkCancellation()
                     guard let self = self, self.browserTasks.removeValue(forKey: key) != nil else { return }
                     let mime = response.mimeType?.lowercased() ?? ""
+                    if response.statusCode == 403 || response.value(forHTTPHeaderField: "cf-mitigated") == "challenge" {
+                        self.authenticationFailure = .cloudflare
+                    } else if response.statusCode == 401 {
+                        self.authenticationFailure = .loginRequired
+                    }
                     guard (200..<300).contains(response.statusCode),
                           Self.imageTypes.contains(mime), data.count <= 16 * 1024 * 1024 else {
                         urlSchemeTask.didFailWithError(ShareImageError.message("正文图片无法加载，请在扩展内验证后重试。"))

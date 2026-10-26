@@ -282,7 +282,18 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
         if webSession?.webView.isLoading == false { webSession?.webView.reload() }
     }
 
-    @objc private func continueAfterVerification() { retryAction?() }
+    @objc private func continueAfterVerification() {
+        guard let browser = webSession, let link = link, let retry = retryAction else { return }
+        guard browser.webView.url?.host?.lowercased() != link.host else { retry(); return }
+        // SSO 可能停留在登录服务域；用户明确继续后回到帖子原站再重做原操作。
+        start(message: "正在返回帖子并继续保存…", retry: retry) { [weak self] id in
+            try await browser.prepare(url: link.url, session: nil)
+            guard let self = self else { return }
+            try self.ensureActive(id)
+            self.preparedHost = link.host
+            retry()
+        }
+    }
 
     @objc private func clearExtensionSession() {
         let alert = UIAlertController(title: "退出扩展登录？", message: "将清除分享扩展内两个站点的登录和验证状态。主应用的登录保持原样。", preferredStyle: .alert)
@@ -452,7 +463,13 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
                 if error is CancellationError {
                     self.statusLabel.text = "已停止操作，可重试。"
                 } else {
-                    self.statusLabel.text = error is ForumShareError ? error.localizedDescription : "操作失败，请重试或分享扩展诊断。"
+                    if let message = (error as? ForumShareError)?.errorDescription
+                        ?? (error as? ShareImageError)?.errorDescription
+                        ?? (error as? ShareUIError)?.errorDescription {
+                        self.statusLabel.text = message
+                    } else {
+                        self.statusLabel.text = "操作失败，请重试或分享扩展诊断。"
+                    }
                     if let forumError = error as? ForumShareError {
                         switch forumError {
                         case .cloudflare, .loginRequired, .accessDenied:
@@ -507,7 +524,10 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
         retryButton.isHidden = false
     }
 
-    @objc private func retry() { retryAction?() }
+    @objc private func retry() {
+        if webSession != nil && link != nil { continueAfterVerification() }
+        else { retryAction?() }
+    }
 
     private func makeDirectory() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("FluxDOShare", isDirectory: true)

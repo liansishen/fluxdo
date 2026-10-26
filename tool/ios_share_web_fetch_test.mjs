@@ -14,7 +14,7 @@ async function run({ body = '{"id":123}', status = 200, headers = {}, binary = f
   globalThis.fetch = fetcher ?? (async (url, options) => {
     assert.equal(new URL(url).origin, origin);
     assert.equal(options.credentials, 'same-origin');
-    assert.equal(options.redirect, 'error');
+    assert.equal(options.redirect, 'manual');
     assert.equal(options.method, 'GET');
     assert.equal(options.headers.Cookie, undefined);
     return new Response(body, { status, headers });
@@ -35,7 +35,8 @@ const image = await run({ body: bytes, binary: true, headers: { 'content-type': 
 assert.deepEqual(Buffer.from(image.body, 'base64'), Buffer.from(bytes));
 assert.equal(image.contentType, 'image/png');
 assert.equal((await run({ body: 'too large', max: 2 })).reason, 'tooLarge');
-assert.equal((await run({ fetcher: async () => { throw new TypeError('redirect blocked'); } })).reason, 'network');
+assert.equal((await run({ fetcher: async () => ({ type: 'opaqueredirect' }) })).reason, 'redirect');
+assert.equal((await run({ fetcher: async () => { throw new TypeError('network unavailable'); } })).reason, 'network');
 assert.equal((await run({ fetcher: async (_, options) => new Promise((_, reject) => {
   options.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
 }) })).reason, 'timeout');
