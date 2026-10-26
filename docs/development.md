@@ -198,7 +198,7 @@ SOFTWARE.
 - 主应用与扩展均声明原始 App Group `group.com.github.lingyan000.fluxdo`；运行时优先从各自的 `embedded.mobileprovision` 读取授权组，兼容 SideStore / AltStore 追加的单个 10 位团队后缀。仅在没有描述文件时读取旧版 `ALTAppGroups`，两者都缺失才尝试原组；描述文件损坏、缺组或存在多个匹配组时拒绝选择，不能回退到无关共享容器。最终访问仍须系统容器接口授权，不依赖私有 API。
 - `ShareSessionStore` 将两站 `_t`、`_forum_session`、`cf_clearance` 和匹配 UA 分别存入原子写、排除备份、受文件保护的共享私有文件；逐 Cookie 保留有效期。Dart 监听 CookieJar 中央写入、恢复和删除，退出清空共享会话，凭据不写入日志或导出文件。分享扩展的 JSON 请求通过同一 WebKit 上下文发出，只允许原站接口并拒绝跳转；同站图片使用该上下文读取，其他站点图片继续使用无凭据的网络请求。
 - 扩展使用自身容器内持久化的 WebKit 网页会话；App Group 不可用时仍可独立工作。没有可复用会话时可从主应用共享会话播种；遇到 Cloudflare 或登录要求，在扩展内展示网页，用户完成后点击「验证完成，继续保存」，继续原操作。扩展不会继承来源 App 的登录态，也不会启动主应用或其代理；「退出扩展登录」清除扩展网页数据。扩展提供独立的「分享扩展诊断」，仅包含版本、站点、共享会话诊断码、请求通道和 HTTP 状态，不输出 Cookie、帖子正文或私有路径。主应用同步失败仍由 `AppLogger` 记录。
-- 无签名 IPA 通过现有 CI 构建。构建脚本要求存在 `Runner.app/PlugIns/ShareExtension.appex/ShareExtension`；CI 另外执行 Swift 链接解析 / 安全 HTML 行为验证，检查扩展声明、主扩展版本一致性及 ZIP 内可执行文件。侧载工具必须保留并签名 `.appex`、为主应用和扩展授予一致的 App Group，不能仅重签主可执行文件。
+- CI 同时产出 `*-nosign.ipa` 原未签名包和 `*-sidestore.ipa` 重签准备包。后者在临时副本中按依赖顺序进行 ad-hoc 签名，仅向主应用和分享扩展写入同一 App Groups 声明，方便 SideStore 从 Mach-O 发现并申请能力；不包含 Apple 开发者证书或描述文件，安装时仍须重签。构建脚本要求存在 `Runner.app/PlugIns/ShareExtension.appex/ShareExtension`；CI 另外执行 Swift 链接解析 / 安全 HTML 行为验证，检查扩展声明、主扩展版本一致性及 ZIP 内可执行文件。侧载工具必须保留并签名 `.appex`、为主应用和扩展授予一致的 App Group，不能仅重签主可执行文件。SideStore 安装优先选用准备包，CI 验证二进制的权限声明及准备包自签完整性。
 - 本地 Windows 可运行 `flutter test test/services/share_extension_session_service_test.dart` 验证凭据最小化、跨站隔离与退出并发写入屏障。原生编译在 macOS CI，不能代替实机验收：分享面板启用 FluxDO 后，分别验证两站公开 / 受限帖、主应用关闭、短文 / 多图 / 长文、PNG 保存相册与文件、Markdown / 全量 HTML，以及取消后重试和退出登录后的权限变化。当前原生版式不等于主应用 Flutter 分享卡片的全部主题。
 
 ## macOS 代码签名

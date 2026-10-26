@@ -81,6 +81,34 @@ Future<void> main(List<String> args) async {
       arguments: ['-qr', ipaFile.absolute.path, 'Payload'],
       workingDirectory: tempDir.path,
     );
+
+    // 自签仅承载侧载工具需要读取的权限；安装时仍由用户的 Apple ID 重新签名。
+    final stagedApp = p.join(payloadDir.path, 'Runner.app');
+    final frameworks = Directory(p.join(stagedApp, 'Frameworks'));
+    if (frameworks.existsSync()) {
+      final bundles = await frameworks
+          .list(recursive: true, followLinks: false)
+          .where((entity) =>
+              entity is Directory && entity.path.endsWith('.framework') ||
+              entity is File && entity.path.endsWith('.dylib'))
+          .toList();
+      bundles.sort((a, b) => b.path.length.compareTo(a.path.length));
+      for (final bundle in bundles) {
+        await _adHocSign(bundle.path);
+      }
+    }
+    final entitlementPath = File('ios/ShareExtension/ShareExtension.entitlements').absolute.path;
+    await _adHocSign(p.join(stagedApp, 'PlugIns', 'ShareExtension.appex'), entitlements: entitlementPath);
+    await _adHocSign(stagedApp, entitlements: entitlementPath);
+    final sideStorePath = p.join(ipaDir.path, 'fluxdo-$version-sidestore.ipa');
+    if (File(sideStorePath).existsSync()) File(sideStorePath).deleteSync();
+    await runOrExit(
+      title: '打包 SideStore 权限准备版 IPA',
+      executable: 'zip',
+      arguments: ['-qr', p.absolute(sideStorePath), 'Payload'],
+      workingDirectory: tempDir.path,
+    );
+    stdout.writeln('==> SideStore IPA 已输出: $sideStorePath');
   } finally {
     if (tempDir.existsSync()) {
       tempDir.deleteSync(recursive: true);
@@ -117,6 +145,16 @@ String _readVersionFromPubspec() {
   );
   return match?.group(1)?.split('+').first.trim() ?? '';
 }
+
+Future<void> _adHocSign(String target, {String? entitlements}) => runOrExit(
+  title: '写入侧载权限: ${p.basename(target)}',
+  executable: 'codesign',
+  arguments: [
+    '--force', '--sign', '-', '--timestamp=none',
+    if (entitlements != null) ...['--entitlements', entitlements, '--generate-entitlement-der'],
+    target,
+  ],
+);
 
 Future<void> _copyDirectory(Directory source, Directory destination) async {
   destination.createSync(recursive: true);

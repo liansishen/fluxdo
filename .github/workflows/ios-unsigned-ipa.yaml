@@ -111,6 +111,27 @@ jobs:
                   print(f'{ipa.name}: 分享扩展已打包')
           PY
 
+      - name: Verify SideStore entitlement carrier
+        run: |
+          python3 - <<'PYCODE'
+          import pathlib, plistlib, subprocess, tempfile, zipfile
+          group = 'group.com.github.lingyan000.fluxdo'
+          carriers = list(pathlib.Path('build/ios/ipa').glob('*-sidestore.ipa'))
+          assert len(carriers) == 1, '缺少 SideStore 重签准备包'
+          assert list(pathlib.Path('build/ios/ipa').glob('*-nosign.ipa')), '缺少原未签名包'
+          with tempfile.TemporaryDirectory() as directory:
+              subprocess.run(['ditto', '-x', '-k', str(carriers[0]), directory], check=True)
+              app = pathlib.Path(directory) / 'Payload/Runner.app'
+              for target in [app, app / 'PlugIns/ShareExtension.appex']:
+                  result = subprocess.run(['codesign', '-d', '--entitlements', ':-', str(target)],
+                                          check=True, capture_output=True)
+                  entitlements = plistlib.loads(result.stdout)
+                  assert entitlements['com.apple.security.application-groups'] == [group], '主应用或扩展缺少共享组权限声明'
+                  assert not (target / 'embedded.mobileprovision').exists(), '准备包不应包含开发者描述文件'
+              subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
+          print('通过：SideStore 准备包的主应用及扩展均携带同一 App Groups 声明')
+          PYCODE
+
       - name: Generate checksum
         run: |
           cd build/ios/ipa
