@@ -48,7 +48,10 @@ final class ShareHarnessUITests: XCTestCase {
                 "未切换到 \(theme)"
             )
             XCTAssertTrue(waitUntil(timeout: 90) { self.previewExists() }, "切换到 \(theme) 后预览消失")
-            XCTAssertTrue(waitUntil(timeout: 90) { self.app.buttons["shareImage.save"].isEnabled }, "主题渲染未完成")
+            XCTAssertTrue(waitUntil(timeout: 90) {
+                self.app.buttons["shareImage.save"].isEnabled
+                    && self.app.staticTexts["shareImage.status"].label.contains("配色已更新")
+            }, "主题渲染未完成")
             if !button.isHittable { self.app.scrollViews["shareImage.themes"].swipeLeft() }
             if capturedThemes.contains(theme) {
                 capture("shareImage-theme-\(theme)")
@@ -165,7 +168,9 @@ final class ShareHarnessUITests: XCTestCase {
 
     private func waitForActivity(timeout: TimeInterval) -> Bool {
         waitUntil(timeout: timeout) {
-            self.app.otherElements["ActivityListView"].exists
+            self.element("shareExport.activity").exists
+                || self.element("shareImage.activity").exists
+                || self.app.otherElements["ActivityListView"].exists
                 || self.app.otherElements["UIActivityContentView"].exists
                 || self.app.collectionViews["ActivityListView"].exists
                 || self.app.buttons["Close"].exists
@@ -194,7 +199,9 @@ final class ShareHarnessUITests: XCTestCase {
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.08)).tap()
         }
 
-        if !waitUntil(timeout: 10, condition: { element.isHittable }) {
+        if !waitUntil(timeout: 10, condition: {
+            element.isHittable && !self.element("shareExport.activity").exists && !self.element("shareImage.activity").exists
+        }) {
             if app.frame.width > 700 {
                 app.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.1)).tap()
             } else if list.exists {
@@ -205,7 +212,11 @@ final class ShareHarnessUITests: XCTestCase {
 
     private func waitForDocumentPicker(timeout: TimeInterval) -> Bool {
         waitUntil(timeout: timeout) {
-            self.app.buttons["Cancel"].exists
+            self.element("shareExport.documentPicker").exists
+                || self.app.buttons["Save"].exists
+                || self.app.navigationBars["On My iPhone"].exists
+                || self.app.navigationBars["On My iPad"].exists
+                || self.app.buttons["Cancel"].exists
                 || self.app.buttons["取消"].exists
                 || self.app.navigationBars["Browse"].exists
                 || self.app.navigationBars["浏览"].exists
@@ -223,8 +234,13 @@ final class ShareHarnessUITests: XCTestCase {
                 return
             }
         }
-        let topLeft = app.coordinate(withNormalizedOffset: CGVector(dx: 0.06, dy: 0.08))
-        topLeft.tap()
+        let picker = element("shareExport.documentPicker")
+        let start = picker.exists
+            ? picker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.02))
+            : app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9))
+        start.press(forDuration: 0.1, thenDragTo: end)
+        XCTAssertTrue(waitUntil(timeout: 15) { !self.element("shareExport.documentPicker").exists }, "系统文件面板未关闭")
     }
 
     private func waitForPhotoFeedback(timeout: TimeInterval) -> XCUIElement? {

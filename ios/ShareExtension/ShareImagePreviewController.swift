@@ -278,6 +278,7 @@ final class ShareImagePreviewController: UIViewController, UIAdaptivePresentatio
             let url = try await self.imageFile()
             try Task.checkCancellation()
             let activity = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+            activity.view.accessibilityIdentifier = "shareImage.activity"
             activity.popoverPresentationController?.sourceView = self.shareButton
             activity.popoverPresentationController?.sourceRect = self.shareButton.bounds
             activity.completionWithItemsHandler = { [weak self] _, completed, _, _ in

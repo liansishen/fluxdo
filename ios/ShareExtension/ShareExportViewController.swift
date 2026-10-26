@@ -317,9 +317,11 @@ final class ShareExportViewController: UIViewController, UIDocumentPickerDelegat
             let picker = UIDocumentPickerViewController(forExporting: [file], asCopy: true)
             picker.delegate = self
             picker.shouldShowFileExtensions = true
+            picker.view.accessibilityIdentifier = "shareExport.documentPicker"
             present(picker, animated: true)
         case .share:
             let activity = UIActivityViewController(activityItems: [file], applicationActivities: nil)
+            activity.view.accessibilityIdentifier = "shareExport.activity"
             if let popover = activity.popoverPresentationController {
                 popover.sourceView = shareRow
                 popover.sourceRect = shareRow.bounds
