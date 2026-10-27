@@ -16,6 +16,8 @@
 		A20000000000000000000007 /* ShareImageDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000A /* ShareImageDocument.swift */; };
 		A20000000000000000000008 /* ShareLongImageWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000B /* ShareLongImageWriter.swift */; };
 		A20000000000000000000009 /* UITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* UITests.swift */; };
+		A2000000000000000000000A /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000C /* ShareViewController.swift */; };
+		A2000000000000000000000B /* ShareWebSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000D /* ShareWebSession.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -40,6 +42,8 @@
 		A10000000000000000000009 /* ShareImagePreviewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../../../ios/ShareExtension/ShareImagePreviewController.swift"; sourceTree = SOURCE_ROOT; };
 		A1000000000000000000000A /* ShareImageDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../../../ios/ShareExtension/ShareImageDocument.swift"; sourceTree = SOURCE_ROOT; };
 		A1000000000000000000000B /* ShareLongImageWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../../../ios/ShareExtension/ShareLongImageWriter.swift"; sourceTree = SOURCE_ROOT; };
+		A1000000000000000000000C /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../../../ios/ShareExtension/ShareViewController.swift"; sourceTree = SOURCE_ROOT; };
+		A1000000000000000000000D /* ShareWebSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../../../ios/ShareExtension/ShareWebSession.swift"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -89,6 +93,8 @@
 				A10000000000000000000009 /* ShareImagePreviewController.swift */,
 				A1000000000000000000000A /* ShareImageDocument.swift */,
 				A1000000000000000000000B /* ShareLongImageWriter.swift */,
+				A1000000000000000000000C /* ShareViewController.swift */,
+				A1000000000000000000000D /* ShareWebSession.swift */,
 			);
 			name = Production;
 			sourceTree = "<group>";
@@ -200,6 +206,8 @@
 				A20000000000000000000006 /* ShareImagePreviewController.swift in Sources */,
 				A20000000000000000000007 /* ShareImageDocument.swift in Sources */,
 				A20000000000000000000008 /* ShareLongImageWriter.swift in Sources */,
+				A2000000000000000000000A /* ShareViewController.swift in Sources */,
+				A2000000000000000000000B /* ShareWebSession.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

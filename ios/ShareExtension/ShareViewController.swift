@@ -4,6 +4,27 @@ import WebKit
 
 @MainActor
 final class ShareViewController: UIViewController, UIAdaptivePresentationControllerDelegate {
+    typealias TopicLoader = () async throws -> (link: SharedTopicLink, client: ForumShareClient, topic: SharedTopic)
+    private enum PageState { case loading, failed, ready, verifying }
+    private let topicLoader: TopicLoader?
+    private var pageState = PageState.loading
+    private var needsVerification = false
+    private let contentStack = UIStackView()
+
+    init(topicLoader: @escaping TopicLoader) {
+        self.topicLoader = topicLoader
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    override init(nibName nibNameOrNil: String?, bundle nibBundleOrNil: Bundle?) {
+        topicLoader = nil
+        super.init(nibName: nibNameOrNil, bundle: nibBundleOrNil)
+    }
+
+    required init?(coder: NSCoder) {
+        topicLoader = nil
+        super.init(coder: coder)
+    }
     private var work: Task<Void, Never>?
     private var operationID = UUID()
     private var closed = false
@@ -32,27 +53,25 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
     private let sessionHint = UILabel()
     private let imageButton = UIButton(type: .system)
     private let exportButton = UIButton(type: .system)
-    private let retryButton = UIButton(type: .system)
-    private let cancelWorkButton = UIButton(type: .system)
     private let spinner = UIActivityIndicatorView(style: .medium)
     private var navigationBar: UINavigationBar!
-    private var doneItem: UIBarButtonItem!
 
     override func viewDidLoad() {
         super.viewDidLoad()
         configureUI()
+        configureSheet()
         beginLoading()
     }
 
     private func configureUI() {
         view.backgroundColor = .systemBackground
-        preferredContentSize = CGSize(width: 480, height: 760)
+        preferredContentSize = CGSize(width: 440, height: 180)
+        view.accessibilityIdentifier = "shareEntry.root"
         navigationBar = UINavigationBar()
         navigationBar.translatesAutoresizingMaskIntoConstraints = false
         let item = UINavigationItem(title: "FluxDO 分享")
         item.leftBarButtonItem = UIBarButtonItem(title: "取消", style: .plain, target: self, action: #selector(closeCancelled))
-        doneItem = UIBarButtonItem(title: "完成", style: .done, target: self, action: #selector(closeCompleted))
-        item.rightBarButtonItem = doneItem
+        item.leftBarButtonItem?.accessibilityIdentifier = "shareEntry.close"
         navigationBar.items = [item]
         view.addSubview(navigationBar)
 
@@ -60,9 +79,9 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.backgroundColor = .systemBackground
         view.addSubview(scroll)
-        let stack = UIStackView()
+        let stack = contentStack
         stack.axis = .vertical
-        stack.spacing = 14
+        stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false
         scroll.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -73,13 +92,14 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
             scroll.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 20),
-            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -24),
-            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -20),
-            stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor, constant: -40)
+            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 12),
+            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -16),
+            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -16),
+            stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor, constant: -32)
         ])
-        titleLabel.font = .preferredFont(forTextStyle: .title2)
+        titleLabel.font = .preferredFont(forTextStyle: .headline)
+        titleLabel.accessibilityIdentifier = "shareEntry.title"
         titleLabel.numberOfLines = 0
         titleLabel.text = "正在读取分享链接…"
         stack.addArrangedSubview(titleLabel)
@@ -87,6 +107,7 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
         statusLabel.textColor = .secondaryLabel
         statusLabel.numberOfLines = 0
         statusLabel.accessibilityTraits = .updatesFrequently
+        statusLabel.accessibilityIdentifier = "shareEntry.status"
         stack.addArrangedSubview(statusLabel)
         sessionHint.font = .preferredFont(forTextStyle: .footnote)
         sessionHint.textColor = .secondaryLabel
@@ -94,22 +115,28 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
         sessionHint.isHidden = true
         stack.addArrangedSubview(sessionHint)
         stack.addArrangedSubview(spinner)
-        configureButton(verificationButton, title: "验证 / 登录", action: #selector(showVerification))
+        spinner.accessibilityIdentifier = "shareEntry.progress"
+        configureButton(verificationButton, title: "验证 / 登录", action: #selector(recover))
+        verificationButton.accessibilityIdentifier = "shareEntry.recover"
         stack.addArrangedSubview(verificationButton)
         verificationContainer.axis = .vertical
         verificationContainer.spacing = 10
         verificationContainer.isHidden = true
+        verificationContainer.accessibilityIdentifier = "shareEntry.verification"
         let verificationHint = UILabel()
         verificationHint.text = "请在此网页完成验证或登录，帖子可正常打开后点击继续。扩展会保留自己的登录状态，下次分享可复用。"
         verificationHint.numberOfLines = 0
         verificationHint.font = .preferredFont(forTextStyle: .footnote)
         verificationContainer.addArrangedSubview(verificationHint)
         configureButton(continueButton, title: "验证完成，继续保存", action: #selector(continueAfterVerification))
+        continueButton.accessibilityIdentifier = "shareEntry.continue"
         verificationContainer.addArrangedSubview(continueButton)
         stack.addArrangedSubview(verificationContainer)
         configureButton(clearSessionButton, title: "退出扩展登录", action: #selector(clearExtensionSession))
+        clearSessionButton.accessibilityIdentifier = "shareEntry.clearSession"
         stack.addArrangedSubview(clearSessionButton)
         configureButton(diagnosticButton, title: "分享扩展诊断", action: #selector(shareDiagnostics))
+        diagnosticButton.accessibilityIdentifier = "shareEntry.diagnostics"
         stack.addArrangedSubview(diagnosticButton)
 
         configureButton(imageButton, title: "分享图片", action: #selector(generateImages))
@@ -118,12 +145,19 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
         configureButton(exportButton, title: "导出文章", action: #selector(generateExport))
         exportButton.accessibilityIdentifier = "shareEntry.export"
         stack.addArrangedSubview(exportButton)
-        configureButton(cancelWorkButton, title: "停止当前操作", action: #selector(cancelCurrentWork))
-        stack.addArrangedSubview(cancelWorkButton)
-        configureButton(retryButton, title: "重试", action: #selector(retry))
-        stack.addArrangedSubview(retryButton)
-        retryButton.isHidden = true
-        cancelWorkButton.isHidden = true
+        updatePage(.loading)
+    }
+
+    private func configureSheet() {
+        guard let sheet = sheetPresentationController else { return }
+        sheet.prefersGrabberVisible = true
+        if #available(iOS 16.0, *) {
+            sheet.detents = [.custom(identifier: .init("shareEntry.compact")) { [weak self] context in
+                min(context.maximumDetentValue, self?.preferredContentSize.height ?? 180)
+            }]
+        } else {
+            sheet.detents = [.medium(), .large()]
+        }
     }
 
     private func configureButton(_ button: UIButton, title: String, action: Selector) {
@@ -132,12 +166,22 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
         configuration.cornerStyle = .medium
         button.configuration = configuration
         button.addTarget(self, action: action, for: .touchUpInside)
-        button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+        let height = button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
+        height.priority = UILayoutPriority(999)
+        height.isActive = true
     }
 
     private func beginLoading() {
         start(message: "正在读取链接并加载主题…", retry: { [weak self] in self?.beginLoading() }) { [weak self] id in
             guard let self = self else { return }
+            if let loader = self.topicLoader {
+                let loaded = try await loader()
+                try self.ensureActive(id)
+                self.link = loaded.link
+                self.client = loaded.client
+                self.display(loaded.topic, host: loaded.link.host)
+                return
+            }
             let link = try await self.receiveLink()
             try self.ensureActive(id)
             self.link = link
@@ -154,18 +198,20 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
                 self.browserHost = link.host
                 self.preparedHost = nil
                 self.preferredBrowserHost = nil
-                browser.webView.heightAnchor.constraint(equalToConstant: 420).isActive = true
+                let height = browser.webView.heightAnchor.constraint(equalToConstant: 320)
+                height.priority = UILayoutPriority(999)
+                height.isActive = true
                 self.verificationContainer.insertArrangedSubview(browser.webView, at: 1)
             }
             var seed: ShareSession?
             do {
                 seed = try ShareSessionStore.readSession(host: link.host)
                 self.sessionDiagnostic = "SHARED_SESSION_READ"
-                self.sessionHint.isHidden = true
+                self.sessionHint.text = nil
             } catch {
                 self.sessionDiagnostic = self.sessionCode(error)
                 self.sessionHint.text = "共享会话暂不可用，将使用扩展自身会话尝试接口；需要时会自动打开验证网页。"
-                self.sessionHint.isHidden = false
+                self.sessionHint.isHidden = true
             }
             self.verificationContainer.isHidden = true
             try await browser.seed(session: seed)
@@ -189,14 +235,11 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
             self.client = client
             let topic = try await client.loadTopic()
             try self.ensureActive(id)
-            self.topic = topic
-            self.verificationContainer.isHidden = true
-            self.titleLabel.text = topic.title
-            self.statusLabel.text = "\(link.host) · 已加载主帖。请选择生成图片或导出文章。"
+            self.display(topic, host: link.host)
         }
     }
 
-    private func prepareBrowser(link: SharedTopicLink) async throws {
+    private func prepareBrowser(link: SharedTopicLink, showVerification: Bool = false) async throws {
         try Task.checkCancellation()
         guard !closed, let browser = webSession, browserHost == link.host else { throw CancellationError() }
         preferredBrowserHost = link.host
@@ -209,13 +252,17 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
         let id = UUID()
         let task = Task { @MainActor [weak self] in
             guard let self = self else { throw CancellationError() }
-            self.verificationContainer.isHidden = false
-            self.statusLabel.text = "接口读取失败，正在使用网页会话重试…"
+            if showVerification {
+                self.updatePage(.verifying)
+                self.statusLabel.text = "请完成验证或登录，再点击“验证完成，继续保存”。"
+            } else {
+                self.statusLabel.text = "接口读取失败，正在使用网页会话重试…"
+            }
             try await browser.prepare(url: link.url, session: nil)
             try Task.checkCancellation()
             guard !self.closed else { throw CancellationError() }
             self.preparedHost = link.host
-            self.verificationContainer.isHidden = true
+            if !showVerification { self.verificationContainer.isHidden = true }
         }
         browserPreparation = (id, task)
         defer { if browserPreparation?.id == id { browserPreparation = nil } }
@@ -241,13 +288,18 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
         guard let link = link, webSession != nil else { beginLoading(); return }
         if preparedHost == link.host {
             verificationContainer.isHidden = false
+            updatePage(.verifying)
             if webSession?.webView.isLoading == false { webSession?.webView.reload() }
         } else {
             start(message: "正在打开验证网页…", retry: retryAction ?? { [weak self] in self?.beginLoading() }) { [weak self] id in
                 guard let self = self else { return }
-                try await self.prepareBrowser(link: link)
+                do {
+                    try await self.prepareBrowser(link: link, showVerification: true)
+                } catch ForumShareError.network {
+                    // 导航超时后仍保留网页，允许用户继续完成验证。
+                }
                 try self.ensureActive(id)
-                self.verificationContainer.isHidden = false
+                self.updatePage(.verifying)
                 self.statusLabel.text = "请完成验证或登录，再点击“验证完成，继续保存”。"
             }
         }
@@ -280,9 +332,10 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
                 self.topic = nil
                 self.client = nil
                 self.sessionDiagnostic = "EXTENSION_SESSION_CLEARED"
+                self.needsVerification = false
                 self.verificationContainer.isHidden = true
                 self.statusLabel.text = "已退出扩展登录。下次加载可使用共享会话或在扩展内重新登录。"
-                self.retryButton.isHidden = false
+                self.updatePage(.failed)
             }
         })
         present(alert, animated: true)
@@ -388,11 +441,12 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
         guard let preview = activePreview else { return }
         dismiss(animated: true) { [weak self] in
             guard let self = self, !self.closed else { return }
-            self.verificationContainer.isHidden = false
+            self.needsVerification = true
+            self.updatePage(.verifying)
             self.statusLabel.text = "请完成网页验证，再点击“验证完成，继续保存”返回原界面。"
             self.retryAction = { [weak self, preview] in
                 guard let self = self, !self.closed, self.presentedViewController == nil else { return }
-                self.verificationContainer.isHidden = true
+                self.updatePage(.ready)
                 self.present(preview, animated: true) {
                     (preview as? ShareImagePreviewController)?.resumeAfterAuthentication()
                     (preview as? ShareExportViewController)?.resumeAfterAuthentication()
@@ -408,19 +462,18 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
         let id = UUID()
         operationID = id
         retryAction = retry
-        setBusy(true)
+        updatePage(.loading)
         statusLabel.text = message
-        retryButton.isHidden = true
         work = Task { [weak self] in
             do {
                 try await operation(id)
                 guard let self = self, !self.closed, self.operationID == id else { return }
-                self.setBusy(false)
+                if self.pageState == .loading { self.updatePage(self.topic == nil ? .failed : .ready) }
                 self.work = nil
                 self.providerProgress.removeAll()
             } catch {
                 guard let self = self, !self.closed, self.operationID == id else { return }
-                self.setBusy(false)
+                self.needsVerification = false
                 self.work = nil
                 self.providerProgress.removeAll()
                 if error is CancellationError {
@@ -436,12 +489,14 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
                     if let forumError = error as? ForumShareError {
                         switch forumError {
                         case .cloudflare, .loginRequired, .accessDenied:
-                            self.verificationContainer.isHidden = false
+                            self.needsVerification = true
+                        case .network:
+                            self.needsVerification = self.client?.usesBrowser == true && self.webSession != nil
                         default: break
                         }
                     }
                 }
-                self.retryButton.isHidden = false
+                self.updatePage(.failed)
             }
         }
     }
@@ -451,17 +506,71 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
         if closed || id != operationID { throw CancellationError() }
     }
 
-    private func setBusy(_ busy: Bool) {
-        let ready = topic != nil && client != nil
-        imageButton.isEnabled = !busy && ready
-        exportButton.isEnabled = !busy && ready
-        cancelWorkButton.isHidden = !busy
-        doneItem.isEnabled = !busy
-        verificationButton.isEnabled = !busy
-        continueButton.isEnabled = !busy
-        clearSessionButton.isEnabled = !busy
-        diagnosticButton.isEnabled = !busy
-        if busy { spinner.startAnimating() } else { spinner.stopAnimating() }
+    private func display(_ topic: SharedTopic, host: String) {
+        self.topic = topic
+        needsVerification = false
+        titleLabel.text = topic.title
+        statusLabel.text = "\(host) · 已加载主帖"
+        updatePage(.ready)
+    }
+
+    private func updatePage(_ state: PageState) {
+        pageState = state
+        let loading = state == .loading
+        let failed = state == .failed
+        let ready = state == .ready
+        titleLabel.isHidden = !ready
+        sessionHint.isHidden = !failed || sessionHint.text == nil
+        verificationButton.isHidden = !failed
+        clearSessionButton.isHidden = !failed
+        diagnosticButton.isHidden = !failed
+        imageButton.isHidden = !ready
+        exportButton.isHidden = !ready
+        imageButton.isEnabled = ready && topic != nil && client != nil
+        exportButton.isEnabled = imageButton.isEnabled
+        clearSessionButton.isEnabled = webSession != nil
+        verificationContainer.isHidden = state != .verifying
+        verificationContainer.spacing = state == .verifying ? 10 : 0
+        continueButton.isEnabled = state == .verifying
+        verificationButton.configuration?.title = needsVerification ? "验证 / 登录" : "重试"
+        navigationBar.items?.first?.rightBarButtonItem = state == .verifying
+            ? UIBarButtonItem(title: "返回", style: .plain, target: self, action: #selector(hideVerification)) : nil
+        spinner.isHidden = !loading
+        if loading { spinner.startAnimating() } else { spinner.stopAnimating() }
+        if #unavailable(iOS 16.0) {
+            sheetPresentationController?.selectedDetentIdentifier = state == .verifying ? .large : .medium
+        }
+        updateHeight()
+    }
+
+    private func updateHeight() {
+        guard view.bounds.width > 32 else { return }
+        let width = view.bounds.width - 32
+        let content = contentStack.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel
+        )
+        let limit = max(320, (view.window?.windowScene?.screen.bounds.height ?? 800) - 100)
+        let height = min(limit, max(180, content.height + 84))
+        let size = CGSize(width: 440, height: height)
+        if abs(preferredContentSize.height - height) > 1 {
+            preferredContentSize = size
+            if #available(iOS 16.0, *) { sheetPresentationController?.invalidateDetents() }
+        }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updateHeight()
+    }
+
+    @objc private func recover() {
+        if needsVerification { showVerification() } else { retryAction?() }
+    }
+
+    @objc private func hideVerification() {
+        stopWork()
+        updatePage(.failed)
     }
 
     private func stopWork() {
@@ -473,18 +582,6 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
         work = nil
         providerProgress.forEach { $0.cancel() }
         providerProgress.removeAll()
-    }
-
-    @objc private func cancelCurrentWork() {
-        stopWork()
-        setBusy(false)
-        statusLabel.text = "已停止当前操作，扩展仍保持打开。"
-        retryButton.isHidden = false
-    }
-
-    @objc private func retry() {
-        if webSession?.webView.url != nil && link != nil && !verificationContainer.isHidden { continueAfterVerification() }
-        else { retryAction?() }
     }
 
     private func makeDirectory() throws -> URL {
@@ -536,12 +633,15 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
     }
 
     @objc private func closeCancelled() { close(cancelled: true) }
-    @objc private func closeCompleted() { close(cancelled: false) }
 
     private func close(cancelled: Bool) {
         guard !closed else { return }
         closed = true
         stopWork()
+        guard let context = extensionContext else {
+            dismiss(animated: true)
+            return
+        }
         let directories = previousDirectories + (workingDirectory.map { [$0] } ?? [])
         // 仅在扩展结束且系统确认交付后删除，系统分享/文件选择器取消不会触发清理。
         let cleanup: (Bool) -> Void = { _ in
@@ -549,9 +649,9 @@ final class ShareViewController: UIViewController, UIAdaptivePresentationControl
         }
         if cancelled {
             // cancelRequest 没有交付完成回调，保留临时文件由系统清理，避免接收方仍在读取。
-            extensionContext?.cancelRequest(withError: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
+            context.cancelRequest(withError: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
         } else {
-            extensionContext?.completeRequest(returningItems: nil, completionHandler: cleanup)
+            context.completeRequest(returningItems: nil, completionHandler: cleanup)
         }
     }
 }

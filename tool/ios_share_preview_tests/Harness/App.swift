@@ -46,7 +46,9 @@ final class HarnessViewController: UIViewController {
                                       action: #selector(showExport))
 
         let longImageButton = makeButton(title: "验证完整长图", identifier: "harness.longImage", action: #selector(checkLongImage))
-        let stack = UIStackView(arrangedSubviews: [title, subtitle, imageButton, exportButton, longImageButton])
+        let loadingButton = makeButton(title: "连接中入口", identifier: "harness.entryLoading", action: #selector(showLoadingEntry))
+        let recoveryButton = makeButton(title: "失败后重试入口", identifier: "harness.entryRecovery", action: #selector(showRecoveryEntry))
+        let stack = UIStackView(arrangedSubviews: [title, subtitle, imageButton, exportButton, longImageButton, loadingButton, recoveryButton])
         stack.axis = .vertical
         stack.spacing = 16
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -93,6 +95,28 @@ final class HarnessViewController: UIViewController {
             onAuthenticationRequired: {}
         )
         present(controller, animated: true)
+    }
+
+    @objc private func showLoadingEntry() {
+        let entry = ShareViewController {
+            try await Task.sleep(nanoseconds: 120_000_000_000)
+            throw CancellationError()
+        }
+        entry.modalPresentationStyle = .formSheet
+        present(entry, animated: true)
+    }
+
+    @objc private func showRecoveryEntry() {
+        var attempts = 0
+        let entry = ShareViewController {
+            attempts += 1
+            if attempts == 1 { throw ForumShareError.network }
+            let topic = OfflineFixtures.topic
+            let link = SharedTopicLink(url: topic.url, host: OfflineFixtures.host, topicID: topic.id, postNumber: nil)
+            return (link, OfflineFixtures.client, topic)
+        }
+        entry.modalPresentationStyle = .formSheet
+        present(entry, animated: true)
     }
 }
 
@@ -212,6 +236,9 @@ enum OfflineFixtures {
         let link = SharedTopicLink(url: topic.url, host: host, topicID: topicID, postNumber: nil)
         let loader: ForumShareClient.Loader = { url in
             let path = url.path
+            if path.hasSuffix(".png") {
+                return (imageData, response(url: url, contentType: "image/png"))
+            }
             let data: Data
             let name = (path as NSString).lastPathComponent
             if path.hasPrefix("/posts/"), let id = Int(name.split(separator: ".").first ?? "") {

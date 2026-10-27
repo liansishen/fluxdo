@@ -7,6 +7,17 @@ on:
         description: 'Flutter SDK 版本'
         required: false
         default: '3.47.7'
+      ui-runner:
+        description: '原生 UI 测试运行器（ARM 排队时可选 Intel）'
+        type: choice
+        options:
+          - macos-latest
+          - macos-26-intel
+        default: macos-latest
+      native-tests-only:
+        description: '仅运行原生交互测试，复用已有 IPA 构建结果'
+        type: boolean
+        default: false
   push:
     branches:
       - feat/ios-unsigned-ipa
@@ -25,7 +36,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  share-preview:
+    name: Share preview (${{ matrix.device }})
+    runs-on: ${{ inputs.ui-runner || 'macos-latest' }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [iPhone, iPad]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Exercise native preview
+        run: tool/ios_share_preview_tests/run_ios_ui_tests.sh "${{ matrix.device }}"
+
+      - name: Upload native preview test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-share-preview-tests-${{ matrix.device }}
+          path: ${{ runner.temp }}/fluxdo-share-preview-tests/*.xcresult
+          if-no-files-found: error
+          retention-days: 7
   build:
+    if: ${{ !inputs.native-tests-only }}
     runs-on: macos-latest
     timeout-minutes: 90
     steps:
@@ -78,18 +113,6 @@ jobs:
             ios/ShareExtension/ShareImageDocument.swift ios/ShareExtension/ShareLongImageWriter.swift \
             ios/ShareExtension/ShareImagePreviewController.swift ios/ShareExtension/ShareExportViewController.swift \
             ios/ShareExtension/ShareViewController.swift
-
-      - name: Exercise native preview on iPhone and iPad
-        run: tool/ios_share_preview_tests/run_ios_ui_tests.sh
-
-      - name: Upload native preview test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-share-preview-tests
-          path: ${{ runner.temp }}/fluxdo-share-preview-tests/*.xcresult
-          if-no-files-found: ignore
-          retention-days: 7
 
       - name: Cache iOS engine artifacts
         run: flutter precache --ios
