@@ -1,15 +1,143 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../models/notification.dart';
+import '../services/discourse/discourse_service.dart';
+import '../services/auth_session.dart';
+import '../services/site_context.dart';
 import 'core_providers.dart';
 import 'message_bus_providers.dart';
 
+typedef _NotificationPrefetchIdentity = ({
+  String siteId,
+  int userId,
+  String username,
+  int sessionGeneration,
+});
+
 /// 最近通知 Notifier（非分页，供快捷面板和 messageBus 使用）
-class RecentNotificationsNotifier extends AsyncNotifier<List<DiscourseNotification>> {
+class RecentNotificationsNotifier
+    extends AsyncNotifier<List<DiscourseNotification>> {
+  /// 未读数涨了、面板还没打开过时后台先取的一份（silent，不更新"已看到"
+  /// 位置）。面板打开时先显示它，再正常拉一次。
+  static ({
+    List<DiscourseNotification> list,
+    DateTime at,
+    _NotificationPrefetchIdentity identity,
+  })?
+  _prefetched;
+  static DateTime? _lastPrefetchAt;
+  static Future<void>? _prefetching;
+  static int _prefetchGeneration = 0;
+  static _NotificationPrefetchIdentity? _prefetchIdentity;
+  static const _prefetchMaxAge = Duration(minutes: 2);
+  static const _prefetchMinInterval = Duration(seconds: 30);
+
+  static _NotificationPrefetchIdentity? _identity(DiscourseService service) {
+    final user = service.currentUserNotifier.value;
+    if (user == null) return null;
+    return (
+      siteId: SiteContext.current.id,
+      userId: user.id,
+      username: user.username,
+      sessionGeneration: AuthSession().generation,
+    );
+  }
+
+  /// 退出登录 / 换账号时作废缓存及旧在途请求。
+  static void clearPrefetched() {
+    _prefetchGeneration++;
+    _prefetched = null;
+    _lastPrefetchAt = null;
+    _prefetching = null;
+    _prefetchIdentity = null;
+  }
+
+  /// 同一站点、账号及会话内合并请求，两次至少隔 30 秒；失败不打扰。
+  static Future<void> prefetch(DiscourseService service) {
+    final identity = _identity(service);
+    if (identity != _prefetchIdentity) clearPrefetched();
+    if (identity == null) return Future.value();
+    _prefetchIdentity = identity;
+    final running = _prefetching;
+    if (running != null) return running;
+    final last = _lastPrefetchAt;
+    if (last != null &&
+        DateTime.now().difference(last) < _prefetchMinInterval) {
+      return Future.value();
+    }
+    final generation = _prefetchGeneration;
+    _lastPrefetchAt = DateTime.now();
+    return _prefetching = () async {
+      try {
+        final response = await service.getRecentNotifications(silent: true);
+        if (generation != _prefetchGeneration ||
+            _identity(service) != identity) {
+          return;
+        }
+        _prefetched = (
+          list: response.notifications,
+          at: DateTime.now(),
+          identity: identity,
+        );
+      } catch (_) {
+      } finally {
+        // 旧请求结束不能释放新账号的在途请求。
+        if (generation == _prefetchGeneration) _prefetching = null;
+      }
+    }();
+  }
+
+  static List<DiscourseNotification>? _takePrefetched(
+    DiscourseService service,
+  ) {
+    final prefetched = _prefetched;
+    _prefetched = null;
+    if (prefetched == null ||
+        prefetched.identity != _identity(service) ||
+        DateTime.now().difference(prefetched.at) > _prefetchMaxAge) {
+      return null;
+    }
+    return prefetched.list;
+  }
+
+  /// 上次正常拉取（会更新"已看到"位置）的时间
+  DateTime? _fetchedAt;
+
   @override
   Future<List<DiscourseNotification>> build() async {
     final service = ref.read(discourseServiceProvider);
+    final prefetched = _takePrefetched(service);
+    if (prefetched != null) return prefetched;
     final response = await service.getRecentNotifications();
+    _fetchedAt = DateTime.now();
     return response.notifications;
+  }
+
+  /// 打开通知面板时调用：先显示手上的（预取的或上次的），再正常拉一次——
+  /// 服务端据此更新"已看到"位置。刚正常拉过（provider 刚建好）就不重复拉。
+  Future<void> refreshOnOpen() async {
+    try {
+      await future;
+    } catch (_) {
+      if (ref.mounted) ref.invalidateSelf();
+      return;
+    }
+    if (!ref.mounted) return;
+    final fetchedAt = _fetchedAt;
+    if (fetchedAt != null &&
+        DateTime.now().difference(fetchedAt) < const Duration(seconds: 2)) {
+      return;
+    }
+    try {
+      final response = await ref
+          .read(discourseServiceProvider)
+          .getRecentNotifications();
+      if (!ref.mounted) return;
+      _fetchedAt = DateTime.now();
+      state = AsyncValue.data(response.notifications);
+    } catch (_) {
+      // 手上已经有一份在显示（预取的或上次的），拉新失败就先留着它
+    }
   }
 
   /// 添加新通知（由 messageBus 调用）
@@ -86,14 +214,15 @@ class RecentNotificationsNotifier extends AsyncNotifier<List<DiscourseNotificati
 
     // 更新本地状态
     state.whenData((list) {
-      state = AsyncValue.data(
-        list.map((n) => n.copyWith(read: true)).toList(),
-      );
+      state = AsyncValue.data(list.map((n) => n.copyWith(read: true)).toList());
     });
   }
 }
 
 final recentNotificationsProvider =
-    AsyncNotifierProvider<RecentNotificationsNotifier, List<DiscourseNotification>>(() {
-  return RecentNotificationsNotifier();
-});
+    AsyncNotifierProvider<
+      RecentNotificationsNotifier,
+      List<DiscourseNotification>
+    >(() {
+      return RecentNotificationsNotifier();
+    });

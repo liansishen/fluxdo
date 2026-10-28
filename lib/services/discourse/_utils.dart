@@ -21,9 +21,15 @@ mixin _UtilsMixin on _DiscourseServiceBase {
   }
 
   /// 获取 /emojis.json 原始数据(供 SWR 快照落盘/比对用)。
-  Future<Map<String, dynamic>> getEmojisRaw() async {
+  /// [background]：已有快照时的后台刷新，低优先级（给前台让路），不弹错误
+  Future<Map<String, dynamic>> getEmojisRaw({bool background = false}) async {
     try {
-      final response = await _dio.get('/emojis.json');
+      final response = await _dio.get(
+        '/emojis.json',
+        options: background
+            ? Options(extra: const {'priority': 'low', 'showErrorToast': false})
+            : null,
+      );
       return response.data as Map<String, dynamic>;
     } catch (e) {
       if (e is DioException) {
@@ -80,14 +86,17 @@ mixin _UtilsMixin on _DiscourseServiceBase {
 
     if (respData is Map) {
       final target = respData['target'];
-      final seq = (target is Map ? target['draft_sequence'] : null) ??
+      final seq =
+          (target is Map ? target['draft_sequence'] : null) ??
           respData['draft_sequence'];
       if (seq is int) {
         onDraftSequence?.call(seq);
       }
     }
 
-    if (respData is Map && respData.containsKey('post') && respData['post']['topic_id'] != null) {
+    if (respData is Map &&
+        respData.containsKey('post') &&
+        respData['post']['topic_id'] != null) {
       return respData['post']['topic_id'] as int;
     }
 
@@ -103,5 +112,4 @@ mixin _UtilsMixin on _DiscourseServiceBase {
 
     throw Exception(S.current.error_unknownResponseFormat);
   }
-
 }

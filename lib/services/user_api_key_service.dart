@@ -44,18 +44,23 @@ class UserApiKeyService {
   static final UserApiKeyService _instance = UserApiKeyService._();
   factory UserApiKeyService() => _instance;
 
-  static String get _keyPrivateKey => SiteContext.storageKey('user_api_key_rsa_private');
+  static String get _keyPrivateKey =>
+      SiteContext.storageKey('user_api_key_rsa_private');
   static String get _keyApiKey => SiteContext.storageKey('user_api_key_key');
-  static String get _keyClientId => SiteContext.storageKey('user_api_key_client_id');
+  static String get _keyClientId =>
+      SiteContext.storageKey('user_api_key_client_id');
+
   /// 跨设备扫码专用 client_id(与浏览器授权 client 隔离)。
   /// 稳定复用,使服务端 create 时 destroy_all 只清掉上一枚分享 key。
-  static String get _keyQrClientId => SiteContext.storageKey('user_api_key_qr_client_id');
+  static String get _keyQrClientId =>
+      SiteContext.storageKey('user_api_key_qr_client_id');
   // nonce 持久化:跨重启存活。冷启动 getInitialLink 会重放上次的
   // auth_redirect 深链,内存态 nonce 会丢失导致每次重启误报"回调解析失败"。
-  static String get _keyPendingNonce => SiteContext.storageKey('user_api_key_pending_nonce');
+  static String get _keyPendingNonce =>
+      SiteContext.storageKey('user_api_key_pending_nonce');
 
   static const String authRedirect = 'discourse://auth_redirect';
-  static const String applicationName = 'cfluxdo';
+  static const String applicationName = 'CFluxDo';
   static const String scopes = 'one_time_password';
 
   /// 跨设备扫码 key 的 application_name。展示端靠它在
@@ -308,10 +313,15 @@ class UserApiKeyService {
         redirectUrl = response.headers.value('location');
       }
       if (redirectUrl == null || redirectUrl.isEmpty) {
-        _log('warning', 'cross_device_key_no_redirect', '创建跨设备 key 未返回 redirect_url', {
-          'statusCode': response.statusCode,
-          'hasPayload': map?['payload'] != null,
-        });
+        _log(
+          'warning',
+          'cross_device_key_no_redirect',
+          '创建跨设备 key 未返回 redirect_url',
+          {
+            'statusCode': response.statusCode,
+            'hasPayload': map?['payload'] != null,
+          },
+        );
         throw StateError('服务端未返回授权结果');
       }
 
@@ -502,13 +512,20 @@ class UserApiKeyService {
 
       final location = response.headers.value('location');
       if (location == null || location.isEmpty) {
-        _log('warning', 'otp_request_no_location',
-            'OTP 补发响应无 Location(status=${response.statusCode})');
+        _log(
+          'warning',
+          'otp_request_no_location',
+          'OTP 补发响应无 Location(status=${response.statusCode})',
+        );
         return null;
       }
       final otpParam = Uri.parse(location).queryParameters['oneTimePassword'];
       if (otpParam == null || otpParam.isEmpty) {
-        _log('warning', 'otp_request_no_otp_param', 'Location 无 oneTimePassword');
+        _log(
+          'warning',
+          'otp_request_no_otp_param',
+          'Location 无 oneTimePassword',
+        );
         return null;
       }
       final otp = await _decrypt(otpParam);
@@ -520,12 +537,15 @@ class UserApiKeyService {
       final status = e.response?.statusCode;
       // 403 = key 已撤销 / scope 不足 / 用户组不满足,key 已不可用则清除
       if (status == 403) {
-        _log('warning', 'otp_request_rejected',
-            'OTP 补发被拒(403),清除本地 key', {'statusCode': status});
+        _log('warning', 'otp_request_rejected', 'OTP 补发被拒(403),清除本地 key', {
+          'statusCode': status,
+        });
         await clearKey();
       } else {
-        _log('warning', 'otp_request_failed', 'OTP 补发请求失败',
-            {'statusCode': status, 'errorType': e.type.toString()});
+        _log('warning', 'otp_request_failed', 'OTP 补发请求失败', {
+          'statusCode': status,
+          'errorType': e.type.toString(),
+        });
       }
       return null;
     }
@@ -567,10 +587,7 @@ class UserApiKeyService {
           followRedirects: false,
           validateStatus: (status) =>
               status != null && (status < 400 || status == 302),
-          headers: {
-            'X-CSRF-Token': csrf,
-            'X-Requested-With': 'XMLHttpRequest',
-          },
+          headers: {'X-CSRF-Token': csrf, 'X-Requested-With': 'XMLHttpRequest'},
           extra: const {
             'skipCsrf': true,
             'skipAuthCheck': true,
@@ -582,16 +599,21 @@ class UserApiKeyService {
 
       // 成功路径:302 → / 且 Set-Cookie _t(由 AppCookieManager 落 jar)
       final afterToken = await _cookieJar.getTToken();
-      final ok = afterToken != null &&
+      final ok =
+          afterToken != null &&
           afterToken.isNotEmpty &&
           afterToken != beforeToken;
-      _log(ok ? 'info' : 'warning', 'otp_redeem_finished',
-          ok ? 'OTP 兑换成功,已获得新 _t' : 'OTP 兑换后未见新 _t', {
-        'statusCode': response.statusCode,
-        'hadTokenBefore': beforeToken != null && beforeToken.isNotEmpty,
-        'hasTokenAfter': afterToken != null && afterToken.isNotEmpty,
-        'tokenChanged': afterToken != beforeToken,
-      });
+      _log(
+        ok ? 'info' : 'warning',
+        'otp_redeem_finished',
+        ok ? 'OTP 兑换成功,已获得新 _t' : 'OTP 兑换后未见新 _t',
+        {
+          'statusCode': response.statusCode,
+          'hadTokenBefore': beforeToken != null && beforeToken.isNotEmpty,
+          'hasTokenAfter': afterToken != null && afterToken.isNotEmpty,
+          'tokenChanged': afterToken != beforeToken,
+        },
+      );
       return ok ? afterToken : null;
     } on DioException catch (e) {
       _log('warning', 'otp_redeem_failed', 'OTP 兑换请求失败', {

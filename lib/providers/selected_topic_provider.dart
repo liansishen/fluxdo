@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart' show ProviderScope;
 // ignore: depend_on_referenced_packages
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:uuid/uuid.dart';
+
 import '../pages/settings_page.dart';
 import '../pages/user_profile_page.dart';
 import '../widgets/layout/auto_restore_master_detail_route.dart';
@@ -18,6 +19,7 @@ class PaneEntry {
     required this.topicId,
     this.initialTitle,
     this.scrollToPostNumber,
+    this.expectedHighestPostNumber,
     this.instanceId,
     this.highlightBoostUsername,
     this.initialRevisionPostNumber,
@@ -32,6 +34,7 @@ class PaneEntry {
       topicId = null,
       initialTitle = null,
       scrollToPostNumber = null,
+      expectedHighestPostNumber = null,
       instanceId = null,
       highlightBoostUsername = null,
       initialRevisionPostNumber = null,
@@ -45,6 +48,7 @@ class PaneEntry {
       username = null,
       initialTitle = null,
       scrollToPostNumber = null,
+      expectedHighestPostNumber = null,
       instanceId = null,
       highlightBoostUsername = null,
       initialRevisionPostNumber = null,
@@ -57,6 +61,9 @@ class PaneEntry {
   final String? username;
   final String? initialTitle;
   final int? scrollToPostNumber;
+
+  /// 打开时列表上的最高楼层（见 [TopicDetailPage.expectedHighestPostNumber]）
+  final int? expectedHighestPostNumber;
 
   /// provider 实例 ID，用于布局切换时复用同一个 provider
   final String? instanceId;
@@ -116,6 +123,7 @@ class SelectedTopicNotifier extends StateNotifier<SelectedTopicState> {
     required int topicId,
     String? initialTitle,
     int? scrollToPostNumber,
+    int? expectedHighestPostNumber,
     String? instanceId,
     String? highlightBoostUsername,
     int? initialRevisionPostNumber,
@@ -131,6 +139,7 @@ class SelectedTopicNotifier extends StateNotifier<SelectedTopicState> {
           topicId: topicId,
           initialTitle: initialTitle,
           scrollToPostNumber: scrollToPostNumber,
+          expectedHighestPostNumber: expectedHighestPostNumber,
           // 最初从列表进入的这一层也必须持有稳定实例 ID。否则它在
           // 平行视界里从 detail 搬到 master 时会生成新的 provider key，
           // 已加载的分页数据会全部失配并重新请求。
@@ -417,13 +426,14 @@ final selectedMessageProvider = SelectedTopicProvider((ref) {
 /// (资料页可叠开多个:话题里点头像→资料→再开别人资料)。资料页
 /// 自己是宿主:宽屏点话题/回复列表进右栏,缩窄投影,窄屏真路由。
 /// 嵌入形态(在别的宿主栈里)不用它——压宿主的栈。
-final selectedUserProfilePaneProvider = StateNotifierProvider.family<
-  SelectedTopicNotifier,
-  SelectedTopicState,
-  String
->((ref, _) {
-  return SelectedTopicNotifier();
-});
+final selectedUserProfilePaneProvider =
+    StateNotifierProvider.family<
+      SelectedTopicNotifier,
+      SelectedTopicState,
+      String
+    >((ref, _) {
+      return SelectedTopicNotifier();
+    });
 
 /// 搜索页自己的平行视界导航栈，与首页话题、私信历史完全隔离。
 final selectedSearchProvider = SelectedTopicProvider((ref) {
@@ -472,22 +482,24 @@ final selectedFollowPaneProvider = SelectedTopicProvider((ref) {
 /// SelectedTopicProvider(non-autodispose)类型;残留代价只是每个访问
 /// 过的分类一个空栈对象。同一分类叠开两层共享一份栈,极罕见,
 /// clearOnInit 兜底。
-final selectedCategoryPaneProvider = StateNotifierProvider.family<
-  SelectedTopicNotifier,
-  SelectedTopicState,
-  int
->((ref, _) {
-  return SelectedTopicNotifier();
-});
+final selectedCategoryPaneProvider =
+    StateNotifierProvider.family<
+      SelectedTopicNotifier,
+      SelectedTopicState,
+      int
+    >((ref, _) {
+      return SelectedTopicNotifier();
+    });
 
 /// 标签话题页右栏的平行视界栈(按 tagName family 隔离,见分类页注释)。
-final selectedTagPaneProvider = StateNotifierProvider.family<
-  SelectedTopicNotifier,
-  SelectedTopicState,
-  String
->((ref, _) {
-  return SelectedTopicNotifier();
-});
+final selectedTagPaneProvider =
+    StateNotifierProvider.family<
+      SelectedTopicNotifier,
+      SelectedTopicState,
+      String
+    >((ref, _) {
+      return SelectedTopicNotifier();
+    });
 
 /// 窄屏临时路由携带的平行视界恢复上下文。
 class FullScreenPaneRestoreScope extends InheritedWidget {
@@ -669,9 +681,8 @@ class EmbeddedStackScope extends InheritedWidget {
       }
       return;
     }
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => const SettingsPage()));
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const SettingsPage()));
   }
 }
 

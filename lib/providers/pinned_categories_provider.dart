@@ -1,6 +1,7 @@
 // ignore: depend_on_referenced_packages
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import '../services/site_context.dart';
 import '../services/site_data_lifecycle.dart';
 import 'theme_provider.dart';
@@ -37,6 +38,21 @@ class PinnedCategoriesNotifier extends StateNotifier<List<int>> {
     _save();
   }
 
+  /// 菜单里的「置顶 / 上移 / 下移」（拖拽之外的另一种排法，也方便读屏）
+  void moveToTop(int categoryId) => _moveTo(categoryId, (_) => 0);
+
+  void moveUp(int categoryId) => _moveTo(categoryId, (index) => index - 1);
+
+  void moveDown(int categoryId) => _moveTo(categoryId, (index) => index + 1);
+
+  void _moveTo(int categoryId, int Function(int index) target) {
+    final index = state.indexOf(categoryId);
+    if (index < 0) return;
+    final to = target(index).clamp(0, state.length - 1);
+    if (to == index) return;
+    reorder(index, to);
+  }
+
   Future<void> _save() async {
     await _prefs.setStringList(_key, state.map((id) => id.toString()).toList());
   }
@@ -44,9 +60,9 @@ class PinnedCategoriesNotifier extends StateNotifier<List<int>> {
 
 final pinnedCategoriesProvider =
     StateNotifierProvider<PinnedCategoriesNotifier, List<int>>((ref) {
-  final prefs = ref.watch(sharedPreferencesProvider);
-  final notifier = PinnedCategoriesNotifier(prefs);
-  final unregister = SiteDataLifecycle.register(notifier._save);
-  ref.onDispose(unregister);
-  return notifier;
-});
+      final prefs = ref.watch(sharedPreferencesProvider);
+      final notifier = PinnedCategoriesNotifier(prefs);
+      final unregister = SiteDataLifecycle.register(notifier._save);
+      ref.onDispose(unregister);
+      return notifier;
+    });

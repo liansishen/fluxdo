@@ -15,6 +15,8 @@ import '../services/site_context.dart';
 import 'webview_page.dart';
 import 'login_page.dart';
 import '../widgets/auth/qr_login_sheet.dart';
+import '../widgets/accounts/account_switcher_sheet.dart';
+import '../services/accounts/account_switcher.dart';
 import 'browsing_history_page.dart';
 import 'bookmarks_page.dart';
 import 'export_history_page.dart';
@@ -286,8 +288,18 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
         'message': '用户主动退出登录',
       });
 
+      // 主动退出 = 不要这个账号了：从本机已保存的账号里一并移除
+      final userId = ref.read(currentUserProvider).value?.id;
       try {
         await ref.read(discourseServiceProvider).logout(callApi: true);
+        if (userId != null) {
+          try {
+            await AccountSwitcher.instance.store.remove(userId);
+          } catch (e) {
+            debugPrint('[ProfilePage] 移除本机账号失败: $e');
+          }
+          container.invalidate(savedAccountsProvider);
+        }
         // 主动退出：作废加速 DoH 令牌，改回公共 DoH
         await AccelDohAuthService.instance.revoke();
         // 这里刻意不判 mounted:provider 容器的生命周期与本 widget 无关,
@@ -1171,25 +1183,47 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
     } else {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: FilledButton.icon(
-          onPressed: _goToLogin,
-          icon: const Icon(Symbols.login_rounded, size: 20),
-          label: Text(
-            SiteContext.isLinuxDo
-                ? context.l10n.profile_loginLinuxDo
-                : context.l10n.profile_loginSite(SiteContext.current.name),
-            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
-          ),
-          style: FilledButton.styleFrom(
-            minimumSize: const Size(double.infinity, 52),
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
+        child: Column(
+          children: [
+            _buildLoginButton(),
+            // 本机还存着别的账号：不用输密码直接切过去
+            Consumer(
+              builder: (context, ref, _) {
+                final saved =
+                    ref.watch(savedAccountsProvider).value ?? const [];
+                if (saved.isEmpty) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: TextButton.icon(
+                    onPressed: () => showAccountSwitcherSheet(context),
+                    icon: const Icon(Symbols.switch_account_rounded, size: 18),
+                    label: Text(context.l10n.accounts_savedAccounts),
+                  ),
+                );
+              },
             ),
-          ),
+          ],
         ),
       );
     }
+  }
+
+  Widget _buildLoginButton() {
+    return FilledButton.icon(
+      onPressed: _goToLogin,
+      icon: const Icon(Symbols.login_rounded, size: 20),
+      label: Text(
+        SiteContext.isLinuxDo
+            ? context.l10n.profile_loginLinuxDo
+            : context.l10n.profile_loginSite(SiteContext.current.name),
+        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+      ),
+      style: FilledButton.styleFrom(
+        minimumSize: const Size(double.infinity, 52),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      ),
+    );
   }
 }
 
@@ -1229,6 +1263,25 @@ class _ProfileHeader extends ConsumerWidget {
             const SizedBox(width: 20),
             const Expanded(child: _ProfileInfoSection()),
             if (isLoggedIn) ...[
+              Tooltip(
+                message: context.l10n.accounts_switchAccount,
+                child: GestureDetector(
+                  // 独立手势:不冒泡到外层跳 UserProfilePage
+                  onTap: () => showAccountSwitcherSheet(context),
+                  child: CircleAvatar(
+                    radius: 16,
+                    backgroundColor: isMojian
+                        ? Colors.transparent
+                        : Theme.of(context).colorScheme.surfaceContainerHighest,
+                    child: Icon(
+                      Symbols.switch_account_rounded,
+                      size: 16,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
               Tooltip(
                 message: context.l10n.login_qrShowCode,
                 child: GestureDetector(

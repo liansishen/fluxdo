@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show compute, visibleForTesting;
 import 'package:flutter/material.dart';
+
 import '../constants.dart';
 import 'app_logger.dart';
 import '../models/topic.dart';
@@ -61,6 +63,48 @@ class PreloadedDataService {
           // Accept-Language 由 RequestHeaderInterceptor 按系统语言逐请求设置
         },
       );
+
+  /// 从当前页面 DOM 取预加载快照的 JS 函数（启动 WebView 与验证页共用）：
+  /// 同时带 data-discourse-setup 与外层 JSON 完整（含 siteSettings、site）的
+  /// data-preloaded 时返回拼好的片段，否则返回 null。游客不要求 currentUser。
+  static const String snapshotCaptureFunction = r'''
+function __fluxdoCapturePreloaded() {
+  var el = document.querySelector('#data-preloaded, [data-preloaded]');
+  var setup = document.getElementById('data-discourse-setup');
+  if (!el || !setup) return null;
+  // DOM 流式解析可能先插入 script 空壳，半截 JSON 不算
+  var raw = el.getAttribute('data-preloaded') || el.textContent || '';
+  try {
+    var data = JSON.parse(raw);
+    if (!data || !data.siteSettings || !data.site) return null;
+  } catch (_) { return null; }
+  var parts = [el.outerHTML, setup.outerHTML];
+  document.querySelectorAll('meta[name]').forEach(function(m) {
+    parts.push(m.outerHTML);
+  });
+  return parts.join('\n');
+}
+''';
+
+  /// 立即取一次快照（取不到为 null）。
+  static const String snapshotOnceScript =
+      '(function() {\n$snapshotCaptureFunction\n'
+      'return __fluxdoCapturePreloaded();\n})()';
+
+  /// 取不到快照时描述页面看到了什么：挑战页 / 空页 / 带预加载但不完整。
+  static const String snapshotStateScript = r'''
+(function () {
+  var html = document.documentElement ? document.documentElement.innerHTML : '';
+  return {
+    href: location.href,
+    hasPreloaded: !!document.querySelector('#data-preloaded, [data-preloaded]'),
+    hasSetup: !!document.getElementById('data-discourse-setup'),
+    challenge: html.indexOf('cf_chl_opt') !== -1 ||
+      html.indexOf('challenge-running') !== -1 ||
+      html.indexOf('challenge-stage') !== -1
+  };
+})()
+''';
 
   /// 是否已加载数据
   bool get isLoaded => _loaded;
@@ -484,6 +528,17 @@ class PreloadedDataService {
     await _loadPreloadedData();
   }
 
+  /// 等在途的那次加载结束，再重新加载一次。
+  ///
+  /// [refresh] 碰上在途加载会直接返回（拿不到新数据）；登录身份刚换过时
+  /// 在途那次可能还是按旧身份发的，必须等它落地后用新 cookie 再取一遍。
+  Future<void> reloadAfterPending() async {
+    while (_loading) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    await refresh();
+  }
+
   /// 直接从已有 HTML 快照恢复预加载数据。
   ///
   /// 适用于登录 WebView 已经拿到完整页面的场景，避免重复请求首页。
@@ -497,6 +552,7 @@ class PreloadedDataService {
     final parsed = await _parsePreloadedDataFromHtml(html);
     if (!parsed) {
       debugPrint('[PreloadedData] HTML 快照不包含可用的 data-preloaded');
+      _clearCachedData();
       return false;
     }
 
@@ -594,12 +650,18 @@ class PreloadedDataService {
             // 诊断标注:首页 HTML 是 CF 盾高发路径,日志里需可辨识
             'requestTag': 'preload-home',
             FluxRequestKeys.observer: ?observer,
+            // 验证页通过后可能已把它停留的首页交了过来:撞盾恢复据此
+            // 不再为这次请求另起一轮验证
+            FluxRequestKeys.satisfiedProbe: () => _loaded,
           },
         ),
       );
 
       final html = response.data as String;
-      final parsed = await _parsePreloadedDataFromHtml(html);
+      final parsed = await _parsePreloadedDataFromHtml(
+        html,
+        source: response.realUri,
+      );
       if (!parsed) {
         // 解析失败不可标记成功:置 _loaded 会让所有消费方拿到空数据并
         // 静默降级到接口兜底(站点改版时曾无声潜伏)。抛错让调用方走
@@ -611,6 +673,12 @@ class PreloadedDataService {
       // 预热完成后仅更新站点基础数据和 sitekey。cf_clearance 自动续期
       // 由 BrowserTrustCoordinator 统一判断启动，避免预加载服务绕过生命周期门禁。
     } catch (e) {
+      if (_loaded) {
+        // 请求撞盾期间验证页通过，并把它停留的首页快照交了过来
+        // （见 CfChallengeService 的落值收尾）：数据已齐，不算失败
+        AppLogger.info('首页请求失败，但验证页快照已补齐预加载数据: $e', tag: 'PreloadedData');
+        return;
+      }
       debugPrint('[PreloadedData] 加载失败: $e');
       rethrow;
     } finally {
@@ -619,10 +687,10 @@ class PreloadedDataService {
   }
 
   /// 从 HTML 中解析预加载数据（兼容新旧两种形态）
-  Future<bool> _parsePreloadedDataFromHtml(String html) async {
+  Future<bool> _parsePreloadedDataFromHtml(String html, {Uri? source}) async {
     _extractCsrfTokenFromHtml(html);
     _extractSharedSessionKeyFromHtml(html);
-    _extractTurnstileSitekeyFromHtml(html);
+    _extractTurnstileSitekeyFromHtml(html, source: source);
     _extractBaseUriFromHtml(html);
     _extractCdnUrlFromHtml(html);
     _extractPluginCandidatesInBackground(html);
@@ -689,13 +757,11 @@ class PreloadedDataService {
   }
 
   /// 从 HTML 中提取 Turnstile sitekey（cf_clearance 自动续期用）
-  void _extractTurnstileSitekeyFromHtml(String html) {
-    final match = RegExp(r'data-sitekey="([0-9a-zA-Zx_-]+)"').firstMatch(html);
-    if (match == null) return;
-    final sitekey = match.group(1);
-    if (sitekey != null && sitekey.isNotEmpty) {
-      CfClearanceRefreshService().updateSitekey(sitekey);
-    }
+  void _extractTurnstileSitekeyFromHtml(String html, {Uri? source}) {
+    CfClearanceRefreshService().extractAndUpdateSitekey(
+      html,
+      source: source ?? Uri.parse(AppConstants.baseUrl),
+    );
   }
 
   /// 从 HTML 中提取 CDN 配置（data-discourse-setup meta 标签）
@@ -806,7 +872,7 @@ class PreloadedDataService {
 
       // 解析 currentUser（已在 Isolate 中完成 jsonDecode）
       if (preloaded.containsKey('currentUser')) {
-        _currentUser = preloaded['currentUser'] as Map<String, dynamic>;
+        _currentUser = preloaded['currentUser'] as Map<String, dynamic>?;
         debugPrint(
           '[PreloadedData] currentUser 解析成功: id=${_currentUser?['id']}, '
           'unread_notifications=${_currentUser?['unread_notifications']}, '

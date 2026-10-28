@@ -340,6 +340,7 @@ class CdkBalanceCard extends ConsumerWidget {
     final theme = Theme.of(context);
     final isExpired = error is OAuthExpiredException;
     final isCfChallenge = OAuthErrorPolicy.isCfChallenge(error);
+    final nativeUntrusted = OAuthErrorPolicy.isNativeUntrusted(error);
     final errorTitle = isCfChallenge
         ? S.current.error_securityChallenge
         : isExpired
@@ -358,6 +359,15 @@ class CdkBalanceCard extends ConsumerWidget {
                 .refreshAfterCfVerification(),
             isLoading: isBusy,
             filled: filled,
+            openInBrowser: (context) => WebViewPage.open<void>(
+              context,
+              _dashboardUrl,
+              title: 'LINUX DO CDK',
+            ),
+            stillBlocked: () => OAuthErrorPolicy.isCfChallenge(
+              ref.read(cdkUserInfoProvider).error,
+            ),
+            preferBrowser: nativeUntrusted,
           )
         : BalanceCardActionButton(
             outlined: outlined,
@@ -526,7 +536,9 @@ class CdkBalanceCard extends ConsumerWidget {
           const SizedBox(height: 4),
           Text(
             isCfChallenge
-                ? S.current.cf_operationBlockedByChallenge
+                ? (nativeUntrusted
+                      ? S.current.cf_serviceStillBlocked
+                      : S.current.cf_operationBlockedByChallenge)
                 : isExpired
                 ? S.current.cdk_reAuthHint
                 : S.current.common_checkNetworkRetry,
@@ -638,7 +650,9 @@ class CdkBalanceCard extends ConsumerWidget {
                   const SizedBox(height: 4),
                   Text(
                     isCfChallenge
-                        ? S.current.cf_dataBlockedByChallenge
+                        ? (nativeUntrusted
+                              ? S.current.cf_serviceStillBlocked
+                              : S.current.cf_dataBlockedByChallenge)
                         : isExpired
                         ? S.current.cdk_reAuthHint
                         : S.current.common_checkNetworkRetry,

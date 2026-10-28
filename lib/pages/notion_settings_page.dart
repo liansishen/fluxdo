@@ -10,6 +10,7 @@ import '../services/notion/notion_client.dart';
 import '../services/notion/notion_config.dart';
 import '../services/notion/notion_sync_service.dart';
 import '../services/toast_service.dart';
+
 import 'package:m3e_ui/m3e_ui.dart';
 
 /// Notion 同步设置页：分步引导 + 配置编辑。
@@ -17,8 +18,7 @@ class NotionSettingsPage extends ConsumerStatefulWidget {
   const NotionSettingsPage({super.key});
 
   @override
-  ConsumerState<NotionSettingsPage> createState() =>
-      _NotionSettingsPageState();
+  ConsumerState<NotionSettingsPage> createState() => _NotionSettingsPageState();
 }
 
 class _NotionSettingsPageState extends ConsumerState<NotionSettingsPage> {
@@ -103,10 +103,9 @@ class _NotionSettingsPageState extends ConsumerState<NotionSettingsPage> {
       await ref
           .read(notionConfigProvider.notifier)
           .update(
-            ref.read(notionConfigProvider).copyWith(
-              integrationToken: token,
-              databaseId: dbId,
-            ),
+            ref
+                .read(notionConfigProvider)
+                .copyWith(integrationToken: token, databaseId: dbId),
           );
       if (!mounted) return;
       ToastService.showSuccess(S.current.notion_testOk(title));
@@ -145,7 +144,7 @@ class _NotionSettingsPageState extends ConsumerState<NotionSettingsPage> {
       final client = NotionClient(token);
       final created = await client.createDatabaseForExport(
         parentPageId: parentId,
-        title: 'cfluxdo 导出',
+        title: 'CFluxDo 导出',
       );
       final dbId = created['id'] as String?;
       if (dbId == null) throw NotionApiException('No id in response');
@@ -238,16 +237,15 @@ class _NotionSettingsPageState extends ConsumerState<NotionSettingsPage> {
           ],
 
           if (!showSteps) ...[
-            _ConfiguredBanner(
-              onEdit: () => setState(() => _editing = true),
-            ),
+            _ConfiguredBanner(onEdit: () => setState(() => _editing = true)),
           ] else ...[
             // Step 1: Token
             _StepCard(
               index: 1,
               title: context.l10n.notion_step1Title,
               body: context.l10n.notion_step1Body,
-              done: cfg.integrationToken != null &&
+              done:
+                  cfg.integrationToken != null &&
                   cfg.integrationToken!.isNotEmpty,
               children: [
                 const SizedBox(height: 8),
@@ -293,8 +291,7 @@ class _NotionSettingsPageState extends ConsumerState<NotionSettingsPage> {
               index: 2,
               title: context.l10n.notion_step2Title,
               body: context.l10n.notion_step2Body,
-              done:
-                  cfg.databaseId != null && cfg.databaseId!.isNotEmpty,
+              done: cfg.databaseId != null && cfg.databaseId!.isNotEmpty,
               children: [
                 const SizedBox(height: 12),
                 TextField(
@@ -417,9 +414,7 @@ class _NotionSettingsPageState extends ConsumerState<NotionSettingsPage> {
                         items: [
                           M3eButtonGroupItem(
                             value: NotionSyncScope.firstPostOnly,
-                            label: Text(
-                              context.l10n.export_firstPostOnly,
-                            ),
+                            label: Text(context.l10n.export_firstPostOnly),
                           ),
                           M3eButtonGroupItem(
                             value: NotionSyncScope.allPosts,
@@ -536,8 +531,10 @@ class _UpgradeBanner extends StatelessWidget {
               label: Text(context.l10n.notion_upgradeAction),
               style: FilledButton.styleFrom(
                 backgroundColor: accent,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
               ),
             ),
           ),

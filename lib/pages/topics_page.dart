@@ -107,7 +107,9 @@ final fabRefreshModeProvider = StateProvider<bool>((ref) => false);
 bool? fabRefreshModeFromScroll(
   ScrollNotification notification, {
   double topExtent = 0,
+  bool isActive = true,
 }) {
+  if (!isActive) return null;
   final metrics = notification.metrics;
   if (metrics.axis != Axis.vertical) return null;
   final atTop = metrics.pixels <= metrics.minScrollExtent + topExtent + 0.5;
@@ -972,7 +974,9 @@ class _TopicsPageState extends ConsumerState<TopicsPage>
   void _handleTabChange() {
     if (_tabController.indexIsChanging) return;
     if (_currentTabIndex == _tabController.index) return;
-    ref.read(fabRefreshModeProvider.notifier).state = false;
+    // liansishen/fluxdo@223f75af：切分类时恢复创作模式，避免继承上一页的刷新态。
+    if (widget.isActive)
+      ref.read(fabRefreshModeProvider.notifier).state = false;
     setState(() {
       _currentTabIndex = _tabController.index;
     });
@@ -997,17 +1001,31 @@ class _TopicsPageState extends ConsumerState<TopicsPage>
 
   /// 检测 pinnedCategories 变化，重建 TabController
   void _syncTabsIfNeeded(List<int> pinnedIds) {
+    final previousIds = _visiblePinnedIds;
     final desiredLength = 1 + pinnedIds.length;
     _visiblePinnedIds = pinnedIds;
-    if (desiredLength == _tabLength) return;
-
     final oldIndex = _tabController.index;
+    // 跟着正在看的分类走：只是换了顺序（置顶 / 上移 / 拖拽）时，原下标上
+    // 已经是别的分类了，不能把用户正在看的内容换掉
+    final currentId = oldIndex > 0 && oldIndex - 1 < previousIds.length
+        ? previousIds[oldIndex - 1]
+        : null;
+    final followIndex = currentId == null
+        ? -1
+        : pinnedIds.indexOf(currentId) + 1;
+    if (desiredLength == _tabLength &&
+        (followIndex <= 0 || followIndex == oldIndex)) {
+      return;
+    }
+
     _tabController.removeListener(_handleTabChange);
     _tabController.dispose();
     _tabLength = desiredLength;
     _tabController = TabController(length: _tabLength, vsync: this);
     _tabController.addListener(_handleTabChange);
-    _currentTabIndex = oldIndex < _tabLength ? oldIndex : 0;
+    _currentTabIndex = followIndex > 0
+        ? followIndex
+        : (oldIndex < _tabLength ? oldIndex : 0);
     _tabController.index = _currentTabIndex;
   }
 
@@ -1300,7 +1318,8 @@ class _TopicsPageState extends ConsumerState<TopicsPage>
     // 监听滚动到顶部的通知：动画展开头部；列表回顶由 _TopicListState
     // 各自监听同一信号处理（overlay 头部与列表滚动已解耦）
     ref.listen(scrollToTopProvider, (previous, next) {
-      ref.read(fabRefreshModeProvider.notifier).state = false;
+      if (widget.isActive)
+        ref.read(fabRefreshModeProvider.notifier).state = false;
       _headerController.expand();
     });
 
@@ -1874,6 +1893,7 @@ class _TopicsPageState extends ConsumerState<TopicsPage>
     // 顶部判定放宽到头部可折叠段：列表贴顶时位置是折叠锚位，不是 0
     final nextFabMode = fabRefreshModeFromScroll(
       notification,
+      isActive: widget.isActive,
       topExtent: _collapsibleExtentFor(
         _visiblePinnedIds,
         ref.read(tabTagsProvider(_currentCategoryId())),
@@ -2435,20 +2455,36 @@ class _TopEdgeFade extends StatelessWidget {
   final ScrollController scrollController;
   final double topInset;
 
+  /// 纱的位置（头部下缘）与强度（内容顶边越过下缘的深度）。
+  static ({double seam, double cut}) measure(
+    _HeaderCollapseController headerController,
+    ScrollController scrollController,
+    double topInset,
+  ) {
+    final seam = headerController.visibleExtentFor(topInset);
+    final collapsed = topInset - seam;
+    final pixels =
+        scrollController.hasClients && scrollController.positions.length == 1
+        ? scrollController.position.pixels
+        : 0.0;
+    return (seam: seam, cut: ((pixels - collapsed) / 8.0).clamp(0.0, 1.0));
+  }
+
+  /// 多停靠点近似 smoothstep（线性两点在梯度尾部有可感的"边"）：
+  /// 纱在 24px 内由 [cut] 降到 0。
+  static const _veil = [1.0, 0.85, 0.5, 0.15, 0.0];
+
   @override
   Widget build(BuildContext context) {
     final color = Theme.of(context).scaffoldBackgroundColor;
     return ListenableBuilder(
       listenable: Listenable.merge([headerController, scrollController]),
       builder: (context, _) {
-        final seam = headerController.visibleExtentFor(topInset);
-        final collapsed = topInset - seam;
-        final pixels =
-            scrollController.hasClients &&
-                scrollController.positions.length == 1
-            ? scrollController.position.pixels
-            : 0.0;
-        final cut = ((pixels - collapsed) / 8.0).clamp(0.0, 1.0);
+        final (:seam, :cut) = measure(
+          headerController,
+          scrollController,
+          topInset,
+        );
         if (cut <= 0.004) return const SizedBox.shrink();
         return Positioned(
           top: seam,
@@ -2461,20 +2497,68 @@ class _TopEdgeFade extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  // 多停靠点近似 smoothstep（线性两点在梯度尾部有
-                  // 可感的"边"），整体强度随 cut
                   colors: [
-                    color.withValues(alpha: cut),
-                    color.withValues(alpha: 0.85 * cut),
-                    color.withValues(alpha: 0.5 * cut),
-                    color.withValues(alpha: 0.15 * cut),
-                    color.withValues(alpha: 0.0),
+                    for (final v in _veil) color.withValues(alpha: v * cut),
                   ],
                   stops: const [0.0, 0.25, 0.5, 0.75, 1.0],
                 ),
               ),
             ),
           ),
+        );
+      },
+    );
+  }
+}
+
+/// 透明模式（经典风格 + 背景图）的顶部消隐：页面底色是全透明的
+/// `Colors.transparent`（黑色 alpha 0），照 [_TopEdgeFade] 按底色铺纱
+/// 会铺成一条黑带。这里改用遮罩让列表内容自己渐隐成透明，露出底下的
+/// 背景图；位置与强度和 [_TopEdgeFade] 同一口径。遮罩一直挂着（强度 0 时
+/// 全不透明），不随强度增删节点，免得列表被重新挂载丢掉滚动状态。
+class _TopEdgeFadeMask extends StatelessWidget {
+  const _TopEdgeFadeMask({
+    required this.headerController,
+    required this.scrollController,
+    required this.topInset,
+    required this.child,
+  });
+
+  final _HeaderCollapseController headerController;
+  final ScrollController scrollController;
+  final double topInset;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([headerController, scrollController]),
+      child: child,
+      builder: (context, child) {
+        final (:seam, :cut) = _TopEdgeFade.measure(
+          headerController,
+          scrollController,
+          topInset,
+        );
+        return ShaderMask(
+          blendMode: BlendMode.dstIn,
+          shaderCallback: (bounds) {
+            final height = bounds.height <= 0 ? 1.0 : bounds.height;
+            double at(double y) => (y / height).clamp(0.0, 1.0);
+            return LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                for (final v in _TopEdgeFade._veil)
+                  const Color(0xFFFFFFFF).withValues(alpha: 1 - v * cut),
+              ],
+              stops: [
+                for (var i = 0; i < _TopEdgeFade._veil.length; i++)
+                  at(seam + 6.0 * i),
+              ],
+            ).createShader(Offset.zero & bounds.size);
+          },
+          child: child,
         );
       },
     );
@@ -3202,6 +3286,21 @@ class _TopicListState extends ConsumerState<_TopicList>
   /// overlay 头部可折叠段悬浮在列表上方，列表内容顶部让出的恒定 inset
   double get _headerInset => widget.topInset;
 
+  /// 页面底色全透明（经典风格的透明模式，透出背景图）时没法按底色铺纱。
+  static bool _isTransparentPage(BuildContext context) =>
+      Theme.of(context).scaffoldBackgroundColor.a < 0.01;
+
+  /// 透明模式下列表顶部改用遮罩消隐（见 [_TopEdgeFadeMask]）。
+  Widget _withTopEdgeMask(BuildContext context, Widget list) =>
+      VscodeTokens.maybeOf(context) == null && _isTransparentPage(context)
+      ? _TopEdgeFadeMask(
+          headerController: widget.headerController,
+          scrollController: _scrollController,
+          topInset: widget.topInset,
+          child: list,
+        )
+      : list;
+
   void scrollToTop() {
     // 回顶就回到创作模式，不等滚动通知
     if (ref.read(fabRefreshModeProvider)) {
@@ -3448,6 +3547,7 @@ class _TopicListState extends ConsumerState<_TopicList>
             topicId: topic.id,
             initialTitle: topic.title,
             scrollToPostNumber: scrollToPostNumber,
+            expectedHighestPostNumber: topic.highestPostNumber,
           );
       return;
     }
@@ -3458,6 +3558,7 @@ class _TopicListState extends ConsumerState<_TopicList>
           topicId: topic.id,
           initialTitle: topic.title,
           scrollToPostNumber: scrollToPostNumber,
+          expectedHighestPostNumber: topic.highestPostNumber,
           autoSwitchToMasterDetail: true,
         ),
       ),
@@ -3668,239 +3769,249 @@ class _TopicListState extends ConsumerState<_TopicList>
               borderRadius: _topBorderRadius,
               child: Stack(
                 children: [
-                  NotificationListener<Notification>(
-                    onNotification: (notification) {
-                      if (notification is ScrollMetricsNotification &&
-                          notification.depth == 0) {
-                        _scheduleViewportFill();
-                      }
-                      if (notification is ScrollUpdateNotification &&
-                          notification.depth == 0) {
-                        final distance =
-                            notification.metrics.maxScrollExtent -
-                            notification.metrics.pixels;
-                        if (_loadMoreCoordinator.shouldTriggerForDistance(
-                          distance,
-                        )) {
-                          _triggerLoadMore(providerKey);
+                  _withTopEdgeMask(
+                    context,
+                    NotificationListener<Notification>(
+                      onNotification: (notification) {
+                        if (notification is ScrollMetricsNotification &&
+                            notification.depth == 0) {
+                          _scheduleViewportFill();
                         }
-                      }
-                      return false;
-                    },
-                    child: CustomScrollView(
-                      controller: _scrollController,
-                      // 顶带吸附下沉在弹道层（继承惯性速度的弹簧 + 起手
-                      // 分治迟滞，见 _TopSnapScrollPhysics）
-                      physics: VscodeTokens.maybeOf(context) != null
-                          ? const AlwaysScrollableScrollPhysics()
-                          : _TopSnapScrollPhysics(
-                              controller: widget.headerController,
-                              parent: const AlwaysScrollableScrollPhysics(),
+                        if (notification is ScrollUpdateNotification &&
+                            notification.depth == 0) {
+                          final distance =
+                              notification.metrics.maxScrollExtent -
+                              notification.metrics.pixels;
+                          if (_loadMoreCoordinator.shouldTriggerForDistance(
+                            distance,
+                          )) {
+                            _triggerLoadMore(providerKey);
+                          }
+                        }
+                        return false;
+                      },
+                      child: CustomScrollView(
+                        controller: _scrollController,
+                        // 顶带吸附下沉在弹道层（继承惯性速度的弹簧 + 起手
+                        // 分治迟滞，见 _TopSnapScrollPhysics）
+                        physics: VscodeTokens.maybeOf(context) != null
+                            ? const AlwaysScrollableScrollPhysics()
+                            : _TopSnapScrollPhysics(
+                                controller: widget.headerController,
+                                parent: const AlwaysScrollableScrollPhysics(),
+                              ),
+                        slivers: [
+                          SliverPadding(
+                            // 底部让出 extendBody 注入的底栏高度（底栏滑出式后
+                            // 内容延伸到底栏后面）
+                            padding: EdgeInsets.only(
+                              top:
+                                  _headerInset +
+                                  (VscodeTokens.maybeOf(context) != null
+                                      ? 0
+                                      : 8),
+                              bottom: 12 + MediaQuery.paddingOf(context).bottom,
                             ),
-                      slivers: [
-                        SliverPadding(
-                          // 底部让出 extendBody 注入的底栏高度（底栏滑出式后
-                          // 内容延伸到底栏后面）
-                          padding: EdgeInsets.only(
-                            top:
-                                _headerInset +
-                                (VscodeTokens.maybeOf(context) != null ? 0 : 8),
-                            bottom: 12 + MediaQuery.paddingOf(context).bottom,
-                          ),
-                          sliver: SliverList.builder(
-                            itemCount: topics.length + headerOffset + 1,
-                            // 卡片无 keepalive 需求(无视频/表单/KeepAliveNotification
-                            // 使用者),默认的 AutomaticKeepAlive+_SelectionKeepAlive
-                            // 两层 State 对快滚单卡首建是纯税,关掉
-                            addAutomaticKeepAlives: false,
-                            // keyed reconcile:pill 出现/新话题插入/全量替换导致
-                            // index 平移时,已有行的 Element/RenderObject 按 key
-                            // 迁移,而不是按 index 复用"换脸"(无 key 时视口内
-                            // 每行会瞬间变成相邻一条的内容)。迁移残留的布局
-                            // 位移由列表尾部的 AnchorGuardSliver 同帧修正。
-                            findChildIndexCallback: (key) {
-                              if (key is! ValueKey<String>) return null;
-                              final value = key.value;
-                              if (value == _pillKeyValue) {
-                                return hasNewTopics ? 0 : null;
-                              }
-                              if (value == _filterHintKeyValue) {
-                                return hintOffset > 0 ? newTopicOffset : null;
-                              }
-                              if (value == _footerKeyValue) {
-                                return topics.length + headerOffset;
-                              }
-                              if (value.startsWith('topic-')) {
-                                final id = int.tryParse(value.substring(6));
-                                final topicIndex = id == null
-                                    ? null
-                                    : idToIndex[id];
-                                if (topicIndex != null) {
-                                  return topicIndex + headerOffset;
+                            sliver: SliverList.builder(
+                              itemCount: topics.length + headerOffset + 1,
+                              // 卡片无 keepalive 需求(无视频/表单/KeepAliveNotification
+                              // 使用者),默认的 AutomaticKeepAlive+_SelectionKeepAlive
+                              // 两层 State 对快滚单卡首建是纯税,关掉
+                              addAutomaticKeepAlives: false,
+                              // keyed reconcile:pill 出现/新话题插入/全量替换导致
+                              // index 平移时,已有行的 Element/RenderObject 按 key
+                              // 迁移,而不是按 index 复用"换脸"(无 key 时视口内
+                              // 每行会瞬间变成相邻一条的内容)。迁移残留的布局
+                              // 位移由列表尾部的 AnchorGuardSliver 同帧修正。
+                              findChildIndexCallback: (key) {
+                                if (key is! ValueKey<String>) return null;
+                                final value = key.value;
+                                if (value == _pillKeyValue) {
+                                  return hasNewTopics ? 0 : null;
                                 }
-                              }
-                              return null;
-                            },
-                            itemBuilder: (context, index) {
-                              if (hasNewTopics && index == 0) {
-                                FrameJankMonitor.noteBuild('home:pill');
-                                return KeyedSubtree(
-                                  key: const ValueKey(_pillKeyValue),
-                                  child: _buildNewTopicIndicator(
-                                    context,
-                                    newTopicCount,
-                                    providerKey,
-                                  ),
-                                );
-                              }
-                              if (hintOffset > 0 && index == newTopicOffset) {
-                                return KeyedSubtree(
-                                  key: const ValueKey(_filterHintKeyValue),
-                                  child: KeywordFilterHintBar(
-                                    hiddenCount: hiddenCount,
-                                    hiddenByBlocked: hiddenByBlocked,
-                                  ),
-                                );
-                              }
-                              final topicIndex = index - headerOffset;
-                              if (topicIndex >= topics.length) {
-                                final notifier = ref.watch(
-                                  topicListProvider(providerKey).notifier,
-                                );
-                                return KeyedSubtree(
-                                  key: const ValueKey(_footerKeyValue),
-                                  child: PagedListFooter(
-                                    hasMore: notifier.hasMore,
-                                    isLoadingMore: notifier.isLoadingMore,
-                                    isLoadMoreFailed: notifier.isLoadMoreFailed,
-                                    onRetry: () async {
-                                      _loadMoreCoordinator.resetCooldown();
-                                      await notifier.retryLoadMore();
-                                      _scheduleViewportFill();
-                                    },
-                                  ),
-                                );
-                              }
-
-                              final topic = topics[topicIndex];
-                              final rowKey = ValueKey('topic-${topic.id}');
-                              final shouldHighlight = _highlightedTopicIds
-                                  .contains(topic.id);
-
-                              if (shouldHighlight) {
-                                final theme = Theme.of(context);
-                                // 卡片正常背景色（需与 TopicCard / CompactTopicCard 的默认 color 一致）
-                                final normalColor = topic.pinned
-                                    ? theme.colorScheme.surfaceContainerLow
-                                          .withValues(alpha: 0.5)
-                                    : theme.cardTheme.color ??
-                                          theme
-                                              .colorScheme
-                                              .surfaceContainerHighest;
-                                final highlightColor = theme
-                                    .colorScheme
-                                    .primaryContainer
-                                    .withValues(alpha: 0.3);
-                                return KeyedSubtree(
-                                  key: rowKey,
-                                  child: TweenAnimationBuilder<Color?>(
-                                    tween: ColorTween(
-                                      begin: highlightColor,
-                                      end: normalColor,
+                                if (value == _filterHintKeyValue) {
+                                  return hintOffset > 0 ? newTopicOffset : null;
+                                }
+                                if (value == _footerKeyValue) {
+                                  return topics.length + headerOffset;
+                                }
+                                if (value.startsWith('topic-')) {
+                                  final id = int.tryParse(value.substring(6));
+                                  final topicIndex = id == null
+                                      ? null
+                                      : idToIndex[id];
+                                  if (topicIndex != null) {
+                                    return topicIndex + headerOffset;
+                                  }
+                                }
+                                return null;
+                              },
+                              itemBuilder: (context, index) {
+                                if (hasNewTopics && index == 0) {
+                                  FrameJankMonitor.noteBuild('home:pill');
+                                  return KeyedSubtree(
+                                    key: const ValueKey(_pillKeyValue),
+                                    child: _buildNewTopicIndicator(
+                                      context,
+                                      newTopicCount,
+                                      providerKey,
                                     ),
-                                    duration: const Duration(
-                                      milliseconds: 2000,
+                                  );
+                                }
+                                if (hintOffset > 0 && index == newTopicOffset) {
+                                  return KeyedSubtree(
+                                    key: const ValueKey(_filterHintKeyValue),
+                                    child: KeywordFilterHintBar(
+                                      hiddenCount: hiddenCount,
+                                      hiddenByBlocked: hiddenByBlocked,
                                     ),
-                                    curve: const Interval(
-                                      0.2,
-                                      1.0,
-                                      curve: Curves.easeOut,
+                                  );
+                                }
+                                final topicIndex = index - headerOffset;
+                                if (topicIndex >= topics.length) {
+                                  final notifier = ref.watch(
+                                    topicListProvider(providerKey).notifier,
+                                  );
+                                  return KeyedSubtree(
+                                    key: const ValueKey(_footerKeyValue),
+                                    child: PagedListFooter(
+                                      hasMore: notifier.hasMore,
+                                      isLoadingMore: notifier.isLoadingMore,
+                                      isLoadMoreFailed:
+                                          notifier.isLoadMoreFailed,
+                                      onRetry: () async {
+                                        _loadMoreCoordinator.resetCooldown();
+                                        await notifier.retryLoadMore();
+                                        _scheduleViewportFill();
+                                      },
                                     ),
-                                    onEnd: () =>
-                                        _highlightedTopicIds.remove(topic.id),
-                                    builder: (context, color, _) {
-                                      return buildTopicItem(
-                                        context: context,
-                                        topic: topic,
-                                        isSelected: topic.id == selectedTopicId,
-                                        onTap: () {
-                                          _syncKeyboardFocusToTopicId(topic.id);
-                                          _openTopic(topic);
-                                        },
-                                        enableLongPress: enableLongPress,
-                                        highlightColor: color,
-                                        categoryMap: widget.categoryMap,
-                                        statsAvailableWidth:
-                                            statsAvailableWidth,
-                                      );
-                                    },
-                                  ),
-                                );
-                              }
+                                  );
+                                }
 
-                              final signature = (
-                                topic: topic,
-                                isSelected: topic.id == selectedTopicId,
-                                enableLongPress: enableLongPress,
-                                category: _categorySignatureFor(topic),
-                                statsWidthTier: statsWidthTier,
-                                cardStyle: topicCardStyle,
-                                // 主题恒等进签名:自绘卡的文字颜色在排版期
-                                // 烤死,obtain 发生在缓存短路点之外 —— 不换
-                                // 代则深浅色切换后旧排版继续画(底色由
-                                // PaintedTopicCard 自身 Theme 依赖刷新,文字
-                                // 停留旧主题)。didChangeDependencies 清缓存
-                                // 兜不住:State 自身 context 未注册 Theme 依赖
-                                themeId: identityHashCode(Theme.of(context)),
-                              );
-                              final cached = _topicItemCache[topic.id];
-                              if (cached != null &&
-                                  cached.signature == signature) {
-                                // Map 保持插入顺序，命中后移到尾部作为轻量 LRU。
-                                _topicItemCache.remove(topic.id);
-                                _topicItemCache[topic.id] = cached;
-                                return KeyedSubtree(
-                                  key: rowKey,
-                                  child: cached.widget,
+                                final topic = topics[topicIndex];
+                                final rowKey = ValueKey('topic-${topic.id}');
+                                final shouldHighlight = _highlightedTopicIds
+                                    .contains(topic.id);
+
+                                if (shouldHighlight) {
+                                  final theme = Theme.of(context);
+                                  // 卡片正常背景色（需与 TopicCard / CompactTopicCard 的默认 color 一致）
+                                  final normalColor = topic.pinned
+                                      ? theme.colorScheme.surfaceContainerLow
+                                            .withValues(alpha: 0.5)
+                                      : theme.cardTheme.color ??
+                                            theme
+                                                .colorScheme
+                                                .surfaceContainerHighest;
+                                  final highlightColor = theme
+                                      .colorScheme
+                                      .primaryContainer
+                                      .withValues(alpha: 0.3);
+                                  return KeyedSubtree(
+                                    key: rowKey,
+                                    child: TweenAnimationBuilder<Color?>(
+                                      tween: ColorTween(
+                                        begin: highlightColor,
+                                        end: normalColor,
+                                      ),
+                                      duration: const Duration(
+                                        milliseconds: 2000,
+                                      ),
+                                      curve: const Interval(
+                                        0.2,
+                                        1.0,
+                                        curve: Curves.easeOut,
+                                      ),
+                                      onEnd: () =>
+                                          _highlightedTopicIds.remove(topic.id),
+                                      builder: (context, color, _) {
+                                        return buildTopicItem(
+                                          context: context,
+                                          topic: topic,
+                                          isSelected:
+                                              topic.id == selectedTopicId,
+                                          onTap: () {
+                                            _syncKeyboardFocusToTopicId(
+                                              topic.id,
+                                            );
+                                            _openTopic(topic);
+                                          },
+                                          enableLongPress: enableLongPress,
+                                          highlightColor: color,
+                                          categoryMap: widget.categoryMap,
+                                          statsAvailableWidth:
+                                              statsAvailableWidth,
+                                        );
+                                      },
+                                    ),
+                                  );
+                                }
+
+                                final signature = (
+                                  topic: topic,
+                                  isSelected: topic.id == selectedTopicId,
+                                  enableLongPress: enableLongPress,
+                                  category: _categorySignatureFor(topic),
+                                  statsWidthTier: statsWidthTier,
+                                  cardStyle: topicCardStyle,
+                                  // 主题恒等进签名:自绘卡的文字颜色在排版期
+                                  // 烤死,obtain 发生在缓存短路点之外 —— 不换
+                                  // 代则深浅色切换后旧排版继续画(底色由
+                                  // PaintedTopicCard 自身 Theme 依赖刷新,文字
+                                  // 停留旧主题)。didChangeDependencies 清缓存
+                                  // 兜不住:State 自身 context 未注册 Theme 依赖
+                                  themeId: identityHashCode(Theme.of(context)),
                                 );
-                              }
-                              final item = buildTopicItem(
-                                context: context,
-                                topic: topic,
-                                isSelected: topic.id == selectedTopicId,
-                                onTap: () {
-                                  _syncKeyboardFocusToTopicId(topic.id);
-                                  _openTopic(topic);
-                                },
-                                enableLongPress: enableLongPress,
-                                categoryMap: widget.categoryMap,
-                                statsAvailableWidth: statsAvailableWidth,
-                              );
-                              _topicItemCache[topic.id] = (
-                                signature: signature,
-                                widget: item,
-                              );
-                              while (_topicItemCache.length >
-                                  _topicItemCacheCapacity) {
-                                _topicItemCache.remove(
-                                  _topicItemCache.keys.first,
+                                final cached = _topicItemCache[topic.id];
+                                if (cached != null &&
+                                    cached.signature == signature) {
+                                  // Map 保持插入顺序，命中后移到尾部作为轻量 LRU。
+                                  _topicItemCache.remove(topic.id);
+                                  _topicItemCache[topic.id] = cached;
+                                  return KeyedSubtree(
+                                    key: rowKey,
+                                    child: cached.widget,
+                                  );
+                                }
+                                final item = buildTopicItem(
+                                  context: context,
+                                  topic: topic,
+                                  isSelected: topic.id == selectedTopicId,
+                                  onTap: () {
+                                    _syncKeyboardFocusToTopicId(topic.id);
+                                    _openTopic(topic);
+                                  },
+                                  enableLongPress: enableLongPress,
+                                  categoryMap: widget.categoryMap,
+                                  statsAvailableWidth: statsAvailableWidth,
                                 );
-                              }
-                              return KeyedSubtree(key: rowKey, child: item);
-                            },
+                                _topicItemCache[topic.id] = (
+                                  signature: signature,
+                                  widget: item,
+                                );
+                                while (_topicItemCache.length >
+                                    _topicItemCacheCapacity) {
+                                  _topicItemCache.remove(
+                                    _topicItemCache.keys.first,
+                                  );
+                                }
+                                return KeyedSubtree(key: rowKey, child: item);
+                              },
+                            ),
                           ),
-                        ),
-                        // 滚动锚定哨兵:keyed 迁移会把"index 格子的旧账"分给新
-                        // 住户(framework 按 index 搬 layoutOffset),整窗因此
-                        // 平移约一行高 —— 在这里被同帧修正;贴顶时哨兵自带
-                        // 顶部抑制,pill/新话题自然推入视野(浏览器同款语义)。
-                        const AnchorGuardSliver(),
-                      ],
+                          // 滚动锚定哨兵:keyed 迁移会把"index 格子的旧账"分给新
+                          // 住户(framework 按 index 搬 layoutOffset),整窗因此
+                          // 平移约一行高 —— 在这里被同帧修正;贴顶时哨兵自带
+                          // 顶部抑制,pill/新话题自然推入视野(浏览器同款语义)。
+                          const AnchorGuardSliver(),
+                        ],
+                      ),
                     ),
                   ),
                   // 顶部消隐纱：钉在头部下缘，内容被裁切时 bg→透明
                   // 消散（在 ClipRRect 内 = 随本 tab 横滑一起走）
-                  if (VscodeTokens.maybeOf(context) == null)
+                  if (VscodeTokens.maybeOf(context) == null &&
+                      !_isTransparentPage(context))
                     _TopEdgeFade(
                       headerController: widget.headerController,
                       scrollController: _scrollController,
@@ -3964,8 +4075,9 @@ class _TopicListState extends ConsumerState<_TopicList>
   /// 把攒着的新话题插到列表顶部、短暂高亮并回到顶部（点提示条与自动载入共用）
   Future<void> _loadTopicUpdatesInto(int? providerKey) async {
     final insertedIds = await loadTopicUpdates(
-      (ids) =>
-          ref.read(topicListProvider(providerKey).notifier).loadBefore(ids),
+      (ids, prefetched) => ref
+          .read(topicListProvider(providerKey).notifier)
+          .loadBefore(ids, prefetched: prefetched),
     );
     if (!mounted || insertedIds.isEmpty) return;
     setState(() => _highlightedTopicIds.addAll(insertedIds));
@@ -3987,4 +4099,12 @@ class _TopicListState extends ConsumerState<_TopicList>
 
   @override
   Future<void> applyTopicUpdates() => _loadTopicUpdatesInto(widget.categoryId);
+
+  @override
+  Future<TopicListResponse> requestTopicUpdates(
+    List<int> ids, {
+    bool background = false,
+  }) => ref
+      .read(topicListProvider(widget.categoryId).notifier)
+      .fetchTopicUpdates(ids, background: background);
 }

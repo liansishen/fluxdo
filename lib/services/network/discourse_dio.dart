@@ -80,6 +80,16 @@ enum DiscourseDioKind {
     recovery: false,
     cfRecovery: false,
     networkLog: true,
+  ),
+
+  /// 第三方站接口（LD士多等）：不占论坛的并发/速率配额，不过盾（验证页
+  /// 只服务论坛本站，第三方站撞盾弹它没有意义），保留瞬态重试与日志。
+  external(
+    scheduled: false,
+    freezeDuringCfVerification: false,
+    recovery: true,
+    cfRecovery: false,
+    networkLog: true,
   );
 
   const DiscourseDioKind({
@@ -88,10 +98,7 @@ enum DiscourseDioKind {
     required this.recovery,
     required this.cfRecovery,
     required this.networkLog,
-  }) : assert(
-         !freezeDuringCfVerification || scheduled,
-         '验证期冻结由调度器执行，必须同时启用调度',
-       );
+  }) : assert(!freezeDuringCfVerification || scheduled, '验证期冻结由调度器执行，必须同时启用调度');
 
   /// 并发 + 滑动窗口速率调度（参数从 RequestSchedulerConfig 动态读取）。
   final bool scheduled;
@@ -145,21 +152,29 @@ class DiscourseDio {
     configurePlatformAdapter(dio);
 
     // 论坛引擎只服务一个站点，另一站（含子域）不能进入会话拦截器链。
-    dio.interceptors.add(InterceptorsWrapper(onRequest: (options, handler) {
-      final host = options.uri.host.toLowerCase();
-      final otherSite = ForumSite.values.any((site) =>
-          site != SiteContext.current &&
-          (host == site.host || host.endsWith('.${site.host}')));
-      if (otherSite) {
-        handler.reject(DioException(
-          requestOptions: options,
-          type: DioExceptionType.cancel,
-          message: '跨站请求须先切换到对应站点',
-        ));
-        return;
-      }
-      handler.next(options);
-    }));
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          final host = options.uri.host.toLowerCase();
+          final otherSite = ForumSite.values.any(
+            (site) =>
+                site != SiteContext.current &&
+                (host == site.host || host.endsWith('.${site.host}')),
+          );
+          if (otherSite) {
+            handler.reject(
+              DioException(
+                requestOptions: options,
+                type: DioExceptionType.cancel,
+                message: '跨站请求须先切换到对应站点',
+              ),
+            );
+            return;
+          }
+          handler.next(options);
+        },
+      ),
+    );
 
     // 2. 会话代守卫（最先执行，确保过期请求不进入后续拦截器）
     dio.interceptors.add(SessionGuardInterceptor());

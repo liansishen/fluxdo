@@ -26,15 +26,17 @@ class _Discourse extends Fake implements DiscourseService {
   final pending = <int, Completer<String?>>{};
 
   @override
-  Future<String?> getTopicFirstPostCooked(int id) {
+  Future<String?> getTopicFirstPostCooked(int id, {bool background = false}) {
     return (pending[id] = Completer<String?>()).future;
   }
 }
 
 class _CompletedDiscourse extends Fake implements DiscourseService {
   @override
-  Future<String?> getTopicFirstPostCooked(int id) async =>
-      '<p>缓存正文</p><img src="/uploads/cached.jpg">';
+  Future<String?> getTopicFirstPostCooked(
+    int id, {
+    bool background = false,
+  }) async => '<p>缓存正文</p><img src="/uploads/cached.jpg">';
 }
 
 Topic _topic(int id, {String? excerpt, String? imageUrl}) => Topic(

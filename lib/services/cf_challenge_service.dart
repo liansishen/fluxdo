@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:collection' show UnmodifiableListView;
 import 'dart:io' as io;
 import 'dart:math' as math;
@@ -15,8 +16,11 @@ import 'local_notification_service.dart'; // 用于获取全局 navigatorKey
 import 'cf_challenge_logger.dart';
 import 'cf_clearance_authority.dart';
 import 'cf_clearance_refresh_service.dart';
-import 'cf_verification_round.dart';
+import 'network/cf/turnstile_configuration.dart';
+import 'network/cf/cf_verification_target.dart';
+import 'preloaded_data_service.dart';
 import 'site_context.dart';
+import 'cf_verification_round.dart';
 import 'embedded_browser_controller_pool.dart';
 import 'toast_service.dart';
 import 'webview_settings.dart';
@@ -382,10 +386,7 @@ class CfChallengeService {
   /// 检测页面 HTML 中是否有活跃的 CF 验证盾
   /// 用于判断已加载的页面是否仍在展示验证挑战
   static bool hasActiveCfChallenge(String html) {
-    return html.contains('cf-turnstile') ||
-        html.contains('challenge-running') ||
-        html.contains('challenge-stage') ||
-        html.contains('cf_chl_opt');
+    return CfVerificationTarget.hasActiveChallenge(html);
   }
 
   /// 检测页面 HTML 是否是源站返回的 404 / 非挑战内容
@@ -462,9 +463,8 @@ class CfChallengeService {
     return showManualVerify(context, forceForeground);
   }
 
-  static String get _verifyUrl => Uri.parse(
-    AppConstants.baseUrl,
-  ).resolve(SiteContext.current.cfVerificationPath).toString();
+  static String get _verifyUrl =>
+      SiteContext.current.cfVerificationUri.toString();
 
   /// 每一轮验证页的展示状态（overlay、页面 key、收尾动作）。
   final Map<int, _VerifyPresentation> _presentations = {};
@@ -684,6 +684,8 @@ class CfChallengeService {
       builder: (context) => CfChallengePage(
         key: pageKey,
         verifyUrl: _verifyUrl,
+        fallbackVerifyUrl: SiteContext.current.cfVerificationFallbackUri
+            ?.toString(),
         signals: round,
         startInBackground: !forceForeground,
         foregroundAfter: forceForeground ? null : foregroundAfter,
@@ -723,6 +725,52 @@ class CfChallengeService {
   /// 验证页的 WebView 控制器（Windows 落值要经它走 CDP 读实时 cookie）。
   InAppWebViewController? _pageControllerFor(CfVerificationRound round) =>
       _presentations[round.id]?.pageKey.currentState?._controller;
+
+  /// 回首页取快照的总时限（含导航）。只在启动预加载还在等首页时才花。
+  static const _homeSnapshotTimeout = Duration(seconds: 6);
+
+  /// 定稿值进 jar 后：启动预加载还没拿到首页（首页请求撞盾正等这一轮），
+  /// 让验证页回到本站首页，把预加载快照交给它。验证页能打开首页，说明
+  /// 浏览器这条链路已被放行；原生重放即使仍被拦，启动也不必再撞一次盾。
+  Future<void> _handOverHomeSnapshot(CfVerificationRound round) async {
+    final preload = PreloadedDataService();
+    if (preload.isLoaded) return;
+    final page = _presentations[round.id]?.pageKey.currentState;
+    if (page == null || !page.mounted) return;
+    final harvest = await page._harvestHomeSnapshot(_homeSnapshotTimeout);
+    final snapshot = harvest.snapshot;
+    var hydrated = false;
+    if (snapshot != null && !preload.isLoaded) {
+      hydrated = await preload.hydrateFromHtml(snapshot, allowAnonymous: true);
+    }
+    CfChallengeLogger.log(
+      '[ROUND ${round.id}] home snapshot after landing: '
+      'hydrated=$hydrated navigated=${harvest.navigated} '
+      'elapsed=${harvest.elapsed.inMilliseconds}ms'
+      '${snapshot == null ? ' state=${harvest.state}' : ''}',
+      level: hydrated ? 'info' : 'warning',
+    );
+  }
+}
+
+/// 验证页回首页取快照的结果。
+class _HomeSnapshotHarvest {
+  const _HomeSnapshotHarvest({
+    this.snapshot,
+    this.state,
+    this.navigated = false,
+    this.elapsed = Duration.zero,
+  });
+
+  /// 预加载快照（取不到为 null）。
+  final String? snapshot;
+
+  /// 取不到时页面的样子（诊断用）。
+  final Object? state;
+
+  /// 是否为此另行导航过。
+  final bool navigated;
+  final Duration elapsed;
 }
 
 /// 解析出的前台 UI。
@@ -868,6 +916,10 @@ class _ServiceRoundEnvironment implements CfRoundEnvironment {
   }
 
   @override
+  Future<void> afterLanded(CfVerificationRound round, String value) =>
+      _service._handOverHomeSnapshot(round);
+
+  @override
   void onPassed(CfVerificationRound round, String value) {
     // 广播:一次 CF 挑战被成功解决,定稿 cf_clearance 已落 jar。
     _service.clearanceResolvedAt.value = DateTime.now();
@@ -898,6 +950,7 @@ class CfChallengePage extends StatefulWidget {
   const CfChallengePage({
     super.key,
     required this.verifyUrl,
+    this.fallbackVerifyUrl,
     required this.signals,
     this.startInBackground = false,
     this.foregroundAfter,
@@ -906,6 +959,7 @@ class CfChallengePage extends StatefulWidget {
   });
 
   final String verifyUrl;
+  final String? fallbackVerifyUrl;
 
   /// 先后台尝试验证，超时后再切到前台
   final bool startInBackground;
@@ -929,6 +983,8 @@ class CfChallengePage extends StatefulWidget {
 
 class _CfChallengePageState extends State<CfChallengePage> {
   InAppWebViewController? _controller;
+  late final CfVerificationTarget _target;
+  int _originProbeSerial = 0;
   final _webViewKey = GlobalKey();
   bool _isLoading = true;
   double _progress = 0;
@@ -956,6 +1012,17 @@ class _CfChallengePageState extends State<CfChallengePage> {
   Timer? _noChallengeCheckTimer;
   Timer? _loadStopFallbackTimer;
   Timer? _pageReadyFallbackTimer;
+  Timer? _sitekeyDiscoveryTimer;
+
+  /// 站点自己的 Turnstile（预授权）在本页的辅助状态，见 [_injectPreclearanceAssist]。
+  _PreclearanceAssist _preclearance = _PreclearanceAssist.none;
+
+  /// 本页已注入辅助的次数（挑战页重载会重来，最多 [_maxPreclearanceInjections] 次）。
+  int _preclearanceInjections = 0;
+  static const _maxPreclearanceInjections = 2;
+
+  /// 辅助还在跑时，后台静默预算多给这么久再弹到前台。
+  static const _preclearanceGraceExtension = 8;
 
   /// 后台验证的「正在自动验证」胶囊是否已露出。多数非交互挑战一两秒就过，
   /// 这时不打扰用户；过了 [_backgroundPillDelay] 还在验证才显示。
@@ -975,12 +1042,19 @@ class _CfChallengePageState extends State<CfChallengePage> {
   final Set<String> _initialCfClearances = {};
 
   int get _activeMaxCheckCount => _isBackground
-      ? (widget.foregroundAfter?.inSeconds ?? _backgroundMaxCheckCount)
+      ? (widget.foregroundAfter?.inSeconds ?? _backgroundMaxCheckCount) +
+            (_preclearance.running ? _preclearanceGraceExtension : 0)
       : _foregroundMaxCheckCount;
 
   @override
   void initState() {
     super.initState();
+    _target = CfVerificationTarget(
+      primary: Uri.parse(widget.verifyUrl),
+      fallback: widget.fallbackVerifyUrl == null
+          ? null
+          : Uri.parse(widget.fallbackVerifyUrl!),
+    );
     _isBackground = widget.startInBackground;
     if (_isBackground) {
       _pillDelayTimer = Timer(_backgroundPillDelay, () {
@@ -1047,6 +1121,7 @@ class _CfChallengePageState extends State<CfChallengePage> {
     _noChallengeCheckTimer?.cancel();
     _loadStopFallbackTimer?.cancel();
     _pageReadyFallbackTimer?.cancel();
+    _sitekeyDiscoveryTimer?.cancel();
     // InAppWebView 自身会随 Widget 销毁平台 Controller；这里再次手动
     // dispose 会让 Windows 插件对同一个原生对象执行双重释放。
     _controller = null;
@@ -1130,6 +1205,99 @@ class _CfChallengePageState extends State<CfChallengePage> {
     _revealStateWatchGeneration++;
     debugPrint('[CfChallenge] $reason，交给验证轮次定稿');
     if (mounted) setState(() {});
+  }
+
+  /// 定稿值进 jar 后回到本站首页取预加载快照（页面已被「正在完成验证」
+  /// 盖住，用户看不到这次导航）。
+  ///
+  /// 首页入口（IDC Flare）过盾后 CF 会自己重新载入首页，先等它；停在别处
+  /// （LINUX DO 的 `/challenge` 落到源站 404）或等了一会儿仍没有首页数据，
+  /// 就主动导航一次。取到快照即停止加载，不跑站点脚本。
+  ///
+  /// 每次调用 WebView 都有时限：加载中 evaluateJavascript 可能挂住到新文档
+  /// 就绪（2026-10-26 慢出口实测一次挂了 20 多秒，整体超时形同虚设）。
+  /// 首页本身又露出挑战就提前放弃，交回原生重放。
+  Future<_HomeSnapshotHarvest> _harvestHomeSnapshot(Duration timeout) async {
+    final controller = _controller;
+    if (controller == null || !mounted || _hasPopped) {
+      return const _HomeSnapshotHarvest();
+    }
+    _handOff('定稿后回首页取预加载快照');
+    final stopwatch = Stopwatch()..start();
+    const settleAtHome = Duration(seconds: 2);
+    const callTimeout = Duration(seconds: 2);
+    const challengeGrace = Duration(seconds: 3);
+    Duration? navigatedAt;
+    String? snapshot;
+    Object? state;
+
+    Future<T?> call<T>(Future<T> Function() action) async {
+      try {
+        return await action().timeout(callTimeout);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    Future<String?> capture() async {
+      final raw = await call(
+        () => controller.evaluateJavascript(
+          source: PreloadedDataService.snapshotOnceScript,
+        ),
+      );
+      final text = raw?.toString();
+      return text != null && text.isNotEmpty && text != 'null' ? text : null;
+    }
+
+    while (mounted && !_hasPopped && stopwatch.elapsed < timeout) {
+      snapshot = await capture();
+      if (snapshot != null) break;
+      final current = await call(controller.getUrl);
+      final actual = Uri.tryParse(current?.toString() ?? '');
+      final atHome = actual != null && _target.isHome(actual);
+      if (navigatedAt == null) {
+        if (!atHome || stopwatch.elapsed >= settleAtHome) {
+          navigatedAt = stopwatch.elapsed;
+          await call(
+            () => controller.loadUrl(
+              urlRequest: URLRequest(url: WebUri(_target.home.toString())),
+            ),
+          );
+        }
+      } else if (atHome && stopwatch.elapsed - navigatedAt >= challengeGrace) {
+        final page = await call(
+          () => controller.evaluateJavascript(
+            source: PreloadedDataService.snapshotStateScript,
+          ),
+        );
+        if (page is Map && page['challenge'] == true) {
+          state = page;
+          break;
+        }
+      }
+      if (!mounted || _hasPopped) break;
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    if (snapshot == null && state == null && mounted && !_hasPopped) {
+      // 循环可能因某次调用耗时而越过时限：退出前再取一次
+      snapshot = await capture();
+    }
+    if (snapshot != null) {
+      await call(controller.stopLoading);
+    } else if (state == null && mounted && !_hasPopped) {
+      final page = await call<dynamic>(
+        () => controller.evaluateJavascript(
+          source: PreloadedDataService.snapshotStateScript,
+        ),
+      );
+      state = page ?? 'unavailable';
+    }
+    return _HomeSnapshotHarvest(
+      snapshot: snapshot,
+      state: state,
+      navigated: navigatedAt != null,
+      elapsed: stopwatch.elapsed,
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -1552,6 +1720,7 @@ class _CfChallengePageState extends State<CfChallengePage> {
     if (_checkingOriginFallback) return;
 
     _checkingOriginFallback = true;
+    final probeSerial = ++_originProbeSerial;
     final isCompletionProbe = completionLikely || _hasSeenChallenge;
     // 取消其余探测路径：状态已经收敛到 fallback，避免重复 evaluateJavascript
     _challengeRevealProbeGeneration++;
@@ -1567,9 +1736,17 @@ class _CfChallengePageState extends State<CfChallengePage> {
           (isCompletionProbe
               ? _completionProbeTimeout
               : _noChallengeProbeTimeout)) {
-        if (_hasPopped || _handedOff) return;
+        if (_hasPopped || _handedOff || probeSerial != _originProbeSerial) {
+          return;
+        }
         if (!isCompletionProbe && generation != _loadGeneration) return;
         final cookieValue = await _readCookieValue('cf_clearance');
+        if (!mounted ||
+            _hasPopped ||
+            _handedOff ||
+            probeSerial != _originProbeSerial) {
+          return;
+        }
         if (_isFreshClearance(cookieValue)) {
           debugPrint(
             '[CfChallenge] fallback/completion 期间检测到新 cf_clearance，交给轮次定稿',
@@ -1596,6 +1773,16 @@ class _CfChallengePageState extends State<CfChallengePage> {
 
       // 轮次已在定稿别处读到的新值：等它收口，不放弃也不提示重试
       if (widget.signals.isSettling) return;
+      if (await _tryAlternateVerificationTarget(generation, probeSerial)) {
+        return;
+      }
+      if (!mounted ||
+          _hasPopped ||
+          _handedOff ||
+          probeSerial != _originProbeSerial ||
+          widget.signals.isSettling) {
+        return;
+      }
       debugPrint('[CfChallenge] fallback/completion 结束仍无新 cf_clearance');
       CfChallengeLogger.log(
         '[VERIFY] No fresh cf_clearance after completion probe: '
@@ -1620,13 +1807,72 @@ class _CfChallengePageState extends State<CfChallengePage> {
     } catch (e) {
       debugPrint('[CfChallenge] 处理 fallback 异常: $e');
     } finally {
-      _checkingOriginFallback = false;
-      if (mounted &&
-          !_hasPopped &&
-          (isCompletionProbe || generation == _loadGeneration)) {
-        setState(() {});
+      if (probeSerial == _originProbeSerial) {
+        _checkingOriginFallback = false;
+        if (mounted &&
+            !_hasPopped &&
+            (isCompletionProbe || generation == _loadGeneration)) {
+          setState(() {});
+        }
       }
     }
+  }
+
+  Future<bool> _tryAlternateVerificationTarget(
+    int generation,
+    int probeSerial,
+  ) async {
+    final controller = _controller;
+    bool valid() =>
+        mounted &&
+        !_hasPopped &&
+        !_handedOff &&
+        generation == _loadGeneration &&
+        probeSerial == _originProbeSerial &&
+        !widget.signals.isSettling;
+    if (controller == null || !_target.canUseFallback || !valid()) return false;
+    Object? snapshot;
+    try {
+      snapshot = await controller.evaluateJavascript(
+        source: CfVerificationTarget.fallbackSnapshotScript,
+      );
+    } catch (e) {
+      CfChallengeLogger.log('[VERIFY] 读取备用入口所需页面状态失败，保留重试入口');
+      return false;
+    }
+    if (!valid()) return false;
+    final fallback = _target.useFallback(snapshot);
+    if (fallback == null) return false;
+    CfChallengeLogger.log(
+      '[VERIFY] 首页没有签发新 clearance，转入同站备用验证入口: '
+      'host=${fallback.host} path=${fallback.path}',
+    );
+    // 作废旧页面的探测尾巴，再发起一次同站导航。备用入口不再回到首页。
+    _originProbeSerial++;
+    _loadGeneration++;
+    _challengeRevealProbeGeneration++;
+    _sitekeyDiscoveryTimer?.cancel();
+    _timeoutTimer?.cancel();
+    _pageReadyFallbackTimer?.cancel();
+    _loadStopFallbackTimer?.cancel();
+    _hasMarkedPageReady = false;
+    _checkingOriginFallback = false;
+    _hasSeenChallenge = false;
+    setState(() {
+      _isLoading = true;
+      _challengeWebViewVisible = false;
+      _hideOriginFallbackPage = true;
+      _originFallbackNeedsAction = false;
+    });
+    try {
+      await controller.loadUrl(
+        urlRequest: URLRequest(url: WebUri(fallback.toString())),
+      );
+    } catch (e) {
+      widget.signals.networkTrouble('备用验证入口加载失败');
+      _giveUp(CfRoundFailure.inconclusive, detail: '备用验证入口加载失败');
+    }
+    return true;
   }
 
   void _coverWebViewForOriginFallback() {
@@ -1705,6 +1951,8 @@ class _CfChallengePageState extends State<CfChallengePage> {
     _noChallengeCheckTimer?.cancel();
     _loadStopFallbackTimer?.cancel();
     _pageReadyFallbackTimer?.cancel();
+    _sitekeyDiscoveryTimer?.cancel();
+    _originProbeSerial++;
     _challengeRevealProbeGeneration++;
     _hasMarkedPageReady = false;
     _checkCount = 0;
@@ -1734,6 +1982,8 @@ class _CfChallengePageState extends State<CfChallengePage> {
       _loggedForegroundWaitingForUser = false;
     });
     widget.onPromoteRequest?.call();
+    // 后台就已经露出的挑战，转前台后用户才真正看到；补记一次交互。
+    if (_challengeWebViewVisible) widget.signals.challengeShown();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -1787,20 +2037,13 @@ class _CfChallengePageState extends State<CfChallengePage> {
   }
 
   bool _isVerifyUrl(WebUri? url) {
-    if (url == null) return false;
-    final actual = Uri.tryParse(url.toString());
-    final expected = Uri.tryParse(widget.verifyUrl);
-    if (actual == null || expected == null) return false;
-    return actual.scheme == expected.scheme &&
-        actual.host == expected.host &&
-        actual.path == expected.path;
+    final actual = url == null ? null : Uri.tryParse(url.toString());
+    return actual != null && _target.matches(actual);
   }
 
   bool _isBareVerifyUrl(WebUri? url) {
-    if (!_isVerifyUrl(url)) return false;
-    final actual = Uri.tryParse(url.toString());
-    if (actual == null) return false;
-    return actual.query.isEmpty;
+    final actual = url == null ? null : Uri.tryParse(url.toString());
+    return actual != null && _target.matches(actual, bare: true);
   }
 
   Future<NavigationActionPolicy> _shouldOverrideVerifyNavigation(
@@ -1852,23 +2095,23 @@ class _CfChallengePageState extends State<CfChallengePage> {
     WebResourceRequest request,
     WebResourceResponse response,
   ) {
-    if (request.isForMainFrame != true) return false;
-    if (!_isBareVerifyUrl(request.url)) return false;
-    if (_isCfMitigatedChallengeHeaders(response.headers)) return false;
-
-    // /challenge 是站点专用的 CF 验证入口：
-    // 未通过时 Cloudflare 接管并返回 challenge；通过后请求会落到源站，
-    // 源站没有这个业务页面，所以 404 本身就是“已通过 CF”的完成信号。
-    return response.statusCode == 404;
+    return _target.isConclusiveResponse(
+      url: Uri.parse(request.url.toString()),
+      statusCode: response.statusCode,
+      isMainFrame: request.isForMainFrame == true,
+      cfMitigated: _isCfMitigatedChallengeHeaders(response.headers),
+    );
   }
 
   bool _isVerifyPassedNavigationResponse(NavigationResponse response) {
     final urlResponse = response.response;
-    if (response.isForMainFrame != true || urlResponse == null) return false;
-    if (!_isBareVerifyUrl(urlResponse.url)) return false;
-    if (_isCfMitigatedChallengeHeaders(urlResponse.headers)) return false;
-
-    return urlResponse.statusCode == 404;
+    if (urlResponse == null) return false;
+    return _target.isConclusiveResponse(
+      url: Uri.parse(urlResponse.url.toString()),
+      statusCode: urlResponse.statusCode,
+      isMainFrame: response.isForMainFrame == true,
+      cfMitigated: _isCfMitigatedChallengeHeaders(urlResponse.headers),
+    );
   }
 
   Future<NavigationResponseAction> _handleVerifyNavigationResponse(
@@ -1930,7 +2173,8 @@ class _CfChallengePageState extends State<CfChallengePage> {
       return;
     }
     _hasSeenChallenge = true;
-    widget.signals.challengeShown();
+    // 后台轮次里的挑战对用户不可见，不记成"用户交互过"。
+    widget.signals.challengeShown(visible: !_isBackground);
     unawaited(
       _controller
               ?.evaluateJavascript(source: 'window.__fluxdoHideCfMask?.();')
@@ -2159,12 +2403,174 @@ class _CfChallengePageState extends State<CfChallengePage> {
     }
 
     _injectChallengeInterceptor(controller);
+    unawaited(_discoverSitekeyFromDom(controller, generation));
+    unawaited(_injectPreclearanceAssist(controller, generation));
+    // 动态插入的普通 Turnstile widget 可能晚于 commit 出现。只补探一次，
+    // 不挂常驻轮询、不监听 challenge iframe 的临时配置。
+    _sitekeyDiscoveryTimer?.cancel();
+    _sitekeyDiscoveryTimer = Timer(const Duration(seconds: 2), () {
+      unawaited(_discoverSitekeyFromDom(controller, generation));
+      // 挑战页的标记可能晚于 commit 出现：辅助脚本幂等，再试一次
+      unawaited(_injectPreclearanceAssist(controller, generation));
+    });
     _startTimeout();
     _startChallengeRevealProbe(controller, generation);
     _scheduleNoChallengeCheck(controller);
     // 同步立刻探一次内容：识别明确的源站 404 / 非挑战页面时直接覆盖，
     // 避免等到 _noChallengeCheckDelay 才决断，挤压可能的 404 露出窗口
     unawaited(_probeContentImmediately(controller, generation));
+  }
+
+  Future<void> _discoverSitekeyFromDom(
+    InAppWebViewController controller,
+    int generation,
+  ) async {
+    bool valid() =>
+        mounted && !_hasPopped && !_handedOff && generation == _loadGeneration;
+    if (!valid()) return;
+    try {
+      final snapshot = await controller.evaluateJavascript(
+        source: TurnstileConfiguration.snapshotScript,
+      );
+      if (!valid()) return;
+      CfClearanceRefreshService().observeConfigurationSnapshot(snapshot);
+    } catch (e) {
+      debugPrint('[CfChallenge] 发现 Turnstile 配置失败: $e');
+    }
+  }
+
+  /// 挑战页上加载站点**自己公开嵌入的** Turnstile（与 [CfClearanceRefreshService]
+  /// 续期用的是同一个 sitekey、同一种预授权）。
+  ///
+  /// 2026-10-27 模拟器实测（Mac 出口，cf_clearance 失效）：Managed Challenge
+  /// 要求点勾选框，同一页面里这个 widget 6～13 秒静默签出 cf_clearance（575 字符，
+  /// 原生链路认；clearance 失效和完全没有两种情况都过了），验证轮次照常经轮询定稿，
+  /// 用户什么都没点。它要互动时
+  /// （before-interactive）立刻移除，只留页面自己的挑战给用户，绝不替用户点。
+  /// 只在本站有缓存的公开配置时做；IDC Flare 这类没有的站点照旧。
+  Future<void> _injectPreclearanceAssist(
+    InAppWebViewController controller,
+    int generation,
+  ) async {
+    bool valid() =>
+        mounted && !_hasPopped && !_handedOff && generation == _loadGeneration;
+    if (!valid()) return;
+    if (_preclearanceInjections >= _maxPreclearanceInjections) return;
+    // 冷启动撞盾时配置可能还没从缓存读出来
+    await CfClearanceRefreshService().ensureConfigurationLoaded();
+    if (!valid()) return;
+    final sitekey = CfClearanceRefreshService().sitekey;
+    if (sitekey == null || sitekey.isEmpty) return;
+    final pageHost = (await controller.getUrl())?.host.toLowerCase();
+    if (!valid() || pageHost != Uri.parse(AppConstants.baseUrl).host) return;
+    try {
+      final result = await controller
+          .evaluateJavascript(source: _preclearanceAssistScript(sitekey))
+          .timeout(const Duration(seconds: 2));
+      if (!valid()) return;
+      if (result == 'loading' || result == 'rendered') {
+        _preclearanceInjections++;
+        setState(() => _preclearance = _PreclearanceAssist.pending);
+        CfChallengeLogger.log(
+          '[PRECLEARANCE] site Turnstile assist injected ($result, '
+          'attempt $_preclearanceInjections)',
+        );
+      }
+    } catch (e) {
+      debugPrint('[CfChallenge] 注入预授权辅助失败: $e');
+    }
+  }
+
+  void _onPreclearanceEvent(List<dynamic> args) {
+    if (!mounted || _hasPopped || _handedOff) return;
+    final data = args.isNotEmpty && args.first is Map
+        ? (args.first as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final event = data['event']?.toString() ?? 'unknown';
+    switch (event) {
+      case 'rendered':
+        setState(() => _preclearance = _PreclearanceAssist.rendered);
+      case 'token':
+        CfChallengeLogger.log(
+          '[PRECLEARANCE] site Turnstile token (len=${data['length']})',
+        );
+        setState(() => _preclearance = _PreclearanceAssist.token);
+        // 预授权的 cf_clearance 由这次 token 一并签出：按完成迹象定稿
+        // （1.5 秒稳定），不必按「无迹象」等 6 秒
+        widget.signals.completionHint('site turnstile preclearance token');
+      case 'interactive':
+      case 'error':
+        CfChallengeLogger.log(
+          '[PRECLEARANCE] site Turnstile assist stopped: $event'
+          '${data['error'] == null ? '' : ' (${data['error']})'}',
+        );
+        setState(() => _preclearance = _PreclearanceAssist.stopped);
+    }
+  }
+
+  /// 幂等：同一文档只装一次；不是挑战页（没有 `_cf_chl_opt` / 挑战表单）不装。
+  static String _preclearanceAssistScript(String sitekey) {
+    final encodedSitekey = jsonEncode(sitekey);
+    return '''
+(function(sitekey) {
+  try {
+    if (window.__fluxdoPreclearance) return 'already';
+    var isChallenge = typeof window._cf_chl_opt !== 'undefined' ||
+      !!document.querySelector('#challenge-form, #challenge-running, #challenge-stage');
+    if (!isChallenge) return 'not_challenge';
+    window.__fluxdoPreclearance = true;
+    function report(event, extra) {
+      var payload = extra || {};
+      payload.event = event;
+      try { window.flutter_inappwebview.callHandler('onCfPreclearance', payload); } catch (_) {}
+    }
+    var box = document.createElement('div');
+    box.id = '__fluxdo_preclearance';
+    box.setAttribute('aria-hidden', 'true');
+    box.style.cssText = 'position:fixed;left:0;bottom:0;width:300px;height:65px;overflow:hidden;';
+    (document.body || document.documentElement).appendChild(box);
+    var widgetId = null;
+    function stop() {
+      try { if (widgetId !== null) window.turnstile.remove(widgetId); } catch (_) {}
+      try { box.remove(); } catch (_) {}
+    }
+    function render() {
+      if (!window.turnstile || typeof window.turnstile.render !== 'function') {
+        report('error', { error: 'turnstile api missing' });
+        stop();
+        return;
+      }
+      try {
+        widgetId = window.turnstile.render(box, {
+          sitekey: sitekey,
+          appearance: 'interaction-only',
+          callback: function(token) { report('token', { length: token ? token.length : 0 }); },
+          'before-interactive-callback': function() { report('interactive'); stop(); },
+          'error-callback': function(error) { report('error', { error: String(error || 'unknown') }); stop(); return true; },
+          'unsupported-callback': function() { report('error', { error: 'unsupported' }); stop(); }
+        });
+        report('rendered');
+      } catch (e) {
+        report('error', { error: String(e && e.message ? e.message : e) });
+        stop();
+      }
+    }
+    if (window.turnstile && typeof window.turnstile.render === 'function') {
+      render();
+      return 'rendered';
+    }
+    var script = document.createElement('script');
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    script.async = true;
+    script.onload = render;
+    script.onerror = function() { report('error', { error: 'api load failed' }); stop(); };
+    (document.head || document.documentElement).appendChild(script);
+    return 'loading';
+  } catch (e) {
+    return 'error';
+  }
+})($encodedSitekey);
+''';
   }
 
   /// 页面就绪后立刻探一次内容
@@ -2246,7 +2652,9 @@ class _CfChallengePageState extends State<CfChallengePage> {
           key: _webViewKey,
           webViewEnvironment:
               WindowsWebViewEnvironmentService.instance.environment,
-          initialUrlRequest: URLRequest(url: WebUri(widget.verifyUrl)),
+          initialUrlRequest: URLRequest(
+            url: WebUri(_target.current.toString()),
+          ),
           initialSettings: InAppWebViewSettings(
             javaScriptEnabled: true,
             userAgent: AppConstants.webViewUserAgentOverride,
@@ -2272,15 +2680,22 @@ class _CfChallengePageState extends State<CfChallengePage> {
               handlerName: 'onChallengeNavigation',
               callback: _onChallengeNavigation,
             );
+            controller.addJavaScriptHandler(
+              handlerName: 'onCfPreclearance',
+              callback: _onPreclearanceEvent,
+            );
           },
           onLoadStart: (controller, url) {
             if (_hasPopped || _handedOff) return;
             final isCompletionNavigation = _hasSeenChallenge;
             _loadGeneration++;
+            _sitekeyDiscoveryTimer?.cancel();
             _challengeRevealProbeGeneration++;
             _loadStopFallbackTimer?.cancel();
             _pageReadyFallbackTimer?.cancel();
             _hasMarkedPageReady = false;
+            // 新文档里原来的辅助 widget 已随旧 JS 上下文没了
+            _preclearance = _PreclearanceAssist.none;
             // 新一次导航重新起算预算：只清 _hasTimedOut 不清计数，旧计时器
             // 下一拍会立刻再记一次超时（2026-10-12 实测两条 FAILED 相隔 3 秒）。
             _hasTimedOut = false;
@@ -3093,4 +3508,16 @@ class _BouncingDots extends StatelessWidget {
       ],
     );
   }
+}
+
+/// 挑战页上站点 Turnstile 预授权辅助的状态。
+enum _PreclearanceAssist {
+  none,
+  pending,
+  rendered,
+  token,
+  stopped;
+
+  /// 还可能静默签出 cf_clearance（后台预算据此多等一会儿）。
+  bool get running => this == pending || this == rendered || this == token;
 }

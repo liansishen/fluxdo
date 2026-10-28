@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../models/topic.dart';
 import '../../services/preloaded_data_service.dart';
 import '../../services/discourse/discourse_service.dart';
@@ -312,14 +313,15 @@ class TopicListNotifier extends AsyncNotifier<List<Topic>>
     }
   }
 
-  /// 返回 null 表示请求已过期；失败向上传递以保留横幅。
-  Future<List<int>?> loadBefore(List<int> topicIds) async {
-    if (topicIds.isEmpty) return [];
-    if (state.isLoading || state.value == null) return null;
-    final generation = ++_requestGeneration;
+  /// 按话题 ID 拉当前筛选下的这几个话题，只拉不插。[background] 为提示条
+  /// 点开前的后台预取。
+  Future<TopicListResponse> fetchTopicUpdates(
+    List<int> topicIds, {
+    bool background = false,
+  }) {
     final query = updateQuery;
     final params = _currentFilterParams();
-    final response = await ref
+    return ref
         .read(discourseServiceProvider)
         .getFilteredTopics(
           filter: query.filter.filterName,
@@ -333,7 +335,21 @@ class TopicListNotifier extends AsyncNotifier<List<Topic>>
               ? query.subset.apiValue
               : null,
           topicIds: topicIds,
+          background: background,
         );
+  }
+
+  /// 返回 null 表示请求已过期；失败向上传递以保留横幅。[prefetched]：
+  /// 提示条点开前已经取好的同一批，直接插，不再请求。
+  Future<List<int>?> loadBefore(
+    List<int> topicIds, {
+    TopicListResponse? prefetched,
+  }) async {
+    if (topicIds.isEmpty) return [];
+    if (state.isLoading || state.value == null) return null;
+    final generation = ++_requestGeneration;
+    final query = updateQuery;
+    final response = prefetched ?? await fetchTopicUpdates(topicIds);
     if (!ref.mounted ||
         generation != _requestGeneration ||
         !query.sameRequest(updateQuery) ||

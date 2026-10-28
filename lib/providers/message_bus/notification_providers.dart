@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleState, WidgetsBinding;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../l10n/s.dart';
 import '../../services/message_bus_service.dart';
 import '../../services/local_notification_service.dart';
@@ -143,6 +145,7 @@ class NotificationChannelNotifier extends Notifier<void> {
         if (allUnreadCount != null ||
             unreadCount != null ||
             unreadHighPriority != null) {
+          final before = ref.read(notificationCountStateProvider);
           ref
               .read(notificationCountStateProvider.notifier)
               .update(
@@ -150,6 +153,22 @@ class NotificationChannelNotifier extends Notifier<void> {
                 unread: unreadCount,
                 highPriority: unreadHighPriority,
               );
+          final grew =
+              (allUnreadCount ?? 0) > before.allUnread ||
+              (unreadCount ?? 0) > before.unread ||
+              (unreadHighPriority ?? 0) > before.highPriority;
+          // 有新通知且面板未加载时，预取列表以便打开后立即显示。
+          final listLoaded =
+              ref.exists(recentNotificationsProvider) &&
+              ref.read(recentNotificationsProvider).hasValue;
+          final lifecycle = WidgetsBinding.instance.lifecycleState;
+          if (grew &&
+              !listLoaded &&
+              (lifecycle == null || lifecycle == AppLifecycleState.resumed)) {
+            RecentNotificationsNotifier.prefetch(
+              ref.read(discourseServiceProvider),
+            );
+          }
         }
 
         // 仅在通知列表已加载（面板已打开过）时做增量更新，

@@ -74,7 +74,10 @@ mixin _SearchMixin on _DiscourseServiceBase {
         queryParams['selected_tags'] = selectedTags;
       }
 
-      final response = await _dio.get('/tags/filter/search', queryParameters: queryParams);
+      final response = await _dio.get(
+        '/tags/filter/search',
+        queryParameters: queryParams,
+      );
       return TagSearchResult.fromJson(response.data as Map<String, dynamic>);
     } catch (e) {
       debugPrint('[DiscourseService] searchTags failed: $e');
@@ -130,10 +133,37 @@ mixin _SearchMixin on _DiscourseServiceBase {
         queryParameters: queryParams,
         options: Options(extra: {'isSilent': true, 'priority': 'normal'}),
       );
-      return MentionSearchResult.fromJson(response.data as Map<String, dynamic>);
+      return MentionSearchResult.fromJson(
+        response.data as Map<String, dynamic>,
+      );
     } catch (e) {
       debugPrint('[DiscourseService] searchUsers failed: $e');
       return const MentionSearchResult(users: [], groups: []);
+    }
+  }
+
+  /// 编辑器 `#` 补全：按搜索词找分类和标签（分类在前），[term] 为空时
+  /// 服务端给常用分类和标签。需要登录；失败返回空列表。
+  Future<List<HashtagSuggestion>> searchHashtags(String term) async {
+    try {
+      final response = await _dio.get(
+        '/hashtags/search.json',
+        queryParameters: {
+          'term': term,
+          'order[]': const ['category', 'tag'],
+        },
+        // 与 @ 补全同理：逐字触发，不弹前台验证，也不按 isSilent 降级排队
+        options: Options(extra: {'isSilent': true, 'priority': 'normal'}),
+      );
+      final results = (response.data as Map<String, dynamic>?)?['results'];
+      if (results is! List) return const [];
+      return [
+        for (final item in results)
+          if (item is Map<String, dynamic>) ?HashtagSuggestion.fromJson(item),
+      ];
+    } catch (e) {
+      debugPrint('[DiscourseService] searchHashtags failed: $e');
+      return const [];
     }
   }
 
@@ -145,9 +175,7 @@ mixin _SearchMixin on _DiscourseServiceBase {
     try {
       final response = await _dio.get(
         '/composer/mentions',
-        queryParameters: {
-          'names[]': names,
-        },
+        queryParameters: {'names[]': names},
         // 编辑器内自动触发的校验请求,同样不应弹前台验证;
         // 同样显式声明 normal,避免被调度器按 isSilent 降级排队。
         options: Options(extra: {'isSilent': true, 'priority': 'normal'}),

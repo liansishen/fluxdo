@@ -109,22 +109,29 @@ class CdkUserInfoNotifier extends AsyncNotifier<CdkUserInfo?> {
     }
   }
 
-  Future<CdkUserInfo?> _fetchUserInfo(String username) {
+  Future<CdkUserInfo?> _fetchUserInfo(
+    String username, {
+    bool afterVerification = false,
+  }) {
     if (_inFlightFetch != null && _inFlightUsername == username) {
       return _inFlightFetch!;
     }
     late final Future<CdkUserInfo?> future;
-    future = _doFetchUserInfo(username).whenComplete(() {
-      if (identical(_inFlightFetch, future)) {
-        _inFlightFetch = null;
-        _inFlightUsername = null;
-      }
-    });
+    future = _doFetchUserInfo(username, afterVerification: afterVerification)
+        .whenComplete(() {
+          if (identical(_inFlightFetch, future)) {
+            _inFlightFetch = null;
+            _inFlightUsername = null;
+          }
+        });
     _inFlightUsername = username;
     return _inFlightFetch = future;
   }
 
-  Future<CdkUserInfo?> _doFetchUserInfo(String username) async {
+  Future<CdkUserInfo?> _doFetchUserInfo(
+    String username, {
+    bool afterVerification = false,
+  }) async {
     if (!SiteContext.isLinuxDo) return null;
     final generation = _requestGeneration;
     final prefs = await SharedPreferences.getInstance();
@@ -134,7 +141,10 @@ class CdkUserInfoNotifier extends AsyncNotifier<CdkUserInfo?> {
     }
 
     final service = ref.read(cdkOAuthServiceProvider);
-    final userInfo = await service.getUserInfo(expectedUsername: username);
+    final userInfo = await service.getUserInfo(
+      expectedUsername: username,
+      afterVerification: afterVerification,
+    );
     // 不依赖 provider 下一次重建：换号后即使旧请求先返回也不能回写。
     if (!_isCurrentRequest(generation, username) ||
         !(prefs.getBool(_enabledKey) ?? false)) {
@@ -156,7 +166,7 @@ class CdkUserInfoNotifier extends AsyncNotifier<CdkUserInfo?> {
     return _isCurrentRequest(generation, username) ? userInfo : null;
   }
 
-  Future<void> refresh() async {
+  Future<void> refresh({bool afterVerification = false}) async {
     if (!SiteContext.isLinuxDo) return;
     final generation = _requestGeneration;
     var username = ref.read(currentUserProvider).value?.username;
@@ -174,7 +184,10 @@ class CdkUserInfoNotifier extends AsyncNotifier<CdkUserInfo?> {
         state = const AsyncValue.data(null);
         return;
       }
-      final result = await _fetchUserInfo(username);
+      final result = await _fetchUserInfo(
+        username,
+        afterVerification: afterVerification,
+      );
       if (!_isCurrentRequest(generation, username)) return;
       state = AsyncValue.data(result);
     } catch (e, st) {
@@ -197,14 +210,15 @@ class CdkUserInfoNotifier extends AsyncNotifier<CdkUserInfo?> {
     }
   }
 
-  /// 用户已手动通过 CF，取消旧请求并立即重新读取业务会话。
+  /// 用户已手动通过 CF（或从内置浏览器回来），取消旧请求并立即重新读取
+  /// 业务会话。仍被拦就如实显示，不再自动起一轮验证。
   Future<void> refreshAfterCfVerification() {
     if (!SiteContext.isLinuxDo) return Future.value();
     _requestGeneration++;
     _inFlightFetch = null;
     _inFlightUsername = null;
     ref.read(cdkOAuthServiceProvider).cancelPendingRequests();
-    return refresh();
+    return refresh(afterVerification: true);
   }
 
   Future<void> clear() async {

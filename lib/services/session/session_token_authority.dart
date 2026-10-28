@@ -251,6 +251,19 @@ class SessionTokenAuthority {
   /// 两端最后一次确认一致的 `_t`。只放内存，不落盘。
   String? _agreed;
 
+  int? _switchedUserId;
+  int? _switchGeneration;
+
+  bool get _hasAccountBoundary =>
+      _switchGeneration == _session.generation && _switchedUserId != null;
+
+  /// 切号后的 WebView 候选必须确认属于目标账号；血缘重置不解除此边界。
+  void beginAccountSwitch(int userId) {
+    resetLineage();
+    _switchedUserId = userId;
+    _switchGeneration = _session.generation;
+  }
+
   /// 最近在 WebView 里见过、但与 jar 不同的 `_t`（新的在前）。
   final List<_SeenCandidate> _webViewCandidates = [];
 
@@ -295,6 +308,8 @@ class SessionTokenAuthority {
     _listener = null;
     _rejectedHash = null;
     _rejectedAt = null;
+    _switchedUserId = null;
+    _switchGeneration = null;
     resetLineage();
   }
 
@@ -577,13 +592,13 @@ class SessionTokenAuthority {
     // WebView 没动、jar 动了 → 推回，不探测（见方法注释）。
     final repushByLineage = hasLineage && jarMoved && !webViewMoved;
     if (!repushByLineage) {
-      if (webViewVerified) {
+      if (webViewVerified && (allowProbe || !_hasAccountBoundary)) {
         adoptWebView = true;
       } else if (!allowProbe || _probe == null) {
         // 不能探测时只按血缘走：jar 自上次一致后没动、WebView 动了，
         // WebView 的值只可能来自服务端 Set-Cookie（我们自己的推送都会
         // 标记一致），可以直接采纳；没有血缘则无从判断，记无结论。
-        if (hasLineage && !jarMoved && webViewMoved) {
+        if (!_hasAccountBoundary && hasLineage && !jarMoved && webViewMoved) {
           adoptWebView = true;
         } else {
           _logReconcile(
@@ -730,6 +745,10 @@ class SessionTokenAuthority {
       return null;
     }
     if (result.isValid) {
+      if (_hasAccountBoundary &&
+          (result.currentUser?['id'] as num?)?.toInt() != _switchedUserId) {
+        return false;
+      }
       _clearRejected();
       return true;
     }
@@ -1544,6 +1563,22 @@ class SessionTokenAuthority {
     String value, {
     DateTime? candidateExpires,
   }) async {
+    final generation = _session.generation;
+    if (_hasAccountBoundary) {
+      final probe = _probe;
+      if (probe == null) return false;
+      try {
+        final result = await probe
+            .probeCandidate(value, requestGeneration: generation)
+            .timeout(_probeTimeout);
+        if (!result.isValid ||
+            (result.currentUser?['id'] as num?)?.toInt() != _switchedUserId) {
+          return false;
+        }
+      } catch (_) {
+        return false;
+      }
+    }
     DateTime? existing;
     try {
       existing = await _jar.readExpiry();
@@ -1555,6 +1590,7 @@ class SessionTokenAuthority {
       existing: existing,
       now: _now(),
     );
+    if (!_session.isValid(generation)) return false;
     try {
       return await _jar.writeTrusted(value, expires: expires);
     } catch (e) {
@@ -1611,9 +1647,9 @@ class SessionTokenAuthority {
         requestOptions.headers[HttpHeaders.cookieHeader]?.toString() ??
         requestOptions.headers['Cookie']?.toString() ??
         '';
-    return RegExp(
-      r'(?:^|;\s*)_t=([^;]*)',
-    ).firstMatch(sentCookieHeader)?.group(1);
+    return RegExp(r'(?:^|;\s*)_t=([^;]*)')
+        .firstMatch(sentCookieHeader)
+        ?.group(1);
   }
 
   bool _isSiteUrl(String url) {

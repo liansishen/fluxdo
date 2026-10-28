@@ -15,6 +15,7 @@ enum ForumSite {
     host: 'idcflare.com',
     logoAsset: 'assets/images/sites/idcflare.png',
     cfVerificationPath: '/',
+    cfVerificationFallbackPath: '/challenge',
   );
 
   const ForumSite({
@@ -24,6 +25,7 @@ enum ForumSite {
     required this.host,
     required this.logoAsset,
     required this.cfVerificationPath,
+    this.cfVerificationFallbackPath,
   });
 
   final String id;
@@ -34,7 +36,17 @@ enum ForumSite {
 
   /// 验证页必须访问本站受 CF 保护的入口，不能假定各站都有 /challenge。
   final String cfVerificationPath;
+  final String? cfVerificationFallbackPath;
+
+  Uri get cfVerificationUri => Uri.parse(baseUrl).resolve(cfVerificationPath);
+  Uri? get cfVerificationFallbackUri => cfVerificationFallbackPath == null
+      ? null
+      : Uri.parse(baseUrl).resolve(cfVerificationFallbackPath!);
   bool get isLinuxDo => this == linuxDo;
+
+  /// 只有 LINUX DO 的 fingerprint 插件协议已经确认过，不能把它的
+  /// bootstrap 请求发给其它论坛。
+  bool get supportsFingerprintBootstrap => isLinuxDo;
 
   /// 旧版数据原地归属 LINUX DO，不让新站读取或覆盖旧站键。
   String storageKey(String legacyKey) =>

@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:fluxdo/services/auth_session.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxdo/services/network/cookie/app_cookie_manager.dart';
 import 'package:fluxdo/services/network/cookie/cookie_jar_service.dart';
@@ -12,6 +15,123 @@ import 'session_token_fakes.dart';
 /// - 服务端探测决定谁赢；探测无结论时两端都不动；
 /// - 采纳 / 恢复写进 jar 的 `_t` 一定带过期时间（否则不落盘、冷启动又丢）。
 void main() {
+  group('切号身份边界', () {
+    late SessionTokenRig rig;
+    late _AccountServer server;
+
+    setUp(() {
+      AuthSession().advance();
+      rig = SessionTokenRig(jar: 'B', webView: 'A', forumSession: 'fs-A');
+      server = _AccountServer(rig.jarStore);
+      rig.authority.attachAuth(
+        probe: server,
+        userApiKey: server,
+        listener: server,
+      );
+      rig.authority.beginAccountSwitch(2);
+    });
+
+    tearDown(() => AuthSession().advance());
+
+    test('推送失败不宣称对齐，旧账号即使有效也不能反向采纳', () async {
+      rig.webViewStore.failWrites = true;
+      rig.authority.resetLineage();
+      final outcome = await rig.authority.reconcile(reason: 'switch_failed');
+      expect(outcome, SessionTokenReconcileOutcome.failed);
+      expect(rig.authority.agreedValueForTest, isNull);
+      expect(rig.jarStore.value, 'B');
+      expect(rig.jarStore.writes, isEmpty);
+      expect(rig.webViewStore.value, 'A');
+    });
+
+    test('恢复链和缺失 jar 恢复都不能采纳旧账号或其 forum_session', () async {
+      rig.webViewStore.failWrites = true;
+      rig.authority.noteWebViewValues(['A']);
+      final verdict = await rig.authority.recover(
+        source: 'switch_failed',
+        signalRequestOptions: requestCarrying('B'),
+      );
+      expect(verdict.kind, SessionTokenVerdictKind.valid);
+      expect(verdict.source, SessionTokenSource.jarSession);
+      expect(rig.jarStore.value, 'B');
+      rig.jarStore.value = null;
+      await rig.authority.recoverMissingJarToken();
+      expect(rig.jarStore.value, isNull);
+      expect(rig.jarStore.forumSessionAdoptions, isEmpty);
+    });
+
+    test('可信 WebView 通知和登录收口也不能绕过切号身份检查', () async {
+      await rig.authority.reconcile(
+        reason: 'webview_notice',
+        webViewVerified: true,
+      );
+      expect(rig.jarStore.value, 'B');
+      expect(
+        await rig.authority.adoptLoginToken(reason: 'late_login'),
+        isFalse,
+      );
+      expect(rig.jarStore.value, 'B');
+    });
+
+    test('后续重推成功才确认一致，同账号 WebView 轮换仍可采纳', () async {
+      expect(
+        await rig.authority.reconcile(reason: 'repair'),
+        SessionTokenReconcileOutcome.repushedJar,
+      );
+      expect(rig.authority.agreedValueForTest, 'B');
+      rig.webViewStore.value = 'B2';
+      rig.later();
+      expect(
+        await rig.authority.reconcile(reason: 'rotation'),
+        SessionTokenReconcileOutcome.adoptedWebView,
+      );
+      expect(rig.jarStore.value, 'B2');
+    });
+
+    test('切号后的过盾准备不按未知身份血缘采纳，也不额外探测', () async {
+      rig.authority.markAgreed('B');
+      expect(
+        await rig.authority.reconcile(
+          reason: 'cf_prepare',
+          allowProbe: false,
+          webViewVerified: true,
+        ),
+        SessionTokenReconcileOutcome.inconclusive,
+      );
+      expect(server.candidateProbes, isEmpty);
+      expect(rig.jarStore.value, 'B');
+    });
+    test('无身份结论不能按普通冷启动规则先采纳', () async {
+      rig.jarStore.value = null;
+      server.users.clear();
+      await rig.authority.recoverMissingJarToken();
+      expect(rig.jarStore.value, isNull);
+    });
+
+    test('普通新登录会话仍能采用 WebView 权威', () async {
+      AuthSession().advance();
+      expect(await rig.authority.adoptLoginToken(reason: 'new_login'), isTrue);
+      expect(rig.jarStore.value, 'A');
+    });
+
+    test('切号前已发起的候选探测晚到也不能带回旧账号', () async {
+      AuthSession().advance();
+      server.pending = Completer<void>();
+      server.started = Completer<void>();
+      final recovering = rig.authority.recover(
+        source: 'before_switch',
+        signalRequestOptions: requestCarrying('B'),
+      );
+      await server.started!.future;
+      AuthSession().advance();
+      rig.authority.beginAccountSwitch(2);
+      rig.authority.resetLineage();
+      server.pending!.complete();
+      await recovering;
+      expect(rig.jarStore.value, 'B');
+      expect(rig.jarStore.forumSessionAdoptions, isEmpty);
+    });
+  });
   final fallbackExpiry = FakeClock().now.add(
     CookieJarService.sessionTokenFallbackLifetime,
   );
@@ -951,4 +1071,37 @@ class _ChoiceCase {
   final String? rejectFirst;
   final bool expectKeepJar;
   final bool expectReconcile;
+}
+
+class _AccountServer extends FakeServer {
+  _AccountServer(super.jar);
+
+  final users = <String, int>{'A': 1, 'B': 2, 'B2': 2};
+  Completer<void>? pending;
+  Completer<void>? started;
+
+  @override
+  SessionTokenProbeResult judge(String? token) {
+    final id = users[token];
+    return id == null
+        ? super.judge(token)
+        : SessionTokenProbeResult.valid({'id': id, 'username': 'user$id'});
+  }
+
+  @override
+  Future<SessionTokenProbeResult> probeCandidate(
+    String token, {
+    String? forumSession,
+    int? requestGeneration,
+  }) async {
+    final started = this.started;
+    if (started != null && !started.isCompleted) started.complete();
+    final pending = this.pending;
+    if (pending != null) await pending.future;
+    return super.probeCandidate(
+      token,
+      forumSession: forumSession,
+      requestGeneration: requestGeneration,
+    );
+  }
 }

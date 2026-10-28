@@ -231,8 +231,17 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(DropdownButton<VscodeBodyStyle>), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
-  });
+  }, skip: !ThemeState.supportsVscode);
 
+  testWidgets('不支持 VS Code 的平台恢复偏好时降级，正文设置保持隐藏', (tester) async {
+    SharedPreferences.setMockInitialValues({'ui_style': 'vscode'});
+    final prefs = await SharedPreferences.getInstance();
+    final container = await _pump(tester, prefs: prefs, settings: true);
+    expect(container.read(themeProvider).uiStyle, UiStyle.mojian);
+    expect(find.byType(DropdownButton<VscodeBodyStyle>), findsNothing);
+    expect(find.byType(DropdownButton<VscodeCodeLanguage>), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+  }, skip: ThemeState.supportsVscode);
   testWidgets('编程式正文显示可见格式，不暴露 Markdown 编码或链接地址', (tester) async {
     SharedPreferences.setMockInitialValues({
       'pref_vscode_body_style': 'programming',

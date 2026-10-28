@@ -184,5 +184,7 @@
         "type": "int"
       }
     }
-  }
+  },
+  "hashtag_typeCategory": "分类",
+  "hashtag_typeTag": "标签"
 }

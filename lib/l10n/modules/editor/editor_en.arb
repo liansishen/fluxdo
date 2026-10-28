@@ -156,5 +156,7 @@
         "type": "int"
       }
     }
-  }
+  },
+  "hashtag_typeCategory": "Category",
+  "hashtag_typeTag": "Tag"
 }

@@ -50,7 +50,11 @@ class JankRecord {
 
 /// 一条诊断事件(NAV / MSGBUS / TYPING / SCROLL-PROBE 等)
 class DiagEvent {
-  const DiagEvent({required this.time, required this.tag, required this.message});
+  const DiagEvent({
+    required this.time,
+    required this.tag,
+    required this.message,
+  });
 
   final DateTime time;
   final String tag;
@@ -185,8 +189,9 @@ class FrameJankMonitor {
   static DateTime? _lastNav;
   static String _lastNavDesc = '';
   static int _lastImageCacheBytes = 0;
-  static DateTime _lastLayerInventoryAt =
-      DateTime.fromMillisecondsSinceEpoch(0);
+  static DateTime _lastLayerInventoryAt = DateTime.fromMillisecondsSinceEpoch(
+    0,
+  );
 
   // ---------------------------------------------------------------------------
   // 空转探测(release 可用):回答"静止页面为什么还在持续出帧"。
@@ -225,7 +230,7 @@ class FrameJankMonitor {
     logEvent(
       'SPIN',
       '静止空转:连续 $_spinFrameThreshold 帧微负载无交互 '
-      '(transient=${probe.lastTransientCount}),武装调度归因',
+          '(transient=${probe.lastTransientCount}),武装调度归因',
     );
     probe.armSpinCapture();
   }
@@ -238,9 +243,13 @@ class FrameJankMonitor {
     _startStallProbes();
     // 版本指纹(异步补齐):诊断导出必须能对上代码版本,否则
     // "旧包跑出的日志被当成新修复无效"——生产排查的头号陷阱
-    unawaited(PackageInfo.fromPlatform().then((info) {
-      _buildFingerprint = '${info.version}+${info.buildNumber}';
-    }).catchError((_) {}));
+    unawaited(
+      PackageInfo.fromPlatform()
+          .then((info) {
+            _buildFingerprint = '${info.version}+${info.buildNumber}';
+          })
+          .catchError((_) {}),
+    );
     // 掉帧现场抓取(debug/profile;release 内部自动跳过)
     unawaited(JankProfiler.ensureInitialized());
     // 悬浮监控面板:开关持久化在 prefs,跟随监控启动恢复
@@ -314,19 +323,19 @@ class FrameJankMonitor {
           .invokeMethod<void>('__fluxdoJankProbe__')
           .catchError((_) {})
           .whenComplete(() {
-        sw.stop();
-        _platformProbeInFlight = false;
-        final now = DateTime.now();
-        if (sw.elapsed >= _platformRttThreshold &&
-            now.difference(_lastStallLog) >= _stallLogThrottle) {
-          _lastStallLog = now;
-          logEvent(
-            'STALL',
-            '平台主线程阻塞 ~${sw.elapsedMilliseconds}ms '
-            '(WebView 操作/平台通道/系统 IPC)',
-          );
-        }
-      });
+            sw.stop();
+            _platformProbeInFlight = false;
+            final now = DateTime.now();
+            if (sw.elapsed >= _platformRttThreshold &&
+                now.difference(_lastStallLog) >= _stallLogThrottle) {
+              _lastStallLog = now;
+              logEvent(
+                'STALL',
+                '平台主线程阻塞 ~${sw.elapsedMilliseconds}ms '
+                    '(WebView 操作/平台通道/系统 IPC)',
+              );
+            }
+          });
     });
   }
 
@@ -505,8 +514,7 @@ class FrameJankMonitor {
     _bumpRevision();
   }
 
-  static String _ms(Duration d) =>
-      (d.inMicroseconds / 1000).toStringAsFixed(1);
+  static String _ms(Duration d) => (d.inMicroseconds / 1000).toStringAsFixed(1);
 
   static void _onTimings(List<FrameTiming> timings) {
     var changed = false;
@@ -568,7 +576,8 @@ class FrameJankMonitor {
         // 排队拆分:total 远大于三分项之和的帧,缺口在 buildFinish →
         // rasterStart 之间(raster 线程忙别的活/抢不到核,帧在管线里干等)。
         // 显式写出"等待"vs"实干",高负载卡顿的定性不再靠减法心算。
-        final queueMs = (t.timestampInMicroseconds(FramePhase.rasterStart) -
+        final queueMs =
+            (t.timestampInMicroseconds(FramePhase.rasterStart) -
                 t.timestampInMicroseconds(FramePhase.buildFinish)) /
             1000.0;
         if (queueMs > 3) {
@@ -587,14 +596,15 @@ class FrameJankMonitor {
         // 生产日志(无 VM Service)也能指认"这帧前后进了几张/多大的图"
         if (t.rasterDuration > const Duration(milliseconds: 40)) {
           final cache = PaintingBinding.instance.imageCache;
-          final sizeMb =
-              (cache.currentSizeBytes / (1024 * 1024)).toStringAsFixed(1);
-          final deltaMb = ((cache.currentSizeBytes - _lastImageCacheBytes) /
-                  (1024 * 1024))
+          final sizeMb = (cache.currentSizeBytes / (1024 * 1024))
               .toStringAsFixed(1);
+          final deltaMb =
+              ((cache.currentSizeBytes - _lastImageCacheBytes) / (1024 * 1024))
+                  .toStringAsFixed(1);
           details.add(
-              'imageCache ${cache.currentSize}张/${sizeMb}MB (Δ${deltaMb}MB) '
-              'pending=${cache.pendingImageCount}');
+            'imageCache ${cache.currentSize}张/${sizeMb}MB (Δ${deltaMb}MB) '
+            'pending=${cache.pendingImageCount}',
+          );
           // dec 归因:上传发生在解码完成点(与首绘可差多帧),dec 事件
           // 记录在解码那一帧的构建名单里。raster 大帧本身多是 build 极小
           // 的帧(不满足上面 build>6ms 的名单条件),这里按 raster 口径
@@ -681,7 +691,8 @@ class FrameJankMonitor {
         now.difference(_recentJankTimes.first) > const Duration(seconds: 1)) {
       _recentJankTimes.removeAt(0);
     }
-    final burst = _recentJankTimes.length >= 8 ||
+    final burst =
+        _recentJankTimes.length >= 8 ||
         t.totalSpan > const Duration(milliseconds: 40);
     if (!burst) return;
     if (now.difference(_lastCpuSampleAt) < const Duration(seconds: 30)) return;
@@ -727,11 +738,7 @@ class FrameJankMonitor {
               .join(' | ');
       final otherDetail = ungrouped.isEmpty
           ? ''
-          : ' | 其它明细: ${(ungrouped.entries.toList()
-                ..sort((a, b) => b.value.compareTo(a.value)))
-              .take(3)
-              .map((e) => '${e.key} ${e.value}%')
-              .join(' / ')}';
+          : ' | 其它明细: ${(ungrouped.entries.toList()..sort((a, b) => b.value.compareTo(a.value))).take(3).map((e) => '${e.key} ${e.value}%').join(' / ')}';
       logEvent('CPU', '$reason 采样(单核%): $parts | 进程合计 $total%$otherDetail');
     } catch (e) {
       logEvent('CPU', '采样失败: $e');
@@ -791,7 +798,9 @@ class FrameJankMonitor {
         name.contains('GPU')) {
       return 'gpu驱动';
     }
-    if (name.contains('GC') || name.contains('Heap') || name.startsWith('Jit')) {
+    if (name.contains('GC') ||
+        name.contains('Heap') ||
+        name.startsWith('Jit')) {
       return 'gc/jit';
     }
     return '其它';
@@ -890,14 +899,10 @@ class FrameJankMonitor {
   static String exportText() {
     final buf = StringBuffer();
     final start = sessionStart;
-    final elapsed = start == null
-        ? null
-        : DateTime.now().difference(start);
-    final rate = sessionFrames == 0
-        ? 0.0
-        : sessionJanks / sessionFrames * 100;
+    final elapsed = start == null ? null : DateTime.now().difference(start);
+    final rate = sessionFrames == 0 ? 0.0 : sessionJanks / sessionFrames * 100;
     final semanticsEnabled = SemanticsBinding.instance.semanticsEnabled;
-    buf.writeln('cfluxdo 性能诊断导出');
+    buf.writeln('CFluxDo 性能诊断导出');
     buf.writeln('应用版本: ${_buildFingerprint ?? '?'}');
     buf.writeln('导出时间: ${DateTime.now()}');
     if (elapsed != null) {
@@ -929,7 +934,8 @@ class FrameJankMonitor {
         '${t.millisecond.toString().padLeft(3, '0')}';
 
     final lines = <(DateTime, String)>[
-      for (final e in events) (e.time, '${fmtTime(e.time)}  [${e.tag}] ${e.message}'),
+      for (final e in events)
+        (e.time, '${fmtTime(e.time)}  [${e.tag}] ${e.message}'),
       for (final j in jankRecords)
         (
           j.time,
@@ -937,7 +943,7 @@ class FrameJankMonitor {
               '(build ${_ms(j.buildDuration)} / raster ${_ms(j.rasterDuration)} '
               '/ ov ${_ms(j.vsyncOverhead)})'
               '${j.cause == null ? '' : ' [${j.cause}]'}'
-              '${j.detail == null ? '' : '\n           ↳ ${j.detail!.replaceAll('\n', '\n           ↳ ')}'}'
+              '${j.detail == null ? '' : '\n           ↳ ${j.detail!.replaceAll('\n', '\n           ↳ ')}'}',
         ),
     ]..sort((a, b) => a.$1.compareTo(b.$1));
     for (final l in lines) {

@@ -27,20 +27,20 @@ class ApkAsset {
   });
 
   Map<String, dynamic> toJson() => {
-        'downloadUrl': downloadUrl,
-        'sha256Url': sha256Url,
-        'architecture': architecture,
-        'size': size,
-        'name': name,
-      };
+    'downloadUrl': downloadUrl,
+    'sha256Url': sha256Url,
+    'architecture': architecture,
+    'size': size,
+    'name': name,
+  };
 
   factory ApkAsset.fromJson(Map<String, dynamic> json) => ApkAsset(
-        downloadUrl: json['downloadUrl'] as String,
-        sha256Url: json['sha256Url'] as String?,
-        architecture: json['architecture'] as String,
-        size: json['size'] as int,
-        name: json['name'] as String,
-      );
+    downloadUrl: json['downloadUrl'] as String,
+    sha256Url: json['sha256Url'] as String?,
+    architecture: json['architecture'] as String,
+    size: json['size'] as int,
+    name: json['name'] as String,
+  );
 }
 
 /// 更新信息模型
@@ -62,31 +62,32 @@ class UpdateInfo {
   });
 
   Map<String, dynamic> toJson() => {
-        'currentVersion': currentVersion,
-        'remoteVersion': remoteVersion,
-        'releaseUrl': releaseUrl,
-        'releaseNotes': releaseNotes,
-        'hasUpdate': hasUpdate,
-        'apkAssets': apkAssets.map((e) => e.toJson()).toList(),
-      };
+    'currentVersion': currentVersion,
+    'remoteVersion': remoteVersion,
+    'releaseUrl': releaseUrl,
+    'releaseNotes': releaseNotes,
+    'hasUpdate': hasUpdate,
+    'apkAssets': apkAssets.map((e) => e.toJson()).toList(),
+  };
 
   factory UpdateInfo.fromJson(Map<String, dynamic> json) => UpdateInfo(
-        currentVersion: json['currentVersion'] as String,
-        remoteVersion: json['remoteVersion'] as String,
-        releaseUrl: json['releaseUrl'] as String,
-        releaseNotes: json['releaseNotes'] as String,
-        hasUpdate: json['hasUpdate'] as bool,
-        apkAssets: (json['apkAssets'] as List<dynamic>?)
-                ?.map((e) => ApkAsset.fromJson(e as Map<String, dynamic>))
-                .toList() ??
-            [],
-      );
+    currentVersion: json['currentVersion'] as String,
+    remoteVersion: json['remoteVersion'] as String,
+    releaseUrl: json['releaseUrl'] as String,
+    releaseNotes: json['releaseNotes'] as String,
+    hasUpdate: json['hasUpdate'] as bool,
+    apkAssets:
+        (json['apkAssets'] as List<dynamic>?)
+            ?.map((e) => ApkAsset.fromJson(e as Map<String, dynamic>))
+            .toList() ??
+        [],
+  );
 }
 
 /// 应用更新检查服务
 class UpdateService {
   // cfluxdo 从 fork 的 Release 检查更新(包名与签名都和官方版不同,不能装官方包)
-  static const String _repository = '1molchuan/fluxdo';
+  static const String _repository = '1molchuan/CFluxDo';
   static const String _apiUrl =
       'https://api.github.com/repos/$_repository/releases/latest';
   static const String _autoCheckUpdateKey = 'auto_check_update';
@@ -102,8 +103,8 @@ class UpdateService {
   final SharedPreferences? _prefs;
 
   UpdateService({Dio? dio, SharedPreferences? prefs})
-      : _dio = dio ?? Dio(),
-        _prefs = prefs;
+    : _dio = dio ?? Dio(),
+      _prefs = prefs;
 
   /// 获取自动检查更新设置
   bool getAutoCheckUpdate() {
@@ -223,8 +224,7 @@ class UpdateService {
 
     try {
       final storedEtag = _prefs?.getString(_etagKey);
-      var updateInfo =
-          await _fetchUpdateInfo(currentVersion, etag: storedEtag);
+      var updateInfo = await _fetchUpdateInfo(currentVersion, etag: storedEtag);
       if (updateInfo == null && storedEtag != null) {
         // 304 但本地缓存已不在(缓存解析失败、备份恢复只带回了 ETag):
         // 此前这里会把 304 的空 body 当 Release JSON 解析直接抛类型错误,
@@ -240,8 +240,10 @@ class UpdateService {
     } on DioException catch (e) {
       // 403/429 速率限制时尝试使用缓存
       if (e.response?.statusCode == 403 || e.response?.statusCode == 429) {
-        final cachedInfo =
-            _getCachedUpdateInfo(currentVersion, ignoreExpiry: true);
+        final cachedInfo = _getCachedUpdateInfo(
+          currentVersion,
+          ignoreExpiry: true,
+        );
         if (cachedInfo != null) {
           return cachedInfo;
         }
@@ -275,12 +277,16 @@ class UpdateService {
     );
 
     if (response.statusCode == 304) {
-      final cachedInfo =
-          _getCachedUpdateInfo(currentVersion, ignoreExpiry: true);
+      final cachedInfo = _getCachedUpdateInfo(
+        currentVersion,
+        ignoreExpiry: true,
+      );
       if (cachedInfo != null) {
         // 内容未变,只续一下缓存时间
         await _prefs?.setInt(
-            _cacheTimeKey, DateTime.now().millisecondsSinceEpoch);
+          _cacheTimeKey,
+          DateTime.now().millisecondsSinceEpoch,
+        );
       }
       return cachedInfo;
     }
@@ -289,8 +295,10 @@ class UpdateService {
     if (data is! Map) {
       throw Exception('Unexpected GitHub release payload');
     }
-    final updateInfo =
-        _parseUpdateInfo(Map<String, dynamic>.from(data), currentVersion);
+    final updateInfo = _parseUpdateInfo(
+      Map<String, dynamic>.from(data),
+      currentVersion,
+    );
     await _cacheUpdateInfo(updateInfo);
 
     final newEtag = response.headers.value('etag');
@@ -301,8 +309,10 @@ class UpdateService {
   }
 
   /// 从缓存获取更新信息
-  UpdateInfo? _getCachedUpdateInfo(String currentVersion,
-      {bool ignoreExpiry = false}) {
+  UpdateInfo? _getCachedUpdateInfo(
+    String currentVersion, {
+    bool ignoreExpiry = false,
+  }) {
     if (_prefs == null) return null;
 
     final cacheJson = _prefs.getString(_cacheKey);
@@ -319,11 +329,13 @@ class UpdateService {
     }
 
     try {
-      final cached =
-          UpdateInfo.fromJson(jsonDecode(cacheJson) as Map<String, dynamic>);
+      final cached = UpdateInfo.fromJson(
+        jsonDecode(cacheJson) as Map<String, dynamic>,
+      );
 
       // 重新计算 hasUpdate（因为当前版本可能已变化）
-      final hasUpdate = _compareVersions(cached.remoteVersion, currentVersion) > 0;
+      final hasUpdate =
+          _compareVersions(cached.remoteVersion, currentVersion) > 0;
 
       return UpdateInfo(
         currentVersion: currentVersion,
@@ -347,12 +359,16 @@ class UpdateService {
   }
 
   /// 解析更新信息
-  UpdateInfo _parseUpdateInfo(Map<String, dynamic> data, String currentVersion) {
+  UpdateInfo _parseUpdateInfo(
+    Map<String, dynamic> data,
+    String currentVersion,
+  ) {
     // 只去掉前缀 v(上游 tag 习惯);不能 replaceAll,会吃掉 -dev 之类
     // 预发布标识里的字母
     final tagName = data['tag_name'] as String;
-    final remoteVersion =
-        tagName.startsWith('v') ? tagName.substring(1) : tagName;
+    final remoteVersion = tagName.startsWith('v')
+        ? tagName.substring(1)
+        : tagName;
     final releaseUrl = data['html_url'] as String;
     var releaseNotes = data['body'] as String? ?? '';
 
@@ -404,13 +420,15 @@ class UpdateService {
       final architecture = _extractArchitecture(name);
       if (architecture == null) continue;
 
-      apkAssets.add(ApkAsset(
-        downloadUrl: asset['browser_download_url'] as String,
-        sha256Url: sha256Map[name],
-        architecture: architecture,
-        size: asset['size'] as int? ?? 0,
-        name: name,
-      ));
+      apkAssets.add(
+        ApkAsset(
+          downloadUrl: asset['browser_download_url'] as String,
+          sha256Url: sha256Map[name],
+          architecture: architecture,
+          size: asset['size'] as int? ?? 0,
+          name: name,
+        ),
+      );
     }
 
     return apkAssets;
@@ -441,7 +459,10 @@ class UpdateService {
 
   /// 纯函数版：设备声明的 ABI 顺序里，第一个 Release 里有包的
   @visibleForTesting
-  static ApkAsset? pickApkAsset(List<String> deviceAbis, List<ApkAsset> assets) {
+  static ApkAsset? pickApkAsset(
+    List<String> deviceAbis,
+    List<ApkAsset> assets,
+  ) {
     for (final abi in deviceAbis) {
       if (!releaseAbis.contains(abi)) continue;
       for (final asset in assets) {
@@ -466,8 +487,9 @@ class UpdateService {
     final (numbers1, pre1) = _splitVersion(v1);
     final (numbers2, pre2) = _splitVersion(v2);
 
-    final length =
-        numbers1.length > numbers2.length ? numbers1.length : numbers2.length;
+    final length = numbers1.length > numbers2.length
+        ? numbers1.length
+        : numbers2.length;
     for (int i = 0; i < length; i++) {
       final p1 = i < numbers1.length ? numbers1[i] : 0;
       final p2 = i < numbers2.length ? numbers2[i] : 0;
@@ -486,8 +508,9 @@ class UpdateService {
   int _comparePreRelease(String a, String b) {
     final partsA = a.split('.');
     final partsB = b.split('.');
-    final length =
-        partsA.length < partsB.length ? partsA.length : partsB.length;
+    final length = partsA.length < partsB.length
+        ? partsA.length
+        : partsB.length;
     for (var i = 0; i < length; i++) {
       final numA = int.tryParse(partsA[i]);
       final numB = int.tryParse(partsB[i]);

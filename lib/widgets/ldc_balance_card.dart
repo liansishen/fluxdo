@@ -447,6 +447,7 @@ class LdcBalanceCard extends ConsumerWidget {
     final theme = Theme.of(context);
     final isExpired = error is OAuthExpiredException;
     final isCfChallenge = OAuthErrorPolicy.isCfChallenge(error);
+    final nativeUntrusted = OAuthErrorPolicy.isNativeUntrusted(error);
     final errorTitle = isCfChallenge
         ? S.current.error_securityChallenge
         : isExpired
@@ -465,6 +466,15 @@ class LdcBalanceCard extends ConsumerWidget {
                 .refreshAfterCfVerification(),
             isLoading: isBusy,
             filled: filled,
+            openInBrowser: (context) => WebViewPage.open<void>(
+              context,
+              _homeUrl,
+              title: 'LINUX DO Credits',
+            ),
+            stillBlocked: () => OAuthErrorPolicy.isCfChallenge(
+              ref.read(ldcUserInfoProvider).error,
+            ),
+            preferBrowser: nativeUntrusted,
           )
         : BalanceCardActionButton(
             outlined: outlined,
@@ -633,7 +643,9 @@ class LdcBalanceCard extends ConsumerWidget {
           const SizedBox(height: 4),
           Text(
             isCfChallenge
-                ? S.current.cf_operationBlockedByChallenge
+                ? (nativeUntrusted
+                      ? S.current.cf_serviceStillBlocked
+                      : S.current.cf_operationBlockedByChallenge)
                 : isExpired
                 ? S.current.ldc_reAuthHint
                 : S.current.common_checkNetworkRetry,
@@ -745,7 +757,9 @@ class LdcBalanceCard extends ConsumerWidget {
                   const SizedBox(height: 4),
                   Text(
                     isCfChallenge
-                        ? S.current.cf_dataBlockedByChallenge
+                        ? (nativeUntrusted
+                              ? S.current.cf_serviceStillBlocked
+                              : S.current.cf_dataBlockedByChallenge)
                         : isExpired
                         ? S.current.ldc_reAuthHint
                         : S.current.common_checkNetworkRetry,

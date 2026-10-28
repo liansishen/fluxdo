@@ -125,10 +125,10 @@ SOFTWARE.
 
 ## 全局字体与推荐字体
 
-- 外观页统一展示当前字体、预览、系统默认、MiSans、系统已安装字体、导入文件及推荐字体。自选与系统安装字体通过 `ThemeState.titleFontFamilyName` 同步到墨笺标题；系统默认与 MiSans 保留墨笺内置标题字体。Claude 与 VS Code 继续继承全局字体。
+- 外观页提供统一字体入口，独立字体页管理系统默认、MiSans、系统字体、导入文件及推荐字体；导入记录与当前选用状态分别保存。墨笺通过「标题用宋体」开关控制内置标题字体，自选字体继续同步到标题，Claude 与 VS Code 继承全局字体。
 - 推荐清单位于 `assets/fonts/recommended_fonts.json`，下载支持顺序镜像、大小与 SHA-256 校验，以及从声明的 tgz 成员提取字体。下载后通过既有自选字体链路启用，重启恢复使用同一缓存键。
 - 切换或取消选用推荐字体不删除已下载文件；只有推荐字体的显式删除操作清理其缓存。导入字体仍按原规则删除，目录判断兼容 Windows 分隔符且不误认相似目录名。
-- 回归入口：`test/services/recommended_font_service_test.dart`、`test/providers/theme_provider_font_test.dart`、`test/settings/appearance_font_section_test.dart`。
+- 回归入口：`test/services/recommended_font_service_test.dart`、`test/providers/theme_provider_font_test.dart`、`test/pages/font_settings_page_test.dart`。
 
 ## 编辑器、草稿与上传
 

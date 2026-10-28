@@ -1,8 +1,12 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import 'core_providers.dart';
 import 'bookmark_name_suggestions_provider.dart';
 import 'bookmark_sync_controller.dart';
 import 'notification_list_provider.dart';
+import 'recent_notifications_provider.dart';
+import 'topic_detail/detail_memory_cache.dart';
+import 'topic_detail_provider.dart';
 import 'topic_list/topic_list_provider.dart';
 import 'topic_list/filter_provider.dart';
 import 'topic_list/sort_provider.dart';
@@ -17,6 +21,18 @@ import 'message_bus/topic_tracking_providers.dart';
 import 'message_bus/topic_list_events.dart';
 import 'ldc_providers.dart';
 import 'cdk_providers.dart';
+import 'ld_store_providers.dart';
+import 'chat/chat_channels_provider.dart';
+import 'chat/chat_messages_provider.dart';
+import 'chat/chat_notification_alert_provider.dart';
+import 'directory_providers.dart';
+import 'export_history_provider.dart';
+import 'notion_config_provider.dart';
+import 'selected_topic_provider.dart';
+import 'topic_search_provider.dart';
+import 'topic_session_provider.dart';
+import 'user_content_search_provider.dart';
+import '../services/site_context.dart';
 
 class AppStateRefresher {
   AppStateRefresher._();
@@ -52,13 +68,52 @@ class AppStateRefresher {
   }
 
   static Future<void> resetForLogout(ProviderContainer container) async {
+    _resetAccountState(container);
+    await container.read(ldcUserInfoProvider.notifier).disable();
+    await container.read(cdkUserInfoProvider.notifier).disable();
+    if (SiteContext.isLinuxDo) {
+      // 第三方商城的凭据跟论坛账号走：登出即作废（内置浏览器里那枚一并清）
+      try {
+        await container.read(ldStoreServiceProvider).signOut();
+      } catch (_) {}
+      container.invalidate(ldStoreSessionProvider);
+    }
+  }
+
+  /// 切换账号：和退出登录一样清掉上一个账号的界面状态，但 LDC / CDK 的开关
+  /// 是设备级偏好、LD士多 凭据按账号存，都不动（切回来还在）。
+  static void resetForAccountSwitch(ProviderContainer container) {
+    _resetAccountState(container);
+    container.read(selectedTopicProvider.notifier).clear();
+    container
+      ..invalidate(currentUsernameProvider)
+      ..invalidate(recentNotificationsProvider)
+      ..invalidate(chatChannelsProvider)
+      ..invalidate(chatMessagesProvider)
+      ..invalidate(chatNotificationAlertProvider)
+      ..invalidate(categoryNotificationOverridesProvider)
+      ..invalidate(siteTagGroupsProvider)
+      ..invalidate(topicSessionProvider)
+      ..invalidate(topicSearchProvider)
+      ..invalidate(userContentSearchProvider)
+      ..invalidate(connectStatsProvider)
+      ..invalidate(exportHistoryProvider)
+      ..invalidate(notionConfigProvider)
+      ..invalidate(ldStoreSessionProvider);
+  }
+
+  static void _resetAccountState(ProviderContainer container) {
     _refreshGeneration++;
     _lastRefreshTime = null;
     container.read(currentUserProvider.notifier).clearCache();
     container.read(userSummaryProvider.notifier).clearCache();
     container.read(bookmarkNameSuggestionsProvider.notifier).clearCache();
     container.read(bookmarkSyncControllerProvider.notifier).reset();
-    // 登出时 invalidate 所有（不会发请求，因为数据被清空了）
+    // 刚看过的话题详情里有这个账号的已读 / 点赞状态
+    TopicDetailMemoryCache.clear();
+    container.invalidate(topicDetailProvider);
+    RecentNotificationsNotifier.clearPrefetched();
+    // 重置账号关联的订阅与列表状态。
     for (final refresh in _coreRefreshers) {
       refresh(container);
     }
@@ -80,8 +135,6 @@ class AppStateRefresher {
       container.read(tabTagsProvider(id).notifier).state = [];
     }
     container.read(activeCategorySlugsProvider.notifier).reset();
-    await container.read(ldcUserInfoProvider.notifier).disable();
-    await container.read(cdkUserInfoProvider.notifier).disable();
   }
 
   /// 刷新话题列表各 tab

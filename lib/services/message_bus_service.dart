@@ -2,11 +2,15 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io' show Platform;
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+
 import '../constants.dart';
 import '../utils/client_id_generator.dart';
 import '../utils/scroll_busy_signal.dart';
+import 'network/background_gate.dart';
+import 'network/cf/cf_challenge_classifier.dart';
 import 'network/discourse_dio.dart';
 import 'preloaded_data_service.dart';
 
@@ -418,6 +422,14 @@ class MessageBusService {
           );
           rateLimited = true;
           rateLimitedSeconds = retryAfter;
+          // 长轮询不经调度器，自己上报：其余后台请求一起退避
+          if (!CfChallengeClassifier.isChallengeResponse(e.response)) {
+            BackgroundGate.instance.reportRateLimited(
+              retryAfter: retryAfter == null
+                  ? null
+                  : Duration(seconds: retryAfter),
+            );
+          }
         } else if (e.type == DioExceptionType.receiveTimeout) {
           // 长轮询超时是正常行为,与官方一致按"无数据返回"处理
           _failureCount = 0;
@@ -441,7 +453,7 @@ class MessageBusService {
       if (_shouldStop || generation != _pollGeneration) break;
 
       final inBackground = _backgroundMode;
-      final delay = _computeNextDelay(
+      var delay = _computeNextDelay(
         rateLimited: rateLimited,
         rateLimitedSeconds: rateLimitedSeconds,
         abortedByClient: abortedByClient,
@@ -450,6 +462,11 @@ class MessageBusService {
         inBackground: inBackground,
         startedAt: startedAt,
       );
+      // 别的请求撞了限流：长轮询也等这一轮退避结束，再错开一点
+      final gateWait = BackgroundGate.instance.backoffRemaining;
+      if (gateWait > delay) {
+        delay = gateWait + BackgroundGate.instance.jitter();
+      }
 
       if (delay > Duration.zero) {
         final waitToken = CancelToken();

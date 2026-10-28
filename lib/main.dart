@@ -872,7 +872,7 @@ class MainApp extends ConsumerWidget {
                 JankNavObserver(),
                 EscFallbackObserver(),
               ],
-              title: 'cfluxdo',
+              title: 'CFluxDo',
               locale: TranslationProvider.of(context).flutterLocale,
               localizationsDelegates: const [
                 GlobalMaterialLocalizations.delegate,

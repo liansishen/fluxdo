@@ -26,6 +26,157 @@ void main() {
     return (outcome, env.presented!);
   }
 
+  group('交互信息随结果上报', () {
+    test('露出过挑战 → 通过结果标记需要交互', () async {
+      final (outcome, round) = await start();
+      round.challengeShown();
+      env.webView = 'fresh';
+      round.clearanceSeen('fresh', source: 'polling');
+      round.completionHint('js navigation: beforeunload');
+      await clock.advance(const Duration(seconds: 2));
+
+      final result = await outcome;
+      expect(result, isA<CfRoundPassed>());
+      expect((result as CfRoundPassed).interactionRequired, isTrue);
+    });
+
+    test('后台隐藏 WebView 里露出挑战 → 不标记交互', () async {
+      final (outcome, round) = await start();
+      round.challengeShown(visible: false);
+      env.webView = 'fresh';
+      round.clearanceSeen('fresh', source: 'polling');
+      round.completionHint('js navigation: beforeunload');
+      await clock.advance(const Duration(seconds: 2));
+
+      final result = await outcome;
+      expect((result as CfRoundPassed).interactionRequired, isFalse);
+    });
+
+    test('纯后台自动通过 → 不标记交互', () async {
+      final (outcome, round) = await start();
+      env.webView = 'fresh';
+      round.clearanceSeen('fresh', source: 'polling');
+      round.completionHint('js navigation: beforeunload');
+      await clock.advance(const Duration(seconds: 2));
+
+      final result = await outcome;
+      expect((result as CfRoundPassed).interactionRequired, isFalse);
+    });
+  });
+
+  group('没有完成迹象时的值（挑战提交后页面还没跳转）', () {
+    test('只是轮询读到 → 1.5 秒不落，等满 6 秒仍无迹象才落', () async {
+      final (outcome, round) = await start();
+      env.webView = 'early';
+      round.clearanceSeen('early', source: 'polling');
+      await clock.advance(const Duration(seconds: 3));
+      expect(round.isDone, isFalse, reason: '页面还没跳转，最终那枚可能还没签');
+      expect(env.landed, isEmpty);
+
+      await clock.advance(const Duration(seconds: 4));
+      expect((await outcome as CfRoundPassed).clearance, 'early');
+    });
+
+    test('期间页面跳转并签出最终那枚 → 落最终那枚（2026-10-25 HKG 出口复现）', () async {
+      final (outcome, round) = await start();
+      env.webView = 'early';
+      round.clearanceSeen('early', source: 'polling');
+      await clock.advance(const Duration(seconds: 3));
+      // 挑战提交 3 秒后页面才跳转，跳转响应签出最终那枚
+      round.completionHint('js navigation: beforeunload');
+      env.webView = 'final';
+      round.clearanceSeen('final', source: 'completion probe');
+      await clock.advance(const Duration(seconds: 2));
+
+      expect((await outcome as CfRoundPassed).clearance, 'final');
+      expect(env.landed, ['final'], reason: '半成品从未落 jar');
+    });
+
+    test('值读到之后才来的完成迹象 → 按 1.5 秒定稿，不再多等', () async {
+      final (outcome, round) = await start();
+      env.webView = 'fresh';
+      round.clearanceSeen('fresh', source: 'polling');
+      await clock.advance(const Duration(seconds: 1));
+      round.completionHint('main frame /challenge 404', conclusive: true);
+      await clock.advance(const Duration(seconds: 1));
+
+      expect((await outcome as CfRoundPassed).clearance, 'fresh');
+      expect(
+        env.landedAt.single,
+        lessThan(const Duration(seconds: 3)),
+        reason: '完成迹象到了就回到 1.5 秒定稿',
+      );
+    });
+  });
+
+  group('落值收尾', () {
+    test('收尾在落值确认后、宣布通过前执行', () async {
+      final (outcome, round) = await start();
+      env.webView = 'fresh';
+      round.clearanceSeen('fresh', source: 'polling');
+      round.completionHint('js navigation: beforeunload');
+      await clock.advance(const Duration(seconds: 2));
+
+      expect((await outcome as CfRoundPassed).clearance, 'fresh');
+      expect(env.calls, containsAllInOrder(['land', 'afterLanded', 'passed']));
+    });
+
+    test('收尾期间站点又签了一枚（回首页时下发）→ 改落新值，以新值通过', () async {
+      final (outcome, round) = await start();
+      env.landOnlyCurrentWebView = true;
+      env.onAfterLanded = (_) async => env.webView = 'final';
+      env.webView = 'first';
+      round.clearanceSeen('first', source: 'polling');
+      round.completionHint('js navigation: beforeunload');
+      await clock.advance(const Duration(seconds: 2));
+
+      final result = await outcome as CfRoundPassed;
+      expect(result.clearance, 'final');
+      expect(env.jar, 'final', reason: '通过 = 定稿值已在 jar');
+      expect(env.landed, ['first', 'final']);
+    });
+
+    test('新值落不进 jar → 仍以已落的值通过', () async {
+      final (outcome, round) = await start();
+      env.onAfterLanded = (_) async {
+        env.webView = 'final';
+        env.gateAccepts = false;
+      };
+      env.webView = 'first';
+      round.clearanceSeen('first', source: 'polling');
+      round.completionHint('js navigation: beforeunload');
+      await clock.advance(const Duration(seconds: 2));
+
+      final result = await outcome as CfRoundPassed;
+      expect(result.clearance, 'first');
+      expect(env.jar, 'first');
+    });
+
+    test('收尾出错不影响通过', () async {
+      final (outcome, round) = await start();
+      env.onAfterLanded = (_) async => throw StateError('page gone');
+      env.webView = 'fresh';
+      round.clearanceSeen('fresh', source: 'polling');
+      round.completionHint('js navigation: beforeunload');
+      await clock.advance(const Duration(seconds: 2));
+
+      expect((await outcome as CfRoundPassed).clearance, 'fresh');
+    });
+
+    test('收尾期间的自动放弃被忽略', () async {
+      final (outcome, round) = await start();
+      env.onAfterLanded = (_) async {
+        round.giveUp(CfRoundFailure.timeout, detail: 'page timeout');
+      };
+      env.webView = 'fresh';
+      round.clearanceSeen('fresh', source: 'polling');
+      round.completionHint('js navigation: beforeunload');
+      await clock.advance(const Duration(seconds: 2));
+
+      expect(await outcome, isA<CfRoundPassed>());
+    });
+  });
+
   group('定稿', () {
     test('v1@0s、v2@0.6s、404@0.8s → 定稿 v2，jar 里是 v2', () async {
       final (outcome, round) = await start();
@@ -169,6 +320,7 @@ void main() {
       final (outcome, round) = await start();
       env.webView = 'fresh';
       round.clearanceSeen('fresh', source: 'polling');
+      round.completionHint('js navigation: beforeunload');
 
       await clock.advance(const Duration(seconds: 4));
 
@@ -186,6 +338,7 @@ void main() {
       final (outcome, round) = await start();
       env.webView = 'v1';
       round.clearanceSeen('v1', source: 'polling');
+      round.completionHint('js navigation: beforeunload');
       await clock.advance(const Duration(seconds: 3));
       expect((await outcome as CfRoundPassed).clearance, 'v2');
       expect(env.jar, 'v2');
@@ -198,14 +351,26 @@ void main() {
       final (outcome, round) = await start();
       env.webView = 'v1';
       round.clearanceSeen('v1', source: 'polling');
-      await clock.advance(const Duration(seconds: 5));
+      await clock.advance(const Duration(milliseconds: 5999));
+      expect(round.isDone, isFalse);
+      expect(env.landed, isEmpty, reason: '无完成信号时必须先稳定满 6 秒');
+      await clock.advance(const Duration(milliseconds: 1));
+      expect(env.landed, ['v1', 'v2']);
+      expect(round.isDone, isFalse);
+      await clock.advance(const Duration(milliseconds: 999));
+      expect(round.isDone, isFalse, reason: '改落后的三次尝试仍须遵守重试间隔');
+      await clock.advance(const Duration(milliseconds: 1));
+      expect(round.isDone, isTrue);
       expect((await outcome as CfRoundFailed).reason, CfRoundFailure.notLanded);
       expect(env.landed, ['v1', 'v2', 'v2', 'v2']);
       expect(env.jar, 'old');
+      expect(env.calls, isNot(contains('afterLanded')));
+      expect(env.recordedFailures, [round.id]);
     });
 
     test('值一直在变、稳定不下来 → 不落值，按超时收口', () async {
       final (outcome, round) = await start();
+      round.completionHint('js navigation: beforeunload');
       var n = 0;
       // 每 1 秒换一枚值，永远不满 1.5 秒
       for (var i = 0; i < 12 && !round.isDone; i++) {
@@ -223,6 +388,7 @@ void main() {
       final (outcome, round) = await start();
       env.webView = 'fresh';
       round.clearanceSeen('fresh', source: 'polling');
+      round.completionHint('js navigation: beforeunload');
       await clock.advance(const Duration(milliseconds: 500));
 
       round.giveUp(CfRoundFailure.timeout, detail: 'silent background timeout');
@@ -337,6 +503,7 @@ void main() {
       final (outcome, round) = await start();
       env.webView = 'fresh';
       round.clearanceSeen('fresh', source: 'polling');
+      round.completionHint('js navigation: beforeunload');
       await clock.advance(const Duration(seconds: 2));
       expect((await outcome).passed, isTrue);
       expect(rounds.active, same(round));

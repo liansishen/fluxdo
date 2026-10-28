@@ -22,8 +22,9 @@ import 'core_providers.dart';
 ///    刷新,当场生效;无变化零重建);
 /// 3. 无快照(首装)→ 行为同旧:等网络,单次 emit;网络失败且无
 ///    快照才进 error 态。
-final emojiGroupsProvider =
-    StreamProvider<Map<String, List<Emoji>>>((ref) async* {
+final emojiGroupsProvider = StreamProvider<Map<String, List<Emoji>>>((
+  ref,
+) async* {
   final service = ref.watch(discourseServiceProvider);
 
   final snapshotJson = await _EmojiSnapshotStore.load();
@@ -40,7 +41,7 @@ final emojiGroupsProvider =
       yield snapshotGroups;
       // 后台刷新:失败静默(快照已在展示,不打扰)。
       try {
-        final fresh = await service.getEmojisRaw();
+        final fresh = await service.getEmojisRaw(background: true);
         final freshJson = jsonEncode(fresh);
         if (freshJson != snapshotJson) {
           await _EmojiSnapshotStore.save(freshJson);

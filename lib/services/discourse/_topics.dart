@@ -65,6 +65,7 @@ mixin _TopicsMixin on _DiscourseServiceBase {
     bool? ascending,
     String? subset,
     List<int>? topicIds,
+    bool background = false,
   }) async {
     String path;
     final queryParams = <String, dynamic>{
@@ -116,6 +117,8 @@ mixin _TopicsMixin on _DiscourseServiceBase {
     final response = await _dio.get(
       path,
       queryParameters: queryParams.isNotEmpty ? queryParams : null,
+      // 后台预取（新话题提示条点开前先取好）：低优先级、不触发过盾
+      options: background ? Options(extra: const {'isSilent': true}) : null,
     );
     // isolate 内构造(jsonDecode 已由 BackgroundTransformer 移出主线程,
     // 几十个 Topic 对象的 fromJson 构造同样不便宜):返回值经
@@ -714,8 +717,17 @@ mixin _TopicsMixin on _DiscourseServiceBase {
   /// 获取话题主贴的 HTML 内容
   /// 走 posts#by_number 单帖接口(只回一帖 JSON),
   /// 比 /t/:id/1.json 的 TopicView(20 楼 chunk + 话题详情)轻量得多
-  Future<String?> getTopicFirstPostCooked(int topicId) async {
-    final response = await _dio.get('/posts/by_number/$topicId/1.json');
+  ///
+  /// [background]：列表摘要预取（低优先级、不触发过盾，失败由调用方冷却后再取）；
+  /// 长按预览是用户在等，照常发。
+  Future<String?> getTopicFirstPostCooked(
+    int topicId, {
+    bool background = false,
+  }) async {
+    final response = await _dio.get(
+      '/posts/by_number/$topicId/1.json',
+      options: background ? Options(extra: const {'isSilent': true}) : null,
+    );
     return (response.data as Map<String, dynamic>)['cooked'] as String?;
   }
 }
