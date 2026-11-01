@@ -221,7 +221,7 @@ class _PreheatLoadingState extends State<_PreheatLoading> {
                 PreheatLogo(style: widget.iconStyle, size: 108),
                 const SizedBox(height: 24),
                 Text(
-                  'cfluxdo',
+                  'CFluxDo',
                   style: theme.textTheme.headlineMedium?.copyWith(
                     color: colorScheme.onSurface,
                     fontWeight: FontWeight.w600,
@@ -365,6 +365,8 @@ class _StartupStatusState extends State<_StartupStatus> {
         return l10n.preheat_reasonNativeFailed(
           p.reasonDetail ?? l10n.preheat_detailConnectionError,
         );
+      case StartupDetourReason.upstreamUnreachable:
+        return l10n.preheat_reasonUpstreamUnreachable;
       case StartupDetourReason.webViewNoData:
         return l10n.preheat_reasonWebViewNoData;
       case StartupDetourReason.webViewTimeout:

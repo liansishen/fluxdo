@@ -213,7 +213,7 @@ class RecommendedFontService extends ChangeNotifier {
 
   /// 远端清单：仓库里同一个文件，经 jsDelivr 取（加镜像、换版本不用发包）
   static const String remoteManifestUrl =
-      'https://cdn.jsdelivr.net/gh/1molchuan/fluxdo@main/assets/fonts/recommended_fonts.json';
+      'https://cdn.jsdelivr.net/gh/1molchuan/CFluxDo@main/assets/fonts/recommended_fonts.json';
 
   /// 远端清单的本地缓存（SharedPreferences）
   static const String cachedManifestKey = 'recommended_fonts_manifest';
@@ -253,7 +253,8 @@ class RecommendedFontService extends ChangeNotifier {
   static String familyNameFor(String path) =>
       CustomFontService.familyNameFor(path);
 
-  /// 是否是推荐字体目录下的文件
+  /// 是否是推荐字体目录下的文件（Windows 上目录分隔符是 `\`，拼上文件名
+  /// 那一段又是 `/`，两种都认）
   static bool isRecommendedFontPath(String? path) =>
       path != null && path.split(RegExp(r'[/\\]')).contains(_dirName);
 

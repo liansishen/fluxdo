@@ -65,9 +65,15 @@ class CdkOAuthService {
   /// 重新签发业务会话，不预先登出；取消授权时仍保留原会话。
   Future<bool> reauthorize(BuildContext context) => authorize(context);
 
-  Future<CdkUserInfo?> getUserInfo({String? expectedUsername}) async {
+  Future<CdkUserInfo?> getUserInfo({
+    String? expectedUsername,
+    bool afterVerification = false,
+  }) async {
     if (!SiteContext.isLinuxDo) return null;
-    final data = await _session.getUserInfo(expectedUsername: expectedUsername);
+    final data = await _session.getUserInfo(
+      expectedUsername: expectedUsername,
+      afterVerification: afterVerification,
+    );
     return CdkUserInfo.fromJson(data);
   }
 

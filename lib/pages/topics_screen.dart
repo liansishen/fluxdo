@@ -248,6 +248,7 @@ class _TopicsScreenState extends ConsumerState<TopicsScreen> {
                   topicId: entry.topicId!,
                   initialTitle: entry.initialTitle,
                   scrollToPostNumber: entry.scrollToPostNumber,
+                  expectedHighestPostNumber: entry.expectedHighestPostNumber,
                   instanceId: _getOrCreateInstanceId(
                     entry.topicId!,
                     existingInstanceId: entry.instanceId,
@@ -545,6 +546,7 @@ class TopicDetailPane extends ConsumerWidget {
     this.instanceId,
     this.initialTitle,
     this.scrollToPostNumber,
+    this.expectedHighestPostNumber,
     this.highlightBoostUsername,
     this.initialRevisionPostNumber,
     this.initialRevisionNumber,
@@ -560,6 +562,7 @@ class TopicDetailPane extends ConsumerWidget {
   final String? instanceId;
   final String? initialTitle;
   final int? scrollToPostNumber;
+  final int? expectedHighestPostNumber;
   final String? highlightBoostUsername;
   final int? initialRevisionPostNumber;
   final int? initialRevisionNumber;
@@ -598,6 +601,8 @@ class TopicDetailPane extends ConsumerWidget {
       // 面板在 master/detail 槽位之间搬动会重建 Widget，但 provider 与
       // 视口位置都沿用同一个 instanceId，不再退回最初进入时的楼层。
       scrollToPostNumber: restoredScrollPosition ?? scrollToPostNumber,
+      // 恢复的是同一实例的位置时 provider 还在，用不到缓存
+      expectedHighestPostNumber: expectedHighestPostNumber,
       highlightBoostUsername: highlightBoostUsername,
       initialRevisionPostNumber: initialRevisionPostNumber,
       initialRevisionNumber: initialRevisionNumber,
@@ -647,6 +652,7 @@ class PaneContentWidget extends StatelessWidget {
           instanceId: entry.instanceId,
           initialTitle: entry.initialTitle,
           scrollToPostNumber: entry.scrollToPostNumber,
+          expectedHighestPostNumber: entry.expectedHighestPostNumber,
           highlightBoostUsername: entry.highlightBoostUsername,
           initialRevisionPostNumber: entry.initialRevisionPostNumber,
           initialRevisionNumber: entry.initialRevisionNumber,

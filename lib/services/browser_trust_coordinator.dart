@@ -14,6 +14,7 @@ import 'cf_challenge_service.dart';
 import 'cf_clearance_authority.dart';
 import 'cf_clearance_refresh_service.dart';
 import 'network/cf/cf_round_outcome.dart';
+import 'network/doh_proxy/gateway_error.dart';
 import 'discourse/discourse_service.dart';
 import 'network/cookie/cookie_jar_service.dart';
 import 'network/cookie/webview_cookie_priming.dart';
@@ -22,6 +23,7 @@ import 'session/webview_use.dart';
 import 'startup/app_startup.dart';
 import 'startup_progress.dart';
 import 'webview_session_cookie_refresh_service.dart';
+import 'webview_render_gone.dart';
 import 'webview_settings.dart';
 import 'windows_webview_environment_service.dart';
 
@@ -315,6 +317,23 @@ class BrowserTrustCoordinator {
         _log('native preload success reason=$reason');
         return;
       } catch (e) {
+        if (GatewayError.isUpstreamFailure(e)) {
+          // 本机网关连不上服务器节点：内置浏览器也经同一个网关，绕过去只会
+          // 再失败一轮、白等十几秒（还会报成 TLS 握手失败）。直接再试一次
+          // 直连，这期间选线路那边可能已经换到能连上的节点
+          _log(
+            'native preload failed: gateway upstream unreachable, retry native '
+            'without WebView detour: $e',
+            level: 'warning',
+          );
+          progress.stage(
+            StartupStage.connecting,
+            reason: StartupDetourReason.upstreamUnreachable,
+          );
+          await _preload.ensureLoaded(observer: progress);
+          _log('native preload retry success reason=$reason');
+          return;
+        }
         _log(
           'trusted native preload failed, switching to startup WebView: $e',
           level: 'warning',
@@ -575,6 +594,11 @@ class BrowserTrustCoordinator {
       initialUserScripts: _startupPreloadScripts(),
       onReceivedServerTrustAuthRequest: (_, challenge) =>
           WebViewSettings.handleServerTrustAuthRequest(challenge),
+      // 渲染进程没了：这个 WebView 不能再用，取消本轮，回退原生预载
+      onRenderProcessGone: (_, detail) {
+        WebViewRenderGone.report('startup_preload', detail);
+        cancellation.cancel();
+      },
       onWebViewCreated: (createdController) {
         WebViewSettings.applyWindowsHeadlessMemoryTarget(createdController);
         WebViewSettings.registerJsErrorReporter(createdController);
@@ -694,7 +718,9 @@ class BrowserTrustCoordinator {
         }
         _log('startup WebView session bootstrap end reason=$reason');
       } else {
-        _log('startup WebView session bootstrap skipped: no _t or unsupported site');
+        _log(
+          'startup WebView session bootstrap skipped: no _t or unsupported site',
+        );
       }
 
       return hydrated;
@@ -761,7 +787,26 @@ class BrowserTrustCoordinator {
         cancellation.whenCancelled,
       ]);
     }
+    await _logStartupSnapshotFailure(controller);
     return null;
+  }
+
+  /// 快照超时时记录页面到底看到了什么：挑战页 / 空页 / 带预加载但未捕获。
+  /// 只在启动失败路径调用一次，不影响正常链路。
+  Future<void> _logStartupSnapshotFailure(
+    InAppWebViewController controller,
+  ) async {
+    try {
+      final state = await controller.evaluateJavascript(
+        source: PreloadedDataService.snapshotStateScript,
+      );
+      _log('startup WebView snapshot timeout state: $state', level: 'warning');
+    } catch (e) {
+      _log(
+        'startup WebView snapshot timeout state unavailable: $e',
+        level: 'warning',
+      );
+    }
   }
 
   /// 冷启动能否直接走原生链路预加载首页（剩余有效期门槛见
@@ -848,21 +893,17 @@ document.close();
       '<!DOCTYPE html><html><head><meta charset="utf-8"></head>'
       '<body></body></html>';
 
-  String get _preloadedSnapshotScript => '''
+  String get _preloadedSnapshotScript =>
+      '''
 (function() {
   if (window.__fluxdoPreloadedSnapshotInstalled) return;
   window.__fluxdoPreloadedSnapshotInstalled = true;
-
+${PreloadedDataService.snapshotCaptureFunction}
+  // DOM 流式解析可能先插入 script 空壳，不能拿到半截 JSON 就断开观察
   function capture() {
-    var el = document.querySelector('#data-preloaded, [data-preloaded]');
-    if (!el) return false;
-    var parts = [el.outerHTML];
-    document.querySelectorAll('meta[name]').forEach(function(m) {
-      parts.push(m.outerHTML);
-    });
-    var setup = document.getElementById('data-discourse-setup');
-    if (setup) parts.push(setup.outerHTML);
-    window.__rawPreloaded = parts.join('\\n');
+    var snapshot = __fluxdoCapturePreloaded();
+    if (!snapshot) return false;
+    window.__rawPreloaded = snapshot;
     return true;
   }
 

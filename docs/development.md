@@ -125,10 +125,10 @@ SOFTWARE.
 
 ## 全局字体与推荐字体
 
-- 外观页统一展示当前字体、预览、系统默认、MiSans、系统已安装字体、导入文件及推荐字体。自选与系统安装字体通过 `ThemeState.titleFontFamilyName` 同步到墨笺标题；系统默认与 MiSans 保留墨笺内置标题字体。Claude 与 VS Code 继续继承全局字体。
+- 外观页通过「字体」进入独立页面，统一展示当前字体、预览、系统默认、MiSans、导入文件及推荐字体；系统已安装字体选择仅在桌面端提供。自选与系统安装字体通过 `ThemeState.titleFontFamilyName` 同步到墨笺标题；系统默认与 MiSans 可通过「标题用宋体」开关选择标题字体。Claude 与 VS Code 继续继承全局字体。
 - 推荐清单位于 `assets/fonts/recommended_fonts.json`，下载支持顺序镜像、大小与 SHA-256 校验，以及从声明的 tgz 成员提取字体。下载后通过既有自选字体链路启用，重启恢复使用同一缓存键。
-- 切换或取消选用推荐字体不删除已下载文件；只有推荐字体的显式删除操作清理其缓存。导入字体仍按原规则删除，目录判断兼容 Windows 分隔符且不误认相似目录名。
-- 回归入口：`test/services/recommended_font_service_test.dart`、`test/providers/theme_provider_font_test.dart`、`test/settings/appearance_font_section_test.dart`。
+- 切换或取消选用推荐字体不删除已下载文件；只有推荐字体的显式删除操作清理其缓存。导入字体单独保存，切换字体后仍可重新选用，显式删除才清理文件；目录判断兼容 Windows 分隔符且不误认相似目录名。
+- 回归入口：`test/services/recommended_font_service_test.dart`、`test/providers/theme_provider_font_test.dart`、`test/pages/font_settings_page_test.dart`。
 
 ## 编辑器、草稿与上传
 
@@ -147,6 +147,7 @@ SOFTWARE.
 - Rust 原生产物需与 Dart FFI 同批构建，Windows 通过 `native:prepare windows --release` 暂存 DLL。内置公共 ECH 域名含 LINUX DO、静态资源和 IDCFlare，关闭开关同时关闭公共兜底，但不关闭原域名 HTTPS/ECH 查询；Selector 覆盖范围独立，不随公共 ECH 域名扩展。
 - Selector 显式覆盖 LINUX DO、IDCFlare、`ldstatic.com` 及配置主机的子域，共享赢家与故障统计；静态资源域纳入叶证书预放行及 MITM，范围外继续隧道转发。
 - PM、勿扰与分类变更订阅由登录后启动项统一持有和释放；MessageBus 轮询、延迟队列和私信请求均检查会话或请求代际。列表事件按版本消费，静音不阻断已读与删除恢复同步。
+- 通知数上涨时可在后台静默预取最近通知，打开面板先使用预取结果，再正常读取以更新已看到位置。退出或换号会推进预取代际：旧请求不能回写缓存或清除新账号进行中的预取；回归入口为 `test/providers/recent_notifications_prefetch_test.dart`。
 - 首页辅助刷新按钮偏好独立于主 FAB；「上滑变刷新」默认开启，可通过 `pref_home_fab_refresh_on_scroll_up` 单独关闭。开启时主 FAB 朝顶部滚动切换为刷新，回到折叠锚位或点击刷新后恢复加号，非活跃列表不回写模式。切换刷新模式收起菜单；VS Code 保留固定资源管理器工具按钮。社区点数显示精确千分位值，缺少插件数据时不占位，点击进入当前站排行榜。标签与话题共用通知级别面板；预览入口继续使用 `MorphingDialogAnchor`。
 - 「阅读设置 → 自动载入新话题」默认关闭，持久化键为 `pref_auto_load_topic_updates`。启用后仅前台、可见、停在顶部且未拖动的列表自动消费更新；2 秒攒批、请求最小间隔 30 秒。关闭、离开页面或切换筛选时取消旧定时器，插入话题时保留开头的置顶行。
 - CF 验证轮次收到 `/challenge` 的源站 404 后，先等待 3 秒；若始终没有新 Cookie，才采纳 WebView 现值。现值也必须通过权威闸门并确认写入 jar，不放宽主站/双站 Cookie 准入。

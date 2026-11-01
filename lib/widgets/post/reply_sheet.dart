@@ -1446,6 +1446,8 @@ class _ReplySheetState extends ConsumerState<ReplySheet> {
                                   onEmojiPanelChanged: (show) {
                                     setState(() => _showEmojiPanel = show);
                                   },
+                                  hashtagDataSource:
+                                      DiscourseService().searchHashtags,
                                   mentionDataSource: (term) =>
                                       DiscourseService().searchUsers(
                                         term: term,
@@ -1481,6 +1483,8 @@ class _ReplySheetState extends ConsumerState<ReplySheet> {
                             onEmojiPanelChanged: (show) {
                               setState(() => _showEmojiPanel = show);
                             },
+                            hashtagDataSource:
+                                DiscourseService().searchHashtags,
                             mentionDataSource: (term) =>
                                 DiscourseService().searchUsers(
                                   term: term,

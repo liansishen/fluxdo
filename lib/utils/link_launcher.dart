@@ -13,10 +13,12 @@ import '../pages/webview_page.dart';
 import '../providers/preferences_provider.dart';
 import '../providers/category_provider.dart';
 import '../providers/selected_topic_provider.dart';
+import '../l10n/s.dart';
 import '../services/discourse/discourse_service.dart';
 import '../config/forum_site.dart';
 import '../services/site_context.dart';
 import '../services/site_switch_service.dart';
+import '../services/toast_service.dart';
 import '../widgets/common/external_link_confirm_dialog.dart';
 import '../widgets/content/discourse_html_content/image_utils.dart';
 import '../widgets/layout/home_workspace_scope.dart';
@@ -25,6 +27,33 @@ import 'link_security.dart';
 import 'url_helper.dart';
 
 const _browserChannel = MethodChannel('com.github.lingyan000.fluxdo/browser');
+
+/// 交给系统打开 [uri]（浏览器、邮件客户端、下载等），返回是否打开了。
+///
+/// Linux 不先问 `canLaunchUrl`：它查的是本机注册的默认程序，Flatpak 沙箱
+/// 里没有任何注册，永远回答「打不开」，以前就卡在这一步（Issue #2）。
+/// 真正打开用的 `gtk_show_uri` 在沙箱里会走 XDG 门户交给宿主机，所以直接
+/// 调；还不行再试 `xdg-open`（Flatpak 运行时里它也转发给门户）。
+Future<bool> openWithSystem(Uri uri) async {
+  if (!Platform.isLinux) {
+    if (!await canLaunchUrl(uri)) return false;
+    return launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+  try {
+    if (await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      return true;
+    }
+  } catch (e) {
+    debugPrint('[LinkLauncher] launchUrl 失败，改用 xdg-open: $e');
+  }
+  try {
+    final result = await Process.run('xdg-open', [uri.toString()]);
+    return result.exitCode == 0;
+  } catch (e) {
+    debugPrint('[LinkLauncher] xdg-open 失败: $e');
+    return false;
+  }
+}
 
 /// 检查 URL 是否属于当前论坛主域路由，不包含子域服务。
 bool isInternalUrl(Uri uri) {
@@ -61,14 +90,21 @@ bool _isImageLinkUrl(String url) {
 
 /// 打开外部链接
 ///
-/// 根据用户偏好决定使用内置浏览器还是外部浏览器
-/// 如果启用了链接安全检查，会根据链接风险等级显示确认对话框
+/// 如果启用了链接安全检查，会根据链接风险等级弹出确认对话框，
+/// 由用户选择使用内置浏览器还是系统浏览器；未弹框（信任/内部链接，
+/// 或未启用离站确认）时按「外部链接使用内置浏览器」偏好分流
 Future<void> launchExternalLink(BuildContext context, String url) async {
   if (url.isEmpty) return;
   final uri = Uri.tryParse(url);
   if (uri == null) return;
 
+  final prefs = ProviderScope.containerOf(
+    context,
+    listen: false,
+  ).read(preferencesProvider);
+
   // 链接安全检查
+  ExternalLinkOpenChoice? explicitChoice;
   final config = AppConstants.siteCustomization.linkSecurityConfig;
   if (config != null && config.enableExitConfirmation) {
     final riskLevel = LinkSecurity.checkUrl(url, config);
@@ -85,13 +121,14 @@ Future<void> launchExternalLink(BuildContext context, String url) async {
       case LinkRiskLevel.normal:
       case LinkRiskLevel.risky:
       case LinkRiskLevel.dangerous:
-        // 需要确认的链接，显示确认对话框
-        final confirmed = await showExternalLinkConfirmDialog(
+        // 需要确认的链接，显示确认对话框，由用户选择打开方式
+        explicitChoice = await showExternalLinkConfirmDialog(
           context,
           url,
           riskLevel,
+          preferInApp: prefs.openExternalLinksInAppBrowser,
         );
-        if (confirmed != true) return;
+        if (explicitChoice == null) return;
         break;
     }
   }
@@ -99,19 +136,24 @@ Future<void> launchExternalLink(BuildContext context, String url) async {
   // 安全确认对话框关闭时，原帖子/页面可能已经被滚动回收或导航销毁。
   if (!context.mounted) return;
 
-  final prefs = ProviderScope.containerOf(
-    context,
-    listen: false,
-  ).read(preferencesProvider);
-  final preferInApp = prefs.openExternalLinksInAppBrowser;
+  // 确认弹层中已显式选择「内置浏览器」：不经偏好，直接进内置 WebView
+  if (explicitChoice == ExternalLinkOpenChoice.inAppBrowser) {
+    WebViewPage.open(context, url);
+    return;
+  }
+
+  // 确认弹层中已显式选择「系统浏览器」：尊重本次选择，忽略偏好
+  final preferInApp = explicitChoice == ExternalLinkOpenChoice.systemBrowser
+      ? false
+      : prefs.openExternalLinksInAppBrowser;
 
   if (preferInApp && (uri.scheme == 'http' || uri.scheme == 'https')) {
     WebViewPage.open(context, url);
     return;
   }
 
-  if (await canLaunchUrl(uri)) {
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  if (!await openWithSystem(uri)) {
+    ToastService.showError(S.current.common_cannotOpenBrowser);
   }
 }
 
@@ -144,7 +186,8 @@ Future<void> launchContentLink(
   final targetSite = targetUri == null ? null : ForumSite.fromUri(targetUri);
   if (targetSite != null && targetSite != SiteContext.current) {
     await SiteSwitchService.instance.switchTo(
-      targetSite, openUrl: targetUri!.replace(scheme: 'https', port: 443),
+      targetSite,
+      openUrl: targetUri!.replace(scheme: 'https', port: 443),
     );
     return;
   }
@@ -217,7 +260,6 @@ Future<void> launchContentLink(
     return;
   }
 
-
   // 3. 图片直链(站点自己的域名/CDN/S3 CDN)→ 直接用内置查看器打开,
   //    与网页端一致(点图直接看大图,不当"外部链接"走离站确认弹窗)。
   //    只信任站点自己配置的域名——不是随便一个图片后缀的外链都放行。
@@ -227,7 +269,10 @@ Future<void> launchContentLink(
     );
     final uri = Uri.tryParse(fullUrl);
     if (uri != null && UrlHelper.isTrustedImageHost(uri)) {
-      await ImageViewerPage.open(context, DiscourseImageUtils.getOriginalUrl(fullUrl));
+      await ImageViewerPage.open(
+        context,
+        DiscourseImageUtils.getOriginalUrl(fullUrl),
+      );
       return;
     }
   }
@@ -239,9 +284,7 @@ Future<void> launchContentLink(
       onDownloadAttachment(fullUrl);
     } else {
       final uri = Uri.tryParse(fullUrl);
-      if (uri != null && await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      }
+      if (uri != null) await openWithSystem(uri);
     }
     return;
   }
@@ -249,9 +292,7 @@ Future<void> launchContentLink(
   // 5. Email 链接
   if (url.startsWith('mailto:')) {
     final uri = Uri.tryParse(url);
-    if (uri != null && await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    }
+    if (uri != null) await openWithSystem(uri);
     return;
   }
 
@@ -283,18 +324,8 @@ Future<bool> launchInExternalBrowser(String url) async {
     } catch (e) {
       debugPrint('[LinkLauncher] Failed to launch browser: $e');
       // 回退到 url_launcher
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-        return true;
-      }
-      return false;
+      return openWithSystem(uri);
     }
-  } else {
-    // iOS 和其他平台使用 url_launcher
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-      return true;
-    }
-    return false;
   }
+  return openWithSystem(uri);
 }

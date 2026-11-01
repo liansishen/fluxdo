@@ -1650,7 +1650,7 @@ class _ListWarmHost implements PostWarmHost {
       cursor,
       budget,
       paragraphWarmer: () =>
-          PostRenderPrep.probeParagraphWarmer(_state.context),
+          PostRenderPrep.probeParagraphWarmer(_state.context, plan.callbacks),
     );
   }
 }

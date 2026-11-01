@@ -49,9 +49,14 @@ class _CurrentUser extends CurrentUserNotifier {
 class _LdcService extends LdcOAuthService {
   _LdcService(this.load) : super(dio: Dio());
   final Future<Map<String, dynamic>> Function() load;
+  final List<bool> afterVerificationFlags = [];
   @override
-  Future<LdcUserInfo?> getUserInfo({String? expectedUsername}) async {
+  Future<LdcUserInfo?> getUserInfo({
+    String? expectedUsername,
+    bool afterVerification = false,
+  }) async {
     expect(expectedUsername, isNotEmpty);
+    afterVerificationFlags.add(afterVerification);
     return LdcUserInfo.fromJson(await load());
   }
 
@@ -62,9 +67,14 @@ class _LdcService extends LdcOAuthService {
 class _CdkService extends CdkOAuthService {
   _CdkService(this.load) : super(dio: Dio());
   final Future<Map<String, dynamic>> Function() load;
+  final List<bool> afterVerificationFlags = [];
   @override
-  Future<CdkUserInfo?> getUserInfo({String? expectedUsername}) async {
+  Future<CdkUserInfo?> getUserInfo({
+    String? expectedUsername,
+    bool afterVerification = false,
+  }) async {
     expect(expectedUsername, isNotEmpty);
+    afterVerificationFlags.add(afterVerification);
     return CdkUserInfo.fromJson(await load());
   }
 
@@ -84,6 +94,8 @@ void main() {
       late ProviderContainer container;
       late SharedPreferences prefs;
       late Future<Map<String, dynamic>> Function() load;
+      late _LdcService ldcService;
+      late _CdkService cdkService;
 
       Future<void> initialize() async {
         SharedPreferences.setMockInitialValues({
@@ -92,16 +104,14 @@ void main() {
         });
         prefs = await SharedPreferences.getInstance();
         load = () async => _userInfo;
+        ldcService = _LdcService(() => load());
+        cdkService = _CdkService(() => load());
         container = ProviderContainer(
           retry: (_, _) => null,
           overrides: [
             currentUserProvider.overrideWith(_CurrentUser.new),
-            ldcOAuthServiceProvider.overrideWithValue(
-              _LdcService(() => load()),
-            ),
-            cdkOAuthServiceProvider.overrideWithValue(
-              _CdkService(() => load()),
-            ),
+            ldcOAuthServiceProvider.overrideWithValue(ldcService),
+            cdkOAuthServiceProvider.overrideWithValue(cdkService),
           ],
         );
         addTearDown(container.dispose);
@@ -116,6 +126,13 @@ void main() {
       AsyncValue<Object?> current() => isLdc
           ? container.read(ldcUserInfoProvider)
           : container.read(cdkUserInfoProvider);
+      Future<void> refreshAfterVerification() => isLdc
+          ? container
+                .read(ldcUserInfoProvider.notifier)
+                .refreshAfterCfVerification()
+          : container
+                .read(cdkUserInfoProvider.notifier)
+                .refreshAfterCfVerification();
 
       DioException challenge() => DioException(
         requestOptions: RequestOptions(path: '/api/v1/oauth/user-info'),
@@ -138,6 +155,25 @@ void main() {
         expect(OAuthErrorPolicy.isCfChallenge(current().error), isTrue);
         expect(current().value, same(previous));
         expect(prefs.getString(cacheKey), isNotNull);
+      });
+
+      test('卡片手动验证后的刷新带上验证后标记（仍被拦不再自动起验证）', () async {
+        await initialize();
+        await read();
+        if (isLdc) {
+          await container
+              .read(ldcUserInfoProvider.notifier)
+              .refreshAfterCfVerification();
+        } else {
+          await container
+              .read(cdkUserInfoProvider.notifier)
+              .refreshAfterCfVerification();
+        }
+        await refresh();
+        final flags = isLdc
+            ? ldcService.afterVerificationFlags
+            : cdkService.afterVerificationFlags;
+        expect(flags, [false, true, false]);
       });
 
       test('确认授权过期才清除余额缓存', () async {
@@ -238,6 +274,39 @@ void main() {
         expect(prefs.getString(legacyCacheKey), isNull);
         expect(current().hasError, isFalse);
       });
+
+      for (final expires in [false, true]) {
+        test('验证后刷新期间换号，旧${expires ? '过期错误' : '余额'}不能串写新账号', () async {
+          await initialize();
+          await read();
+          final pending = Completer<Map<String, dynamic>>();
+          final entered = Completer<void>();
+          load = () {
+            entered.complete();
+            return pending.future;
+          };
+          final oldRefresh = refreshAfterVerification();
+          await entered.future;
+          load = () async => {..._userInfo, 'username': 'bob', 'score': 34};
+          (container.read(currentUserProvider.notifier) as _CurrentUser)
+              .switchTo('bob');
+          await read();
+          final newAccountCache = prefs.getString(otherAccountCacheKey);
+          if (expires) {
+            pending.completeError(OAuthExpiredException(serviceName: name));
+          } else {
+            pending.complete(_userInfo);
+          }
+          await oldRefresh;
+          expect(current().hasError, isFalse);
+          expect(prefs.getString(otherAccountCacheKey), newAccountCache);
+          expect((jsonDecode(newAccountCache!) as Map)['username'], 'bob');
+          expect(
+            (jsonDecode(prefs.getString(cacheKey)!) as Map)['username'],
+            'alice',
+          );
+        });
+      }
 
       test('旧版同账号缓存仍可兜底，成功后迁移到账号专属键', () async {
         await initialize();
