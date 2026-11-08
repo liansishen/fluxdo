@@ -14,6 +14,7 @@ import '../navigation/nav_action_bus.dart';
 import '../services/network/request_scheduler_config.dart';
 import '../services/uploads/upload_settings.dart';
 import '../services/cf_challenge_service.dart';
+import '../services/emoji_handler.dart';
 import '../services/render_backend_service.dart';
 import '../utils/blocked_user_filter.dart';
 import '../widgets/topic/topic_card_layout.dart';
@@ -319,6 +320,9 @@ class AppPreferences {
   final VscodeBodyStyle vscodeBodyStyle;
   final VscodeCodeLanguage vscodeCodeLanguage;
 
+  /// 表情风格:[EmojiHandler.followSite] 或 [EmojiHandler.selectableSets] 之一
+  final String emojiStyle;
+
   AppPreferences({
     required this.autoPanguSpacing,
     required this.displayPanguSpacing,
@@ -388,6 +392,7 @@ class AppPreferences {
     this.topicCardStyle = TopicCardStyle.defaults,
     this.vscodeBodyStyle = VscodeBodyStyle.compact,
     this.vscodeCodeLanguage = VscodeCodeLanguage.java,
+    this.emojiStyle = EmojiHandler.defaultPreference,
   });
 
   AppPreferences copyWith({
@@ -459,6 +464,7 @@ class AppPreferences {
     TopicCardStyle? topicCardStyle,
     VscodeBodyStyle? vscodeBodyStyle,
     VscodeCodeLanguage? vscodeCodeLanguage,
+    String? emojiStyle,
   }) {
     return AppPreferences(
       autoPanguSpacing: autoPanguSpacing ?? this.autoPanguSpacing,
@@ -557,6 +563,7 @@ class AppPreferences {
       topicCardStyle: topicCardStyle ?? this.topicCardStyle,
       vscodeBodyStyle: vscodeBodyStyle ?? this.vscodeBodyStyle,
       vscodeCodeLanguage: vscodeCodeLanguage ?? this.vscodeCodeLanguage,
+      emojiStyle: emojiStyle ?? this.emojiStyle,
     );
   }
 }
@@ -653,6 +660,7 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
   static const String _topicCardStyleKey = 'pref_topic_card_style';
   static const String _vscodeBodyStyleKey = 'pref_vscode_body_style';
   static const String _vscodeCodeLanguageKey = 'pref_vscode_code_language';
+  static const String _emojiStyleKey = 'pref_emoji_style';
 
   PreferencesNotifier(this._prefs)
     : super(
@@ -782,6 +790,9 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
             (value) => value.name == _prefs.get(_vscodeCodeLanguageKey),
             orElse: () => VscodeCodeLanguage.java,
           ),
+          emojiStyle:
+              _prefs.getString(_emojiStyleKey) ??
+              EmojiHandler.defaultPreference,
         ),
       ) {
     // 废弃的局部开关不再参与全局玻璃策略。
@@ -791,6 +802,7 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
     isPortraitLocked = state.portraitLock;
     TopicCardStyleScope.current = state.topicCardStyle;
     TopicCreationTimeScope.enabled.value = state.showTopicCreationTime;
+    EmojiHandler.setPreference(state.emojiStyle);
     CfChallengeService().autoVerifyEnabled = state.autoCfChallenge;
     // CF 服务在「切兼容」询问里给用户第二条出路(关掉自动过盾),但它拿不到
     // Riverpod 容器,也不该自己写 SharedPreferences —— 这里把持久化通道注入。
@@ -1067,6 +1079,17 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
     TopicCreationTimeScope.enabled.value = enabled;
     TopicCardLayout.evictAll();
     await _prefs.setBool(_showTopicCreationTimeKey, enabled);
+  }
+
+  /// 切换表情风格。emoji 地址在取图时按 [EmojiHandler.displaySet] 拼接/
+  /// 改写,新建的组件立即用新风格;话题卡排版里缓存着标题 emoji 地址,
+  /// 清掉重排。已在屏的正文随重建刷新。
+  Future<void> setEmojiStyle(String style) async {
+    if (state.emojiStyle == style) return;
+    EmojiHandler.setPreference(style);
+    state = state.copyWith(emojiStyle: EmojiHandler.preference);
+    TopicCardLayout.evictAll();
+    await _prefs.setString(_emojiStyleKey, EmojiHandler.preference);
   }
 
   Future<void> setShowSignatures(bool enabled) async {

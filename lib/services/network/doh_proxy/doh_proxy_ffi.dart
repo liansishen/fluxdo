@@ -142,6 +142,7 @@ class DohSelectStatus {
     this.failStreak = 0,
     this.share = false,
     this.publicDoh = const [],
+    this.family,
   });
 
   /// 优选模式（如 `off` / `local_atlas`）
@@ -180,6 +181,10 @@ class DohSelectStatus {
   /// 各公共 DoH 端点的答案计数（旧版原生库没有，为空）
   final List<DohPublicDohStat> publicDoh;
 
+  /// 地址族诊断：`pref`（auto / v6 / v4）、本机 `local_v4` / `local_v6`、连接层
+  /// `affinity`、这个网络上的 IPv6 竞速结论 `check`（旧版原生库没有，为 null）
+  final Map<String, dynamic>? family;
+
   /// 有过答案的端点（诊断导出只列这些）
   List<DohPublicDohStat> get activePublicDoh =>
       publicDoh.where((stat) => !stat.isEmpty).toList(growable: false);
@@ -204,6 +209,9 @@ class DohSelectStatus {
       failStreak: (map['fail_streak'] as num?)?.toInt() ?? 0,
       share: map['share'] == true,
       publicDoh: DohPublicDohStat.listFromJson(map['public_doh']),
+      family: map['family'] is Map
+          ? Map<String, dynamic>.from(map['family'] as Map)
+          : null,
     );
   }
 
@@ -224,6 +232,7 @@ class DohSelectStatus {
     'fail_streak': failStreak,
     'share': share,
     'public_doh': [for (final stat in publicDoh) stat.toJson()],
+    if (family != null) 'family': family,
   };
 }
 
@@ -825,6 +834,7 @@ class DohProxyFfi {
     int port = 0,
     bool enableDoh = true,
     bool preferIpv6 = false,
+    bool ipv6Auto = false,
     bool gatewayMode = false,
     String? dohServer,
     String? dohServerEch,
@@ -859,6 +869,9 @@ class DohProxyFfi {
     String? appVersion,
     String? networkSig,
     List<String> preconnectHosts = const [],
+    bool browserTls = false,
+    String? fingerprintCachePath,
+    String? webviewUserAgent,
   }) {
     if (!_initialized && !initialize()) {
       return -1;
@@ -880,6 +893,7 @@ class DohProxyFfi {
         'mitm_hosts': ProxyLeafTrust.mitmHosts,
       'doh_server': dohServer ?? 'cloudflare',
       'prefer_ipv6': preferIpv6,
+      'ipv6_auto': ipv6Auto,
       'timeout_secs': 30,
       if (dohServerEch != null && dohServerEch.isNotEmpty)
         'doh_server_ech': dohServerEch,
@@ -934,6 +948,12 @@ class DohProxyFfi {
       if (networkSig != null && networkSig.isNotEmpty)
         'network_sig': networkSig,
       if (preconnectHosts.isNotEmpty) 'preconnect_hosts': preconnectHosts,
+      // 上游握手照 WebView 的 ClientHello 复刻（原生库编译时带 browser-tls 才生效）
+      if (browserTls) 'browser_tls': true,
+      if (fingerprintCachePath != null && fingerprintCachePath.isNotEmpty)
+        'fingerprint_cache_path': fingerprintCachePath,
+      if (webviewUserAgent != null && webviewUserAgent.isNotEmpty)
+        'webview_user_agent': webviewUserAgent,
     });
     final configPtr = configJson.toNativeUtf8();
     try {

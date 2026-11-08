@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
@@ -17,7 +18,7 @@ import 'package:common_ui/common_ui.dart';
 import 'package:m3e_ui/m3e_ui.dart';
 import 'widgets/ech_settings_card.dart';
 
-/// DOH 详细设置页面（服务器列表、IPv6、服务端 IP、ECH）
+/// DNS 与网关细节页面（网关模式、内置网页 HTTP/2、服务端 IP、DoH 服务器列表、ECH、DNS 缓存）
 class DohDetailSettingsPage extends StatefulWidget {
   const DohDetailSettingsPage({super.key});
 
@@ -55,7 +56,7 @@ class _DohDetailSettingsPageState extends State<DohDetailSettingsPage> {
           body: ListView(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             children: [
-              // IPv6 开关
+              // 网关 / h2 MITM / 服务端 IP（IP 协议在「连接方式」卡片里）
               SegmentedCardGroup(
                 children: [
                   SwitchListTile(
@@ -80,13 +81,19 @@ class _DohDetailSettingsPageState extends State<DohDetailSettingsPage> {
                     value: settings.h2Mitm,
                     onChanged: (value) => _service.setH2Mitm(value),
                   ),
-                  SwitchListTile(
-                    title: Text(context.l10n.dohDetail_ipv6Prefer),
-                    subtitle: Text(context.l10n.dohDetail_ipv6PreferDesc),
-                    secondary: const Icon(Symbols.language_rounded),
-                    value: settings.preferIPv6,
-                    onChanged: (value) => _service.setPreferIPv6(value),
-                  ),
+                  // 浏览器指纹：只有安卓的原生库编进了这个能力
+                  if (Platform.isAndroid)
+                    SwitchListTile(
+                      title: Text(context.l10n.dohDetail_browserTls),
+                      subtitle: Text(
+                        settings.browserTls
+                            ? context.l10n.dohDetail_browserTlsEnabledDesc
+                            : context.l10n.dohDetail_browserTlsDisabledDesc,
+                      ),
+                      secondary: const Icon(Symbols.fingerprint_rounded),
+                      value: settings.browserTls,
+                      onChanged: (value) => _service.setBrowserTls(value),
+                    ),
                   // Server IP
                   ListTile(
                     leading: const Icon(Symbols.dns_rounded),
@@ -336,11 +343,11 @@ class _DohDetailSettingsPageState extends State<DohDetailSettingsPage> {
                 ),
               ),
               if (canAuthorizeAccel)
-                const PopupMenuItem(
+                PopupMenuItem(
                   value: 'accel_connect',
                   child: ListTile(
-                    leading: Icon(Symbols.verified_user_rounded, size: 20),
-                    title: Text('用 L 站 Connect 授权'),
+                    leading: const Icon(Symbols.verified_user_rounded, size: 20),
+                    title: Text(S.current.dohDetail_accelConnect),
                     dense: true,
                     contentPadding: EdgeInsets.zero,
                   ),
@@ -386,14 +393,14 @@ class _DohDetailSettingsPageState extends State<DohDetailSettingsPage> {
     final status = await AccelDohAuthService.instance.authorizeNow();
     switch (status) {
       case AccelDohAuthStatus.ready:
-        ToastService.showSuccess('授权成功，已切换到 CFluxDo 加速');
+        ToastService.showSuccess(S.current.dohDetail_accelAuthOk);
       case AccelDohAuthStatus.unavailable:
-        ToastService.showError('此账号无法使用 Connect，继续使用公共加速');
+        ToastService.showError(S.current.dohDetail_accelAuthUnavailable);
       case AccelDohAuthStatus.denied:
-        ToastService.showError('加速服务端拒绝了此账号，继续使用公共加速');
+        ToastService.showError(S.current.dohDetail_accelAuthDenied);
       case AccelDohAuthStatus.pending:
       case AccelDohAuthStatus.displaced:
-        ToastService.showError('授权没有完成，稍后会自动重试');
+        ToastService.showError(S.current.dohDetail_accelAuthPending);
       case AccelDohAuthStatus.notAuthorized:
       case AccelDohAuthStatus.notEligible:
         break;

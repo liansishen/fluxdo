@@ -10,6 +10,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart' as inappwebview;
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../constants.dart';
@@ -58,6 +59,31 @@ enum CfSelectMode {
   }
 }
 
+/// 连接时偏好的地址族（「IP 协议」设置）
+enum Ipv6Mode {
+  /// 自动（默认）：本机有 IPv6 时优先用 IPv6，IPv6 不通或明显更慢时用 IPv4。
+  /// 双栈网络的 IPv4 出口多是运营商共享地址，CF 风险分高、弹盾多；IPv6 多为独享地址
+  auto('auto'),
+
+  /// IPv6 优先：有能用的 IPv6 就用，不论快慢
+  preferV6('v6'),
+
+  /// IPv4 优先（1.2.2 之前的默认）
+  preferV4('v4');
+
+  const Ipv6Mode(this.wire);
+
+  /// 存进 prefs 的字符串形式
+  final String wire;
+
+  static Ipv6Mode? fromWire(String? value) {
+    for (final mode in values) {
+      if (mode.wire == value) return mode;
+    }
+    return null;
+  }
+}
+
 class NetworkSettings {
   const NetworkSettings({
     required this.dohEnabled,
@@ -65,11 +91,12 @@ class NetworkSettings {
     this.echServerUrl,
     required this.customServers,
     required this.proxyPort,
-    this.preferIPv6 = false,
+    this.ipv6Mode = Ipv6Mode.auto,
     this.serverIp,
     this.gatewayEnabled = true,
     this.h2Mitm = false,
     this.echDnsPolicy = const EchDnsPolicy(),
+    this.browserTls = false,
     this.selectMode = CfSelectMode.localAtlas,
     this.shareMeasurements = false,
   });
@@ -86,8 +113,14 @@ class NetworkSettings {
   /// 代理端口（Rust 代理统一处理 DOH + ECH）
   final int? proxyPort;
 
-  /// 优先使用 IPv6
-  final bool preferIPv6;
+  /// 连接时偏好的地址族
+  final Ipv6Mode ipv6Mode;
+
+  /// IPv6 优先（传给 Rust 的 prefer_ipv6：解析结果、兜底地址都先排 IPv6）
+  bool get preferIPv6 => ipv6Mode == Ipv6Mode.preferV6;
+
+  /// 自动：由 Rust 本地优选按本机网络决定用哪一族
+  bool get ipv6Auto => ipv6Mode == Ipv6Mode.auto;
 
   /// 全局 server IP（指定后跳过 DNS 解析直接连接）
   final String? serverIp;
@@ -95,10 +128,14 @@ class NetworkSettings {
   /// Gateway（反向代理）模式开关，关闭时回退为 MITM
   final bool gatewayEnabled;
 
-  /// WebView MITM 是否启用 HTTP/2 多路复用（实验性，默认关闭；需实测 CF 指纹）
+  /// WebView MITM 是否启用 HTTP/2 多路复用（按请求转发到上游；安卓默认开，其余平台默认关）
   final bool h2Mitm;
 
   final EchDnsPolicy echDnsPolicy;
+
+  /// 浏览器指纹：网关的上游握手（TLS 与 HTTP/2）照 WebView 复刻（安卓默认开；
+  /// 其余平台的原生库没编进这个能力，开了也不生效）
+  final bool browserTls;
 
   /// 本地动态优选的模式
   final CfSelectMode selectMode;
@@ -112,11 +149,12 @@ class NetworkSettings {
     String? Function()? echServerUrl,
     List<DohServer>? customServers,
     int? Function()? proxyPort,
-    bool? preferIPv6,
+    Ipv6Mode? ipv6Mode,
     String? Function()? serverIp,
     bool? gatewayEnabled,
     bool? h2Mitm,
     EchDnsPolicy? echDnsPolicy,
+    bool? browserTls,
     CfSelectMode? selectMode,
     bool? shareMeasurements,
   }) {
@@ -126,11 +164,12 @@ class NetworkSettings {
       echServerUrl: echServerUrl != null ? echServerUrl() : this.echServerUrl,
       customServers: customServers ?? this.customServers,
       proxyPort: proxyPort != null ? proxyPort() : this.proxyPort,
-      preferIPv6: preferIPv6 ?? this.preferIPv6,
+      ipv6Mode: ipv6Mode ?? this.ipv6Mode,
       gatewayEnabled: gatewayEnabled ?? this.gatewayEnabled,
       serverIp: serverIp != null ? serverIp() : this.serverIp,
       h2Mitm: h2Mitm ?? this.h2Mitm,
       echDnsPolicy: echDnsPolicy ?? this.echDnsPolicy,
+      browserTls: browserTls ?? this.browserTls,
       selectMode: selectMode ?? this.selectMode,
       shareMeasurements: shareMeasurements ?? this.shareMeasurements,
     );
@@ -254,12 +293,16 @@ class NetworkSettingsService {
   static const _dohSelectedKey = 'doh_selected';
   static const _dohCustomKey = 'doh_custom';
   static const _proxyPortKey = 'doh_proxy_port';
+
+  /// 老版本的「IPv6 优先」开关（bool），只用来迁移到 [_ipv6ModeKey]
   static const _preferIPv6Key = 'doh_prefer_ipv6';
+  static const _ipv6ModeKey = 'doh_ipv6_mode';
   static const _serverIpKey = 'doh_server_ip';
   static const _echServerKey = 'doh_ech_server';
   static const _gatewayEnabledKey = 'doh_gateway_enabled';
   static const _h2MitmKey = 'doh_h2_mitm';
   static const _echDnsPolicyKey = 'doh_ech_dns_policy';
+  static const _browserTlsKey = 'doh_browser_tls';
   static const _accelSubdomainKey = 'doh_accel_subdomain';
 
   /// 加速服务端下发的路由表（原始响应 JSON），启动时回传给 Rust 直接用
@@ -510,11 +553,14 @@ class NetworkSettingsService {
     final custom = _decodeServers(customRaw);
     final proxyPort = prefs.getInt(_proxyPortKey);
     await prefs.remove('doh_multi_ip');
-    final preferIPv6 = prefs.getBool(_preferIPv6Key) ?? false;
+    final ipv6Mode = _loadIpv6Mode(prefs);
     final serverIp = prefs.getString(_serverIpKey);
     final echServer = prefs.getString(_echServerKey);
     final gatewayEnabled = prefs.getBool(_gatewayEnabledKey) ?? true;
-    final h2Mitm = prefs.getBool(_h2MitmKey) ?? false;
+    // 安卓默认开：内置网页按请求转发到上游，和 App 自己的请求走同一种连接（h2 + 同一指纹）；
+    // 原样字节拷贝的 h1 MITM 上游只能谈 HTTP/1.1，指纹与原生请求对不上
+    final h2Mitm = prefs.getBool(_h2MitmKey) ?? Platform.isAndroid;
+    final browserTls = prefs.getBool(_browserTlsKey) ?? Platform.isAndroid;
     var echDnsPolicy = const EchDnsPolicy();
     try {
       final raw = prefs.getString(_echDnsPolicyKey);
@@ -533,11 +579,12 @@ class NetworkSettingsService {
       echServerUrl: echServer,
       customServers: custom,
       proxyPort: proxyPort,
-      preferIPv6: preferIPv6,
+      ipv6Mode: ipv6Mode,
       serverIp: serverIp,
       gatewayEnabled: gatewayEnabled,
       h2Mitm: h2Mitm,
       echDnsPolicy: echDnsPolicy,
+      browserTls: browserTls,
       selectMode: selectMode,
       shareMeasurements: shareMeasurements,
     );
@@ -545,7 +592,7 @@ class NetworkSettingsService {
     _resolver = DohResolver(
       serverUrl: activeUrl,
       bootstrapIps: _getBootstrapIps(activeUrl),
-      preferIPv6: preferIPv6,
+      preferIPv6: ipv6Mode == Ipv6Mode.preferV6,
       echDnsPolicy: echDnsPolicy,
       authToken: _authTokenFor(activeUrl),
       onAuthRejected: _handleAccelAuthRejected,
@@ -677,15 +724,31 @@ class NetworkSettingsService {
     _touch();
   }
 
-  Future<void> setPreferIPv6(bool enabled) async {
+  Future<void> setIpv6Mode(Ipv6Mode mode) async {
     final prefs = _prefs;
-    if (prefs == null) return;
-    notifier.value = notifier.value.copyWith(preferIPv6: enabled);
-    _resolver.preferIPv6 = enabled;
+    if (prefs == null || mode == current.ipv6Mode) return;
+    notifier.value = notifier.value.copyWith(ipv6Mode: mode);
+    _resolver.preferIPv6 = mode == Ipv6Mode.preferV6;
     _clearResolvedHostCache();
-    await prefs.setBool(_preferIPv6Key, enabled);
+    await prefs.setString(_ipv6ModeKey, mode.wire);
+    await prefs.remove(_preferIPv6Key);
     _scheduleApplyProxyState();
     _touch();
+  }
+
+  /// 读「IP 协议」设置。老版本只有「IPv6 优先」开关：开过 → IPv6 优先；明确关掉过 →
+  /// 尊重当时的选择，IPv4 优先；从没碰过 → 自动（新默认）
+  @visibleForTesting
+  static Ipv6Mode loadIpv6Mode(SharedPreferences prefs) => _loadIpv6Mode(prefs);
+
+  static Ipv6Mode _loadIpv6Mode(SharedPreferences prefs) {
+    final stored = Ipv6Mode.fromWire(prefs.getString(_ipv6ModeKey));
+    if (stored != null) return stored;
+    return switch (prefs.getBool(_preferIPv6Key)) {
+      true => Ipv6Mode.preferV6,
+      false => Ipv6Mode.preferV4,
+      null => Ipv6Mode.auto,
+    };
   }
 
   Future<void> setServerIp(String? ip) async {
@@ -749,6 +812,26 @@ class NetworkSettingsService {
     await prefs.setBool(_h2MitmKey, enabled);
     _scheduleApplyProxyState();
     _touch();
+  }
+
+  /// 切换浏览器指纹（实验性）。切换后重启代理生效
+  Future<void> setBrowserTls(bool enabled) async {
+    final prefs = _prefs;
+    if (prefs == null) return;
+    notifier.value = notifier.value.copyWith(browserTls: enabled);
+    await prefs.setBool(_browserTlsKey, enabled);
+    _scheduleApplyProxyState();
+    _touch();
+  }
+
+  /// 指纹模板的落盘位置（应用支持目录下，卸载即清）
+  static Future<String?> _fingerprintCachePath() async {
+    try {
+      final dir = await getApplicationSupportDirectory();
+      return '${dir.path}/net/fingerprint_template.json';
+    } catch (_) {
+      return null;
+    }
   }
 
   /// 切换本地优选模式；网关要按新模式重启
@@ -972,6 +1055,7 @@ class NetworkSettingsService {
         enableDoh: current.dohEnabled,
         gatewayMode: useGateway,
         preferIPv6: current.preferIPv6,
+        ipv6Auto: current.ipv6Auto,
         dohServer: current.dohEnabled ? dohServer : null,
         dohServerEch: current.dohEnabled ? dohServerEch : null,
         dohBootstrapIps: current.dohEnabled
@@ -1025,6 +1109,14 @@ class NetworkSettingsService {
         preconnectHosts: selectorEligible
             ? [SiteContext.current.host]
             : const [],
+        browserTls: current.browserTls,
+        fingerprintCachePath: current.browserTls
+            ? await _fingerprintCachePath()
+            : null,
+        // 冷启动时 UA 还没探（探测排在起代理之后），用上次记下的
+        webviewUserAgent: prefsForSeed == null
+            ? AppConstants.webViewUserAgentIfKnown
+            : AppConstants.lastKnownWebViewUserAgent(prefsForSeed),
       );
 
       if (!success) {
@@ -1936,7 +2028,7 @@ class NetworkSettingsService {
   }
 
   String? get _currentResolvedHostCacheSignature => current.dohEnabled
-      ? '$_activeServerUrl|${_effectiveEchServerUrl ?? ""}|${current.preferIPv6 ? "v6" : "v4"}|${jsonEncode(current.echDnsPolicy.toJson())}'
+      ? '$_activeServerUrl|${_effectiveEchServerUrl ?? ""}|${current.ipv6Mode.wire}|${jsonEncode(current.echDnsPolicy.toJson())}'
       : null;
 
   List<String> _collectCommonHosts() {

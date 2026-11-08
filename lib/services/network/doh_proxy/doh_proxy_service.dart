@@ -35,10 +35,12 @@ class DohProxyService {
   String? _currentDohBootstrapSignature;
   String? _currentDohAuthSignature;
   bool? _currentPreferIPv6;
+  bool? _currentIpv6Auto;
   int? _currentPreferredPort;
   String? _currentServerIp;
   bool? _currentMitmConnect;
   bool? _currentH2Mitm;
+  bool? _currentBrowserTls;
   String? _currentUpstreamSignature;
   String? _currentDohRoutesUrl;
   String? _currentSelectMode;
@@ -77,6 +79,7 @@ class DohProxyService {
     int preferredPort = 0,
     bool enableDoh = true,
     bool preferIPv6 = false,
+    bool ipv6Auto = false,
     bool gatewayMode = false,
     String? dohServer,
     String? dohServerEch,
@@ -109,6 +112,9 @@ class DohProxyService {
     String? appVersion,
     String? networkSig,
     List<String> preconnectHosts = const [],
+    bool browserTls = false,
+    String? fingerprintCachePath,
+    String? webviewUserAgent,
   }) async {
     final authSignature = _buildAuthSignature(dohAuthToken, dohEchAuthToken);
     final bootstrapSignature = _buildBootstrapSignature(
@@ -132,11 +138,13 @@ class DohProxyService {
           _currentDohBootstrapSignature == bootstrapSignature &&
           _currentDohAuthSignature == authSignature &&
           _currentPreferIPv6 == preferIPv6 &&
+          _currentIpv6Auto == ipv6Auto &&
           _currentPreferredPort == preferredPort &&
           _currentServerIp == serverIp &&
           _currentMitmConnect == mitmConnect &&
           _currentH2Mitm == h2Mitm &&
           _currentEchDnsPolicySignature == jsonEncode(_echDnsPolicy.toJson()) &&
+          _currentBrowserTls == browserTls &&
           _currentUpstreamSignature == upstreamSignature &&
           // 路由表 / 节点列表只是启动时的种子，内容变了不重启；只看接口地址
           _currentDohRoutesUrl == dohRoutesUrl &&
@@ -191,6 +199,10 @@ class DohProxyService {
         appVersion: appVersion,
         networkSig: networkSig,
         preconnectHosts: preconnectHosts,
+        ipv6Auto: ipv6Auto,
+        browserTls: browserTls,
+        fingerprintCachePath: fingerprintCachePath,
+        webviewUserAgent: webviewUserAgent,
       );
       // 桌面平台 FFI 加载失败时，回退到进程模式
       if (!result && DohProxyFfi.canFallbackToProcess) {
@@ -219,6 +231,10 @@ class DohProxyService {
           dohRoutesUrl,
           selectMode: selectMode,
           preconnectHosts: preconnectHosts,
+          ipv6Auto: ipv6Auto,
+          browserTls: browserTls,
+          fingerprintCachePath: fingerprintCachePath,
+          webviewUserAgent: webviewUserAgent,
         );
       }
       return result;
@@ -246,6 +262,10 @@ class DohProxyService {
         dohRoutesUrl,
         selectMode: selectMode,
         preconnectHosts: preconnectHosts,
+        ipv6Auto: ipv6Auto,
+        browserTls: browserTls,
+        fingerprintCachePath: fingerprintCachePath,
+        webviewUserAgent: webviewUserAgent,
       );
     }
   }
@@ -287,6 +307,10 @@ class DohProxyService {
     String? appVersion,
     String? networkSig,
     List<String> preconnectHosts = const [],
+    bool ipv6Auto = false,
+    bool browserTls = false,
+    String? fingerprintCachePath,
+    String? webviewUserAgent,
   }) async {
     try {
       return await _enqueueFfiOp(() async {
@@ -334,6 +358,10 @@ class DohProxyService {
           appVersion: appVersion,
           networkSig: networkSig,
           preconnectHosts: preconnectHosts,
+          ipv6Auto: ipv6Auto,
+          browserTls: browserTls,
+          fingerprintCachePath: fingerprintCachePath,
+          webviewUserAgent: webviewUserAgent,
         );
         // 启动期间用户可能再次修改策略，独立查询不能被旧启动快照覆盖。
         if (!identical(policy, _echDnsPolicy)) {
@@ -361,11 +389,13 @@ class DohProxyService {
           dohEchAuthToken,
         );
         _currentPreferIPv6 = preferIPv6;
+        _currentIpv6Auto = ipv6Auto;
         _currentPreferredPort = port;
         _currentServerIp = serverIp;
         _currentMitmConnect = mitmConnect;
         _currentH2Mitm = h2Mitm;
         _currentEchDnsPolicySignature = jsonEncode(policy.toJson());
+        _currentBrowserTls = browserTls;
         _currentUpstreamSignature = _buildUpstreamSignature(
           protocol: upstreamProtocol,
           host: upstreamHost,
@@ -411,6 +441,10 @@ class DohProxyService {
     // 进程模式不做本地优选，只记下模式让 sameConfig 比较稳定
     String selectMode = 'off',
     List<String> preconnectHosts = const [],
+    bool ipv6Auto = false,
+    bool browserTls = false,
+    String? fingerprintCachePath,
+    String? webviewUserAgent,
   }) async {
     try {
       final policyJson = jsonEncode(_echDnsPolicy.toJson());
@@ -435,6 +469,17 @@ class DohProxyService {
         if (!mitmConnect) '--tunnel-connect',
         if (h2Mitm) '--h2-mitm',
         if (preferIPv6) '--ipv6',
+        if (ipv6Auto) '--ipv6-auto',
+        if (browserTls) '--browser-tls',
+        if (fingerprintCachePath != null &&
+            fingerprintCachePath.isNotEmpty) ...[
+          '--fingerprint-cache-path',
+          fingerprintCachePath,
+        ],
+        if (webviewUserAgent != null && webviewUserAgent.isNotEmpty) ...[
+          '--webview-user-agent',
+          webviewUserAgent,
+        ],
         if (preconnectHosts.isNotEmpty) ...[
           '--preconnect-hosts',
           preconnectHosts.join(','),
@@ -534,11 +579,13 @@ class DohProxyService {
             dohEchAuthToken,
           );
           _currentPreferIPv6 = preferIPv6;
+          _currentIpv6Auto = ipv6Auto;
           _currentPreferredPort = preferredPort;
           _currentServerIp = serverIp;
           _currentMitmConnect = mitmConnect;
           _currentH2Mitm = h2Mitm;
           _currentEchDnsPolicySignature = policyJson;
+          _currentBrowserTls = browserTls;
           _currentUpstreamSignature = _buildUpstreamSignature(
             protocol: upstreamProtocol,
             host: upstreamHost,
@@ -651,11 +698,13 @@ class DohProxyService {
     _currentDohBootstrapSignature = null;
     _currentDohAuthSignature = null;
     _currentPreferIPv6 = null;
+    _currentIpv6Auto = null;
     _currentPreferredPort = null;
     _currentServerIp = null;
     _currentMitmConnect = null;
     _currentH2Mitm = null;
     _currentEchDnsPolicySignature = null;
+    _currentBrowserTls = null;
     _currentUpstreamSignature = null;
     _currentDohRoutesUrl = null;
     _currentSelectMode = null;
@@ -1248,6 +1297,10 @@ class DohProxyService {
     String? appVersion,
     String? networkSig,
     List<String> preconnectHosts = const [],
+    bool ipv6Auto = false,
+    bool browserTls = false,
+    String? fingerprintCachePath,
+    String? webviewUserAgent,
   }) async {
     final sendPort = await _ensureFfiIsolate();
     final response = ReceivePort();
@@ -1259,6 +1312,7 @@ class DohProxyService {
       'h2Mitm': h2Mitm,
       'echDnsPolicy': echDnsPolicy.toJson(),
       'preferIpv6': preferIpv6,
+      'ipv6Auto': ipv6Auto,
       'dohServer': dohServer,
       'dohServerEch': dohServerEch,
       'dohBootstrapIps': dohBootstrapIps,
@@ -1289,6 +1343,9 @@ class DohProxyService {
       'appVersion': appVersion,
       'networkSig': networkSig,
       'preconnectHosts': preconnectHosts,
+      'browserTls': browserTls,
+      'fingerprintCachePath': fingerprintCachePath,
+      'webviewUserAgent': webviewUserAgent,
       'preferredPort': port,
       'replyTo': response.sendPort,
     });
@@ -1619,6 +1676,7 @@ void _ffiIsolateEntry(SendPort mainSendPort) {
           final gatewayMode = message['gatewayMode'] as bool? ?? false;
           final h2Mitm = message['h2Mitm'] as bool? ?? false;
           final preferIpv6 = message['preferIpv6'] as bool? ?? false;
+          final ipv6Auto = message['ipv6Auto'] as bool? ?? false;
           final dohServer = message['dohServer'] as String?;
           final dohServerEch = message['dohServerEch'] as String?;
           final dohBootstrapIps = _stringList(message['dohBootstrapIps']);
@@ -1650,11 +1708,16 @@ void _ffiIsolateEntry(SendPort mainSendPort) {
           final appVersion = message['appVersion'] as String?;
           final networkSig = message['networkSig'] as String?;
           final preconnectHosts = _stringList(message['preconnectHosts']);
+          final browserTls = message['browserTls'] as bool? ?? false;
+          final fingerprintCachePath =
+              message['fingerprintCachePath'] as String?;
+          final webviewUserAgent = message['webviewUserAgent'] as String?;
           var resultPort = DohProxyFfi.instance.start(
             port: portValue,
             enableDoh: enableDoh,
             gatewayMode: gatewayMode,
             preferIpv6: preferIpv6,
+            ipv6Auto: ipv6Auto,
             dohServer: dohServer,
             dohServerEch: dohServerEch,
             dohBootstrapIps: dohBootstrapIps,
@@ -1687,6 +1750,9 @@ void _ffiIsolateEntry(SendPort mainSendPort) {
             appVersion: appVersion,
             networkSig: networkSig,
             preconnectHosts: preconnectHosts,
+            browserTls: browserTls,
+            fingerprintCachePath: fingerprintCachePath,
+            webviewUserAgent: webviewUserAgent,
           );
           if (resultPort <= 0 && preferredPort != 0) {
             resultPort = DohProxyFfi.instance.start(
@@ -1694,6 +1760,7 @@ void _ffiIsolateEntry(SendPort mainSendPort) {
               enableDoh: enableDoh,
               gatewayMode: gatewayMode,
               preferIpv6: preferIpv6,
+              ipv6Auto: ipv6Auto,
               dohServer: dohServer,
               dohServerEch: dohServerEch,
               dohBootstrapIps: dohBootstrapIps,
@@ -1726,6 +1793,9 @@ void _ffiIsolateEntry(SendPort mainSendPort) {
               appVersion: appVersion,
               networkSig: networkSig,
               preconnectHosts: preconnectHosts,
+              browserTls: browserTls,
+              fingerprintCachePath: fingerprintCachePath,
+              webviewUserAgent: webviewUserAgent,
             );
           }
           if (resultPort <= 0) {

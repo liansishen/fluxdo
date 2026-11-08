@@ -1,12 +1,16 @@
 import 'package:flutter/painting.dart';
 import 'package:native_animated_image/native_animated_image.dart'
     show NativeAnimatedImageProvider;
+
 import 'avif_image_provider.dart';
 export 'avif_image_provider.dart' show AvifImageProvider;
 import 'blob_image_cache.dart';
+import '../utils/image_format.dart';
+export '../utils/image_format.dart' show isNativeAnimatedUrl;
 export 'blob_image_cache.dart' show BlobImageCache, BlobImageProvider;
 import 'dio_http_client.dart' show DownloadPriority;
 export 'dio_http_client.dart' show DownloadPriority;
+import 'emoji_handler.dart';
 
 /// 旧 flutter_cache_manager 时代的缓存 cacheKey(2026-07 全量退役,
 /// 仅供迁移 v7/v8/v9 清理旧目录与 db 引用)。
@@ -34,25 +38,6 @@ bool _isAvifUrl(String url) {
   }
 }
 
-/// 检查 URL 是否指向需要走 native 解码器的动图(GIF / APNG / 动画 WebP)
-///
-/// 走 native_animated_image 的 Rust pipeline,绕开 Flutter Skia
-/// multi_frame_codec 的 #85831 bug。
-bool isNativeAnimatedUrl(String url) => _isNativeAnimatedUrl(url);
-
-bool _isNativeAnimatedUrl(String url) {
-  try {
-    final path = Uri.parse(url).path.toLowerCase();
-    // .gif 一定走 native(Skia 在某些 disposal 组合下会失败)
-    // .apng / .webp 也走 native(后续 Rust 端补全解码器)
-    return path.endsWith('.gif') ||
-        path.endsWith('.apng') ||
-        path.endsWith('.webp');
-  } catch (_) {
-    return false;
-  }
-}
-
 /// 创建 Discourse 图片 Provider
 ///
 /// 用于需要 ImageProvider 的场景（CircleAvatar、DecorationImage 等）
@@ -71,7 +56,7 @@ ImageProvider discourseImageProvider(
   if (_isAvifUrl(url)) {
     return AvifImageProvider(url, scale: scale, bucket: bucket);
   }
-  if (_isNativeAnimatedUrl(url)) {
+  if (isNativeAnimatedUrl(url)) {
     return NativeAnimatedImageProvider.fromBytesProvider(
       loader: () => BlobImageCache.fetch(bucket, url, priority: priority),
       tag: url,
@@ -88,14 +73,19 @@ ImageProvider discourseImageProvider(
 
 /// 创建 Emoji 图片 Provider
 ///
-/// 走 [BlobImageCache](Telegram 式 MD5 确定性寻址,零 sqlite 索引)。
+/// 走 [BlobImageCache](MD5 确定性寻址,零 sqlite 索引)。
 /// emoji 全集实测 100% 静态 PNG,单一路径即可;64px 目标尺寸走解码
 /// 闸门的小图旁路,由引擎 worker 池并行解码。
+///
+/// 标准 emoji 地址(含 cooked 里的站点表情集地址)统一改写到展示表情集
+/// [EmojiHandler.displaySet],缺图 404 回退站点表情集。
 ImageProvider emojiImageProvider(String url, {double scale = 1.0}) {
+  final displayUrl = EmojiHandler.displayUrl(url);
   return BlobImageProvider(
-    url,
+    displayUrl,
     bucket: BlobImageCache.emojiBucket,
     scale: scale,
+    fallbackUrl: EmojiHandler.fallbackUrl(displayUrl),
   );
 }
 
