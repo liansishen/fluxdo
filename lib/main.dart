@@ -58,10 +58,8 @@ import 'services/network/doh/cf_select_notice.dart';
 import 'services/network/doh/cfhub_probe_auth_service.dart';
 import 'services/network/doh/network_settings_service.dart';
 import 'services/network/proxy/proxy_settings_service.dart';
-import 'services/network/rhttp/rhttp_settings_service.dart';
 import 'services/network/webview/webview_adapter_settings_service.dart';
 import 'services/eruda_settings_service.dart';
-import 'services/network/adapters/rhttp_adapter.dart' show RhttpRuntime;
 import 'services/network/vpn_auto_toggle_service.dart';
 import 'services/network/doh_proxy/proxy_certificate.dart';
 import 'services/cf_challenge_logger.dart';
@@ -365,18 +363,16 @@ Future<void> main(List<String> args) async {
   // 开发者模式下 debug 级日志落盘（高频追踪信息）
   AppLogger.setVerbose(developerMode);
   await ProxySettingsService.instance.initialize(prefs);
-  // rhttp (Rust reqwest) 初始化：在 ProxySettingsService 之后、NetworkSettingsService 之前
-  await RhttpSettingsService.instance.initialize(prefs);
   // WebView 适配器设置
   await WebViewAdapterSettingsService.instance.initialize(prefs);
   // Eruda 调试控制台开关 (默认关)
   await ErudaSettingsService.instance.initialize(prefs);
   StartupTimeline.mark('settings');
-  // 仅在启用 rhttp 时预热运行时，其余客户端首次使用时再初始化。
-  if (RhttpSettingsService.instance.current.enabled) {
-    await RhttpRuntime.ensureInitialized();
-  }
 
+  // Windows 固定系统代理必须先于本地 DoH/WebView 网关读取。
+  if (Platform.isWindows) {
+    SystemProxyService.instance.start();
+  }
   // 首次签名最多额外等待 300ms；迟到结果仍补种，不能依赖首页挂载后才启动的监听。
   final startupConnectivity = await startupConnectivityCheck.timeout(
     const Duration(milliseconds: 300),
@@ -399,12 +395,6 @@ Future<void> main(List<String> args) async {
     debugPrint('[Main] 初始 VPN 状态同步失败: $e');
   }
 
-  // Windows 固定系统代理必须先于本地 DoH/WebView 网关读取，网关才能按
-  // 「应用代理 > 系统代理 > 直连」选择首次启动的上游出口。
-  if (Platform.isWindows) {
-    SystemProxyService.instance.start();
-  }
-  StartupTimeline.mark('rhttp');
   await NetworkSettingsService.instance.initialize(prefs);
   StartupTimeline.mark('proxy');
   // 桌面端 WebView UA 必须等本地代理端口确定后再取：WebView2 Environment
