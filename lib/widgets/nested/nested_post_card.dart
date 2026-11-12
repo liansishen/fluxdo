@@ -165,7 +165,10 @@ class _NestedPostCardState extends ConsumerState<NestedPostCard> {
     }
     // provider 同步解决方案状态后(node 换新)回填盖章
     if (!identical(oldWidget.node, widget.node)) {
-      final merged = mergeNestedNode(
+      final merge = widget.sourceLines != null
+          ? mergeVscodeNestedNode
+          : mergeNestedNode;
+      final merged = merge(
         widget.node.copyWith(children: _children),
         widget.node,
       );
@@ -206,7 +209,10 @@ class _NestedPostCardState extends ConsumerState<NestedPostCard> {
     _reading = reading;
     final cached = reading?.session.branches[widget.node.post.postNumber];
     if (cached != null) {
-      _children = mergeNestedNode(
+      final merge = widget.sourceLines != null
+          ? mergeVscodeNestedNode
+          : mergeNestedNode;
+      _children = merge(
         widget.node.copyWith(children: cached.children),
         widget.node,
       ).children;
@@ -404,7 +410,9 @@ class _NestedPostCardState extends ConsumerState<NestedPostCard> {
                     shape: const RoundedRectangleBorder(),
                   ),
                   onPressed: _toggleExpanded,
-                  child: Text('+ @${post.username} · $_replyCount 条回复'),
+                  child: Text(
+                    '+ @${post.username} · ${context.l10n.nested_repliesCount(_replyCount)}',
+                  ),
                 )
               : NestedCollapsedBar(
                   username: post.username,
@@ -873,7 +881,9 @@ class _NestedPostCardState extends ConsumerState<NestedPostCard> {
             right: 0,
             top: 0,
             child: IconButton(
-              tooltip: _expanded ? '折叠回复' : '展开回复',
+              tooltip: _expanded
+                  ? context.l10n.post_collapseReplies
+                  : context.l10n.post_vscodeExpandReplies,
               onPressed: _toggleExpanded,
               icon: Icon(_expanded ? Icons.unfold_less : Icons.unfold_more),
               iconSize: 15,

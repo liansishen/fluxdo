@@ -322,6 +322,7 @@ class _TopicPostListState extends ConsumerState<TopicPostList> {
   }
 
   void _scheduleLayoutCheck() {
+
     if (_layoutCheckScheduled || widget.onLayout == null) return;
     _layoutCheckScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {

@@ -598,7 +598,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final generation = _searchGeneration;
 
     setState(() {
-      _isSearching = true;
+      if (!isLoadMore) _isSearching = true;
       _hasError = false;
       _isLoadMoreFailed = false;
       if (!isLoadMore) {
@@ -704,7 +704,6 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       _allPosts = [];
       _aiPosts = [];
       _allUsers = [];
-      _isSearching = false;
       _isSearchingAi = false;
       _hasMorePosts = false;
       _hasMoreUsers = false;
@@ -907,7 +906,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                     IconButton(
                       tooltip: context.l10n.common_refresh,
                       icon: const Icon(Icons.refresh, size: 17),
-                      onPressed: _currentQuery.isEmpty || _isSearching
+                      // 任何搜索请求在途（首页或加载更多）时都不重复刷新
+                      onPressed:
+                          _currentQuery.isEmpty ||
+                              _isSearching ||
+                              _isLoadingMore
                           ? null
                           : () => _onFilterChanged(_filter),
                     ),
@@ -1018,7 +1021,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               if (_vscodeOptionsExpanded)
                 _buildVscodeSearchOptions(theme, tokens),
               if (_filter.isNotEmpty) _buildVscodeActiveFilters(theme, tokens),
-              if (_isSearching) const LinearProgressIndicator(minHeight: 2),
+              if (_isSearching || _isLoadingMore)
+                const LinearProgressIndicator(minHeight: 2),
               Expanded(
                 child: _currentQuery.isEmpty
                     ? _buildEmptyState(theme)

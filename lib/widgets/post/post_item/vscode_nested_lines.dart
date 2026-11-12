@@ -6,6 +6,20 @@ import 'vscode_line_index.dart';
 
 typedef VscodeNestedDisplayState = ({bool expanded, bool collapsed});
 
+/// 源码索引与卡片共用最新正文，普通树形视图仍沿用上游合并语义。
+NestedNode mergeVscodeNestedNode(NestedNode original, NestedNode incoming) {
+  final children = [...original.children];
+  for (final child in incoming.children) {
+    final index = children.indexWhere((node) => node.post.id == child.post.id);
+    if (index < 0) {
+      children.add(child);
+    } else {
+      children[index] = mergeVscodeNestedNode(children[index], child);
+    }
+  }
+  return original.copyWith(post: incoming.post, children: children);
+}
+
 /// 与树卡的折叠、深度和本地分页规则一致；只遍历已有数据，不展开或请求。
 Iterable<VscodeLineEntry> vscodeNestedLines({
   required List<NestedNode> roots,
@@ -35,7 +49,7 @@ Iterable<VscodeLineEntry> vscodeNestedLines({
     final children = visibleNodes(
       branch == null
           ? node.children
-          : mergeNestedNode(node.copyWith(children: branch.children), node)
+          : mergeVscodeNestedNode(node.copyWith(children: branch.children), node)
                 .children,
     ).toList(growable: false);
     final hasReplies = node.directReplyCount > 0 || children.isNotEmpty;

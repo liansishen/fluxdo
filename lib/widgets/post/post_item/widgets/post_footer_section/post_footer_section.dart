@@ -341,7 +341,7 @@ class _PostFooterSectionState extends ConsumerState<PostFooterSection> {
       if (boosts.isEmpty) return const SizedBox.shrink();
       return VscodePeekSection(
         label: 'Boost',
-        summary: '${boosts.length} 条',
+        summary: context.l10n.post_vscodeItemCount(boosts.length),
         builder: (_) => list,
       );
     }
@@ -398,7 +398,7 @@ class _PostFooterSectionState extends ConsumerState<PostFooterSection> {
         children: [
           _buildActionBar(isGuest, isOwnPost, theme),
           IconButton(
-            tooltip: '楼层信息：Boost、签名与相关链接',
+            tooltip: context.l10n.post_vscodeFloorInfo,
             icon: const Icon(Icons.info_outline),
             onPressed: () => AppBottomSheet.show(
               context: context,
@@ -439,7 +439,11 @@ class _PostFooterSectionState extends ConsumerState<PostFooterSection> {
             Wrap(
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                Text('已指定给 ${widget.assignmentInfo!.displayName}'),
+                Text(
+                  context.l10n.post_vscodeAssignedTo(
+                    widget.assignmentInfo!.displayName,
+                  ),
+                ),
                 TextButton(
                   onPressed: () => showPostAssignDialog(
                     context,
@@ -448,7 +452,7 @@ class _PostFooterSectionState extends ConsumerState<PostFooterSection> {
                     postId: widget.post.id,
                     current: widget.assignmentInfo,
                   ),
-                  child: const Text('编辑指定'),
+                  child: Text(context.l10n.post_vscodeEditAssign),
                 ),
                 TextButton(
                   onPressed: () => unassignPost(
@@ -456,7 +460,7 @@ class _PostFooterSectionState extends ConsumerState<PostFooterSection> {
                     topicId: widget.topicId,
                     postId: widget.post.id,
                   ),
-                  child: const Text('取消指定'),
+                  child: Text(context.l10n.post_vscodeUnassign),
                 ),
               ],
             ),
@@ -487,7 +491,7 @@ class _PostFooterSectionState extends ConsumerState<PostFooterSection> {
           if (widget.post.postNumber == 1 && widget.opTopSlot != null) ...[
             if (vscode)
               VscodePeekSection(
-                label: '楼主附属操作',
+                label: context.l10n.post_vscodeOpExtras,
                 builder: (_) => Align(
                   alignment: AlignmentDirectional.centerStart,
                   child: widget.opTopSlot,

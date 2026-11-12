@@ -193,15 +193,22 @@ class AdaptiveScaffold extends ConsumerWidget {
                   color: useAcrylicRail
                       ? Theme.of(context).colorScheme.surface
                       : null,
+                  // 手机上站点切换不再独占 body 上方一行（换站是低频操作，常驻
+                  // 一行白占所有 tab 的顶部高度）：入口收进首页工具栏和「我的」
+                  // 页顶栏，状态栏 inset 原样交给各页自己的顶栏处理。
+                  // extendBody 注入的底栏 inset 走 MediaQuery，Column 不影响它
+                  // （首页 FAB、列表尾部靠它让位）。
+                  // VS Code 风格在 body 下面多一条状态栏；Column 常驻，切换风格时
+                  // body 在子树里的位置不变，页面不重建。
                   child: VscodeReaderStatusHost(
-                    child: isVscode
-                        ? Column(
-                            children: [
-                              Expanded(child: body),
-                              const VscodeStatusBar(),
-                            ],
-                          )
-                        : body,
+                    child: Column(
+                      // 和原来直接放 body 一样给满宽度，不依赖页面自己撑开
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(child: body),
+                        if (isVscode) const VscodeStatusBar(),
+                      ],
+                    ),
                   ),
                 ),
               ),

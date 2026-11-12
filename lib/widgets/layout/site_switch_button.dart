@@ -7,6 +7,7 @@ import '../../services/site_switch_service.dart';
 import '../../services/toast_service.dart';
 import '../../theme/vscode_theme.dart';
 import '../../theme/mojian_theme.dart';
+import '../../theme/vscode_theme.dart';
 
 /// 只提交站点选择，不在旧引擎中变更当前站点或认证状态。
 ///

@@ -142,7 +142,7 @@ SOFTWARE.
 
 ## 网络启动与增量消息
 
-- 启动时并行读取网络签名，代理启动前补种签名并处理 VPN 压制；Windows 保持系统代理 → `NetworkSettingsService` → 后台 UA → WebView Environment 顺序。rhttp 未启用时不在冷启动初始化运行时。
+- 启动时并行读取网络签名，代理启动前补种签名并处理 VPN 压制；Windows 保持系统代理 → `NetworkSettingsService` → 后台 UA → WebView Environment 顺序，网络请求统一使用单引擎方案。
 - 桌面 UA 缓存按实际 WebView 运行时版本验证；版本变化或缓存损坏时重新探测，仍在代理决策完成后后台初始化。
 - Rust 原生产物需与 Dart FFI 同批构建，Windows 通过 `native:prepare windows --release` 暂存 DLL。内置公共 ECH 域名含 LINUX DO、静态资源和 IDCFlare，关闭开关同时关闭公共兜底，但不关闭原域名 HTTPS/ECH 查询；Selector 覆盖范围独立，不随公共 ECH 域名扩展。
 - Selector 显式覆盖 LINUX DO、IDCFlare、`ldstatic.com` 及配置主机的子域，共享赢家与故障统计；静态资源域纳入叶证书预放行及 MITM，范围外继续隧道转发。

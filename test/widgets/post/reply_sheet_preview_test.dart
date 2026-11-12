@@ -286,6 +286,34 @@ Widget _terminalReply({
   );
 }
 
+Widget _terminalReply({
+  required ReplySheetController controller,
+  required ValueChanged<Post?> onClosed,
+  Post? replyToPost,
+}) {
+  var open = true;
+  return StatefulBuilder(
+    builder: (context, setState) => VscodeTerminalPanel(
+      reader: const Center(child: Text('宿主话题正文')),
+      targetLabel: '回复话题',
+      onClose: () => controller.close(),
+      composer: open
+          ? ReplySheet(
+              embedded: true,
+              controller: controller,
+              topicId: 1,
+              replyToPost: replyToPost,
+              preloadedDraftFuture: Future.value(null),
+              onClosed: (post) {
+                onClosed(post);
+                setState(() => open = false);
+              },
+            )
+          : null,
+    ),
+  );
+}
+
 void main() {
   testWidgets('回复预览缩放图片后，返回编辑与再次预览保留尺寸', (tester) async {
     await _pumpReply(tester);

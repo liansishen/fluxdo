@@ -13,6 +13,12 @@ import 'package:fluxdo/settings/definitions/bottom_nav_defs.dart';
 import 'package:fluxdo/settings/settings_renderer.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+class _StyleNotifier extends ThemeNotifier {
+  _StyleNotifier(super.prefs, UiStyle style) {
+    state = state.copyWith(uiStyle: style);
+  }
+}
+
 void main() {
   Future<SharedPreferences> pumpSettings(
     WidgetTester tester, {
