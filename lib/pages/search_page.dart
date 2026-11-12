@@ -139,8 +139,19 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   Object? _searchError;
   StackTrace? _searchErrorStack;
   bool _isLoadMoreFailed = false;
-  bool _isSearching = false;
   bool _vscodeOptionsExpanded = false;
+
+  /// 首页标准搜索在途（含带初始查询打开、等转场结束才发的那一段）。
+  /// 不能拿「结果为空」推断在途：真的零结果也是空，会一直显示骨架屏
+  bool _isSearching = false;
+
+  /// 每发起一轮首页搜索加一；返回时代际已变（换了关键词/排序/筛选、清空）就丢弃，
+  /// 免得慢的旧请求盖掉新结果、或把旧关键词的下一页拼进来
+  int _searchGeneration = 0;
+
+  /// 独立搜索页自己的平行视界栈，initState 时取好：dispose 里不能再用 ref
+  /// （Riverpod 在卸载时直接抛 StateError）
+  SelectedTopicNotifier? _ownSearchStack;
 
   // 最近搜索记录
   List<String> _recentSearches = [];
@@ -159,12 +170,16 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   void initState() {
     super.initState();
     _filter = widget.initialFilter ?? const SearchFilter();
+    if (widget.stackProvider == null) {
+      _ownSearchStack = ref.read(selectedSearchProvider.notifier);
+    }
     PreloadedDataService().isAiSemanticSearchEnabled().then((enabled) {
       if (mounted) setState(() => _siteAiSearchAvailable = enabled);
     });
     if (widget.initialQuery != null && widget.initialQuery!.isNotEmpty) {
       _searchController.text = widget.initialQuery!;
       _currentQuery = widget.initialQuery!;
+      _isSearching = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _performInitialSearchAfterTransition();
       });
@@ -292,8 +307,12 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     _shortcutSurfaceBinding.disposeDeferred();
     // 独立搜索页拥有自己的平行视界栈，退出时应清理；嵌入首页左栏时复用
     // selectedTopicProvider，搜索页被信息流/分类替换不代表右栏详情也应消失。
-    if (widget.stackProvider == null) {
-      ref.read(selectedSearchProvider.notifier).clear();
+    // 推迟到卸载完成后再清：卸载期间改 provider 会通知到正在卸载的自己
+    final ownStack = _ownSearchStack;
+    if (ownStack != null) {
+      Future.microtask(() {
+        if (ownStack.mounted) ownStack.clear();
+      });
     }
     _searchController.dispose();
     _focusNode.dispose();
@@ -543,11 +562,13 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   }
 
   void _triggerAiSearch(String query) async {
+    final generation = _searchGeneration;
     setState(() => _isSearchingAi = true);
     try {
       final service = ref.read(discourseServiceProvider);
       final aiResult = await service.semanticSearch(query: query);
-      if (!mounted) return;
+      // 已换了一轮搜索：结果和在途标记都归新一轮管
+      if (!mounted || generation != _searchGeneration) return;
 
       // 标记为 AI 生成
       _aiPosts = aiResult.posts
@@ -560,7 +581,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       });
     } catch (e) {
       // 静默失败，404/403/429 都不影响标准搜索
-      if (mounted) setState(() => _isSearchingAi = false);
+      if (mounted && generation == _searchGeneration) {
+        setState(() => _isSearchingAi = false);
+      }
     }
   }
 
@@ -570,7 +593,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final isLoadMore = _currentPage > 1;
     if (!isLoadMore) {
       _loadMoreCoordinator.resetCooldown();
+      _searchGeneration++;
     }
+    final generation = _searchGeneration;
 
     setState(() {
       _isSearching = true;
@@ -578,6 +603,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       _isLoadMoreFailed = false;
       if (!isLoadMore) {
         _isLoadingMore = false;
+        // 上一轮的 AI 搜索作废；这一轮要搜下面会重新置上
+        _isSearchingAi = false;
       }
     });
 
@@ -610,10 +637,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         page: _currentPage,
         typeFilter: 'topic',
       );
+      if (!mounted || generation != _searchGeneration) return;
 
       setState(() {
-        _isSearching = false;
-        if (_currentPage == 1) {
+        if (!isLoadMore) {
           _standardPosts = result.posts;
           _allUsers = result.users;
         } else {
@@ -622,9 +649,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         _hasMorePosts = result.hasMorePosts && result.posts.isNotEmpty;
         _hasMoreUsers = result.hasMoreUsers;
         _isLoadingMore = false;
+        _isSearching = false;
         _rebuildDisplayPosts();
       });
     } catch (e, s) {
+      if (!mounted || generation != _searchGeneration) return;
       setState(() {
         _isSearching = false;
         _isLoadingMore = false;
@@ -666,6 +695,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   void _clearSearch() {
     _searchController.clear();
     _loadMoreCoordinator.resetCooldown();
+    // 在途的请求回来也别再写状态
+    _searchGeneration++;
     setState(() {
       _currentQuery = '';
       _isSearching = false;
@@ -673,6 +704,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       _allPosts = [];
       _aiPosts = [];
       _allUsers = [];
+      _isSearching = false;
       _isSearchingAi = false;
       _hasMorePosts = false;
       _hasMoreUsers = false;
@@ -1544,12 +1576,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     }
 
     if (posts.isEmpty && users.isEmpty && !_isLoadingMore) {
-      // 只有原始结果也为空才可能是首页请求仍在途；
-      // 原始结果非空但过滤后为空 = 全部被本地屏蔽，必须显示空态而非转圈
-      if (_currentPage == 1 &&
-          _allPosts.isEmpty &&
-          _allUsers.isEmpty &&
-          (VscodeTokens.maybeOf(context) == null || _isSearching)) {
+      // 首页请求在途时显示加载状态，完成后即使没有结果也显示空态。
+      if (_isSearching) {
         return VscodeTokens.maybeOf(context) == null
             ? const SearchListSkeleton()
             : const SizedBox.shrink();
@@ -1797,12 +1825,35 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             ),
           ),
           const SizedBox(height: 8),
-          Text(
-            context.l10n.search_tryOtherKeywords,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.outline,
+          // 关键词搜不到时 AI 语义搜索可能还在途，结果回来会替换掉这个空态
+          if (_isSearchingAi)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: theme.colorScheme.tertiary,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  context.l10n.search_aiSearching,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.outline,
+                  ),
+                ),
+              ],
+            )
+          else
+            Text(
+              context.l10n.search_tryOtherKeywords,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.outline,
+              ),
             ),
-          ),
         ],
       ),
     );

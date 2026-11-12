@@ -6,20 +6,40 @@ import '../../services/site_context.dart';
 import '../../services/site_switch_service.dart';
 import '../../services/toast_service.dart';
 import '../../theme/vscode_theme.dart';
+import '../../theme/mojian_theme.dart';
 
 /// 只提交站点选择，不在旧引擎中变更当前站点或认证状态。
+///
+/// 四种形态：
+/// - 默认：只有站点图标（侧栏收起态、启动页）
+/// - [extended]：图标 + 站名 + ⌄（宽侧栏、手机「我的」页顶栏左侧）
+/// - [SiteSwitchButton.capsule]：带底色的小胶囊（图标 + ⌄），放手机首页工具栏
+/// - [SiteSwitchButton.inCategoryDrawer]：分类抽屉中的站点名称与菜单
+///
+/// 手机上不再给它单独留一行：换站是低频操作，常驻一行白占所有页面的顶部高度。
 class SiteSwitchButton extends StatelessWidget {
   const SiteSwitchButton({super.key, this.extended = false})
-    : _inCategoryDrawer = false;
+    : _inCategoryDrawer = false,
+      _capsule = false;
 
   const SiteSwitchButton.inCategoryDrawer({super.key})
     : extended = true,
-      _inCategoryDrawer = true;
+      _inCategoryDrawer = true,
+      _capsule = false;
+
+  const SiteSwitchButton.capsule({super.key})
+    : extended = false,
+      _inCategoryDrawer = false,
+      _capsule = true;
 
   final bool extended;
   final bool _inCategoryDrawer;
+  final bool _capsule;
 
   static const double _drawerMenuWidth = 184;
+
+  /// 站点图标的圆形部分约占边长的 0.89，胶囊中裁掉外圈白边。
+  static const double _logoCircleRatio = 0.89;
 
   Future<void> _switchTo(ForumSite target) async {
     final service = SiteSwitchService.instance;
@@ -40,6 +60,25 @@ class SiteSwitchButton extends StatelessWidget {
     excludeFromSemantics: true,
   );
 
+  Widget _roundLogo(ForumSite site, double size) {
+    final full = size / _logoCircleRatio;
+    return ClipOval(
+      child: SizedBox.square(
+        dimension: size,
+        child: OverflowBox(
+          maxWidth: full,
+          maxHeight: full,
+          child: Image.asset(
+            site.logoAsset,
+            width: full,
+            height: full,
+            fit: BoxFit.contain,
+            excludeFromSemantics: true,
+          ),
+        ),
+      ),
+    );
+  }
   List<PopupMenuEntry<ForumSite>> _menuItems(ForumSite current) => [
     for (final site in ForumSite.values)
       PopupMenuItem<ForumSite>(
@@ -98,7 +137,6 @@ class SiteSwitchButton extends StatelessWidget {
     );
     if (target != null && context.mounted) await _switchTo(target);
   }
-
   @override
   Widget build(BuildContext context) {
     final current = SiteContext.current;
@@ -110,6 +148,7 @@ class SiteSwitchButton extends StatelessWidget {
         final label = switching
             ? l10n.common_switchingSite
             : l10n.common_switchSite;
+        final semanticLabel = '$label · ${current.name}';
         if (_inCategoryDrawer) {
           return Tooltip(
             message: '$label · ${current.name}',
@@ -142,16 +181,19 @@ class SiteSwitchButton extends StatelessWidget {
             ),
           );
         }
+        if (_capsule) {
+          return _buildCapsule(context, current, switching, semanticLabel);
+        }
         return PopupMenuButton<ForumSite>(
           enabled: !switching,
-          tooltip: '$label · ${current.name}',
+          tooltip: semanticLabel,
           initialValue: current,
           onSelected: _switchTo,
           itemBuilder: (_) => _menuItems(current),
           child: Semantics(
             button: true,
             enabled: !switching,
-            label: '$label · ${current.name}',
+            label: semanticLabel,
             excludeSemantics: true,
             child: vscode != null
                 ? SizedBox(
@@ -202,7 +244,10 @@ class SiteSwitchButton extends StatelessWidget {
                   if (extended) ...[
                     const SizedBox(width: 8),
                     Flexible(
-                      child: Text(current.name, overflow: TextOverflow.ellipsis),
+                      child: Text(
+                        current.name,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                     const SizedBox(width: 4),
                     const Icon(Icons.expand_more, size: 16),
@@ -213,6 +258,71 @@ class SiteSwitchButton extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+
+  /// 32 高的小胶囊：底色与形状跟首页工具栏里其它药丸一致
+  /// （经典 = 浅灰全圆角，墨笺 = 纸色细线框小圆角）。
+  Widget _buildCapsule(
+    BuildContext context,
+    ForumSite current,
+    bool switching,
+    String semanticLabel,
+  ) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final mj = theme.extension<MojianTokens>();
+    final radius = BorderRadius.circular(mj != null ? 4 : 16);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Material(
+        key: const ValueKey('site-switch-capsule'),
+        color: mj?.paper2 ?? scheme.surfaceContainerHigh,
+        shape: RoundedRectangleBorder(
+          borderRadius: radius,
+          side: mj != null ? BorderSide(color: mj.ruleStrong) : BorderSide.none,
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: PopupMenuButton<ForumSite>(
+          enabled: !switching,
+          tooltip: semanticLabel,
+          initialValue: current,
+          onSelected: _switchTo,
+          position: PopupMenuPosition.under,
+          borderRadius: radius,
+          itemBuilder: (context) => _menuItems(current),
+          child: Semantics(
+            button: true,
+            enabled: !switching,
+            label: semanticLabel,
+            excludeSemantics: true,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(6, 6, 4, 6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (switching)
+                    const SizedBox.square(
+                      dimension: 20,
+                      child: Padding(
+                        padding: EdgeInsets.all(2),
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  else
+                    _roundLogo(current, 20),
+                  const SizedBox(width: 2),
+                  Icon(
+                    Icons.expand_more,
+                    size: 18,
+                    color: mj?.ink2 ?? scheme.onSurfaceVariant,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

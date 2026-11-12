@@ -31,6 +31,7 @@ import 'accel_doh_auth_service.dart';
 import 'accel_doh_nodes.dart';
 import 'cfhub_api.dart';
 import 'cfhub_probe_auth_service.dart';
+import 'custom_node_input.dart';
 import 'doh_resolver.dart';
 import 'ech_dns_policy.dart';
 import 'webview_mitm_policy.dart';
@@ -98,6 +99,7 @@ class NetworkSettings {
     this.browserTls = false,
     this.selectMode = CfSelectMode.localAtlas,
     this.shareMeasurements = false,
+    this.customNodes = const [],
   });
 
   final bool dohEnabled;
@@ -142,6 +144,10 @@ class NetworkSettings {
   /// 「帮助优选」：把本地竞速的测量结果上报 cfhub（默认关，需 Connect 授权拿探针令牌）
   final bool shareMeasurements;
 
+  /// 自定义节点：用户自己填的 Cloudflare IP / 优选域名（已规范化）。有能连上的就优先用
+  /// 它们里最快的，都连不上再按平常的规则优选
+  final List<String> customNodes;
+
   NetworkSettings copyWith({
     bool? dohEnabled,
     String? selectedServerUrl,
@@ -156,6 +162,7 @@ class NetworkSettings {
     bool? browserTls,
     CfSelectMode? selectMode,
     bool? shareMeasurements,
+    List<String>? customNodes,
   }) {
     return NetworkSettings(
       dohEnabled: dohEnabled ?? this.dohEnabled,
@@ -171,6 +178,7 @@ class NetworkSettings {
       browserTls: browserTls ?? this.browserTls,
       selectMode: selectMode ?? this.selectMode,
       shareMeasurements: shareMeasurements ?? this.shareMeasurements,
+      customNodes: customNodes ?? this.customNodes,
     );
   }
 }
@@ -247,6 +255,9 @@ class NetworkSettingsService {
 
   /// 「帮助优选」开关
   static const _selectShareKey = 'doh_select_share';
+
+  /// 自定义节点清单（规范化后的 IP / 域名，见 [CustomNodeInput]）
+  static const _customNodesKey = 'doh_custom_nodes';
 
   /// Rust 的优选状态 JSON（赢家 + ECH 钥匙），启动时回灌给 Rust
   static const _selectStateKey = 'doh_select_state';
@@ -330,11 +341,35 @@ class NetworkSettingsService {
   NetworkSettings get current => notifier.value;
 
   /// 当前是否使用 gateway（反向代理）模式
-  /// Gateway 模式：DOH 开启 + 用户开关开启 + 代理运行中
+  /// Gateway 模式：DOH 开启 + 用户开关开启 + 代理运行中（加速网关）
   bool get isGatewayMode =>
       current.dohEnabled &&
       current.gatewayEnabled &&
       _rustProxyService.isRunning;
+
+  /// 加速关着（含 VPN 自动让路）、也没有上游代理时，安卓仍为浏览器指纹起本地网关：
+  /// 系统 DNS（开着 VPN 就是 VPN 的）、不做 ECH 和优选。内置网页也经它中转（MITM），
+  /// 和原生请求按同一份采自 WebView 的指纹出去，采样（握手、h2 前言、头顺序、Client
+  /// Hints）也照常进行。
+  ///
+  /// CF 对原生连接收紧的站点（2026-11-10 实测 IDC Flare）认握手不认 cf_clearance：
+  /// 同一枚值浏览器指纹的连接 200，Dart 自己握手的连接（含关掉指纹的网关）验证多少轮
+  /// 都 403，登录时兑换令牌也就过不去
+  bool get fingerprintOnlyGateway =>
+      Platform.isAndroid &&
+      !current.dohEnabled &&
+      !_proxyService.current.isValid &&
+      current.browserTls &&
+      current.gatewayEnabled;
+
+  /// App 的请求是否改写成明文发给本地网关（加速网关，或只为浏览器指纹起的网关）
+  bool get routesAppThroughGateway =>
+      isGatewayMode ||
+      (fingerprintOnlyGateway && _rustProxyService.isRunning);
+
+  /// 内置网页经本地网关中转（MITM）：两种网关都中转，WebView 的证书放行以此为准，
+  /// WebView 主动采样也只在这时能跑
+  bool get relaysWebViewThroughGateway => routesAppThroughGateway;
 
   /// 本地动态优选只在 Android / Linux / Windows 网关模式下跑：DoH 开着、没有上游代理、网关开关开着
   /// （网关/上游的判断和 [_applyProxyState] 里启动代理时用的一致）
@@ -431,8 +466,14 @@ class NetworkSettingsService {
   }
 
   // Rust 代理同时服务 App 自己的请求（网关）和 WebView（MITM 代理）
+  /// 加速或上游代理开着，需要本地代理
   bool get shouldRunLocalProxy =>
       current.dohEnabled || _proxyService.current.isValid;
+
+  /// 本地网关要不要跑：加速或上游代理之外，还有只为浏览器指纹起的情形（见 [fingerprintOnlyGateway]）。
+  /// 跑着的时候内置网页都经它
+  bool get _shouldRunProxyProcess =>
+      shouldRunLocalProxy || fingerprintOnlyGateway;
 
   List<DohServer> get servers => [
     ..._builtInServers,
@@ -473,6 +514,9 @@ class NetworkSettingsService {
     final dohEnabled = prefs.getBool(_dohEnabledKey) ?? true;
     final selectMode = CfSelectMode.fromWire(prefs.getString(_selectModeKey));
     final shareMeasurements = prefs.getBool(_selectShareKey) ?? false;
+    final customNodes = CustomNodeInput.sanitize(
+      prefs.getStringList(_customNodesKey) ?? const [],
+    );
     final selected = prefs.getString(_dohSelectedKey) ?? _defaultServerUrl;
     final customRaw = prefs.getString(_dohCustomKey);
     final custom = _decodeServers(customRaw);
@@ -515,6 +559,7 @@ class NetworkSettingsService {
       browserTls: browserTls,
       selectMode: selectMode,
       shareMeasurements: shareMeasurements,
+      customNodes: customNodes,
     );
     final activeUrl = _activeServerUrl;
     _resolver = DohResolver(
@@ -542,8 +587,8 @@ class NetworkSettingsService {
   Future<void> setDohEnabled(bool enabled) async {
     final prefs = _prefs;
     if (prefs == null) return;
-    _beginApply(enabled: enabled || _proxyService.current.isValid);
     notifier.value = notifier.value.copyWith(dohEnabled: enabled);
+    _beginApply(enabled: _shouldRunProxyProcess);
     if (!enabled && _lastStartFailed) {
       _setStartFailed(false);
     }
@@ -760,6 +805,23 @@ class NetworkSettingsService {
     _touch();
   }
 
+  /// 改自定义节点清单；网关按新清单重启，重启后引擎先照常用着上次的节点，
+  /// 后台把清单测一遍再换过去（见 Rust 侧 `custom_rerace_due`）
+  Future<void> setCustomNodes(List<String> nodes) async {
+    final prefs = _prefs;
+    if (prefs == null) return;
+    final next = CustomNodeInput.sanitize(nodes);
+    if (listEquals(next, current.customNodes)) return;
+    notifier.value = notifier.value.copyWith(customNodes: next);
+    if (next.isEmpty) {
+      await prefs.remove(_customNodesKey);
+    } else {
+      await prefs.setStringList(_customNodesKey, next);
+    }
+    _scheduleApplyProxyState();
+    _touch();
+  }
+
   /// 开关「帮助优选」（把本地竞速的测量结果上报 cfhub）；Rust 侧热更新，不重启网关
   ///
   /// [bearer] 是 cfhub 的探针令牌，没给时取 [CfhubProbeAuthService] 当前的；
@@ -842,7 +904,7 @@ class NetworkSettingsService {
         await Future<void>.delayed(const Duration(milliseconds: 16));
       }
     }
-    if (!shouldRunLocalProxy) {
+    if (!_shouldRunProxyProcess) {
       try {
         await _stopLocalProxyUnlessRequiredByWebView();
         if (_pendingStart) {
@@ -896,16 +958,20 @@ class NetworkSettingsService {
             ? SystemProxyService.instance.effectiveProxyUrl
             : null,
       );
+      // 只为浏览器指纹起的网关同样中转内置网页（MITM）：WebView 的握手、h2 前言、头顺序
+      // 只有这样才采得到，内置网页和原生请求按同一个指纹出去
       final mitmConnect = WebViewMitmPolicy.useMitmConnect(
         isWindows: Platform.isWindows,
         webViewAdapterEnabled: webViewAdapterEnabled,
       );
-      final useGateway = WebViewMitmPolicy.useGatewayMode(
-        isWindows: Platform.isWindows,
-        dohEnabled: current.dohEnabled,
-        gatewayEnabled: current.gatewayEnabled,
-        webViewAdapterEnabled: webViewAdapterEnabled,
-      );
+      final useGateway =
+          fingerprintOnlyGateway ||
+          WebViewMitmPolicy.useGatewayMode(
+            isWindows: Platform.isWindows,
+            dohEnabled: current.dohEnabled,
+            gatewayEnabled: current.gatewayEnabled,
+            webViewAdapterEnabled: webViewAdapterEnabled,
+          );
 
       // macOS: 启动前确保 CA 在钥匙串中被信任
       if (Platform.isMacOS && current.dohEnabled) {
@@ -984,6 +1050,7 @@ class NetworkSettingsService {
         // 本地动态优选：只在 Android / Linux / Windows 网关模式下开；上次的赢家状态回灌给 Rust
         selectMode: selectorEligible ? current.selectMode.wire : 'off',
         selectStateJson: prefsForSeed?.getString(_selectStateKey),
+        customNodes: selectorEligible ? current.customNodes : const [],
         shareMeasurements:
             current.shareMeasurements &&
             CfhubProbeAuthService.instance.token != null,
@@ -1032,7 +1099,7 @@ class NetworkSettingsService {
       // start 耗时较长(读证书/绑端口),期间设置可能已被改为无需本地代理
       // (如 VPN 自动压制关闭了 DoH 与上游代理)。此时并发的 stop 分支先于
       // start 完成,会留下"开关已关、代理仍在跑"的孤儿网关,这里必须复查。
-      if (!shouldRunLocalProxy) {
+      if (!_shouldRunProxyProcess) {
         debugPrint('[DOH] 启动期间设置已变更为无需本地代理,重新核对 WebView 路由');
         await _stopLocalProxyUnlessRequiredByWebView();
         _setPendingStart(false);
@@ -1099,7 +1166,7 @@ class NetworkSettingsService {
   }
 
   Future<void> restartProxy() async {
-    _beginApply(enabled: shouldRunLocalProxy);
+    _beginApply(enabled: _shouldRunProxyProcess);
     await _applyProxyState();
     _touch();
   }
@@ -1113,7 +1180,7 @@ class NetworkSettingsService {
     AccelDohAuthService.instance.checkNow();
     unawaited(_checkAuthRejected());
     unawaited(_checkAccelUpdate());
-    if (!shouldRunLocalProxy) return;
+    if (!_shouldRunProxyProcess) return;
     if (!_rustProxyService.isRunning) {
       // 上次启动失败、当前处于直连状态：回到前台时再试一次
       if (_lastStartFailed && !isApplying.value) {
@@ -1130,7 +1197,7 @@ class NetworkSettingsService {
   }
 
   void _scheduleApplyProxyState() {
-    _beginApply(enabled: shouldRunLocalProxy);
+    _beginApply(enabled: _shouldRunProxyProcess);
     _applyDebounce?.cancel();
     _applyDebounce = Timer(const Duration(milliseconds: 350), () async {
       await _applyProxyState();
@@ -1177,7 +1244,10 @@ class NetworkSettingsService {
   }
 
   Future<void> _applyWebViewProxy() async {
-    if (!shouldRunLocalProxy) return;
+    if (!_shouldRunProxyProcess) {
+      await _clearWebViewProxy();
+      return;
+    }
     final port = _activeProxyPort;
     if (port == null) return;
 
