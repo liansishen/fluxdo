@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../services/discourse_cache_manager.dart';
+import 'animation_visibility.dart';
 import 'first_paint_probe.dart';
 
 /// 动图头像播放 overlay:压在静态首帧之上的圆形动图层。
@@ -71,25 +72,40 @@ class _AnimatedAvatarOverlayState extends State<AnimatedAvatarOverlay> {
           widget.url,
         );
       },
-      child: RepaintBoundary(
-        child: ClipOval(
-          child: Image(
-            image: discourseImageProvider(
-              widget.url,
-              bucket: BlobImageCache.avatarBucket,
-            ),
-            fit: BoxFit.cover,
-            gaplessPlayback: true,
-            frameBuilder: (context, child, frame, wasSync) {
-              final ready = wasSync || frame != null;
-              _report(ready);
-              return ready ? child : const SizedBox.expand();
-            },
-            errorBuilder: (_, _, _) {
-              _report(false);
-              return const SizedBox.expand();
-            },
-          ),
+      child: AnimationVisibility(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final dpr = MediaQuery.devicePixelRatioOf(context);
+            final width = constraints.hasBoundedWidth
+                ? (constraints.maxWidth * dpr).ceil().clamp(1, 0x7fffffff)
+                : null;
+            final height = constraints.hasBoundedHeight
+                ? (constraints.maxHeight * dpr).ceil().clamp(1, 0x7fffffff)
+                : null;
+            return RepaintBoundary(
+              child: ClipOval(
+                child: Image(
+                  image: discourseImageProvider(
+                    widget.url,
+                    bucket: BlobImageCache.avatarBucket,
+                    cacheWidth: width,
+                    cacheHeight: height,
+                  ),
+                  fit: BoxFit.cover,
+                  gaplessPlayback: true,
+                  frameBuilder: (context, child, frame, wasSync) {
+                    final ready = wasSync || frame != null;
+                    _report(ready);
+                    return ready ? child : const SizedBox.expand();
+                  },
+                  errorBuilder: (_, _, _) {
+                    _report(false);
+                    return const SizedBox.expand();
+                  },
+                ),
+              ),
+            );
+          },
         ),
       ),
     );

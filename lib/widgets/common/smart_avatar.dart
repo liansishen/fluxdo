@@ -4,6 +4,7 @@ import 'package:jovial_svg/jovial_svg.dart';
 
 import '../../services/discourse_cache_manager.dart';
 import '../../utils/svg_utils.dart';
+import 'animation_visibility.dart';
 import 'first_paint_probe.dart';
 
 /// 智能头像组件
@@ -229,24 +230,33 @@ class _SmartAvatarState extends State<SmartAvatar> {
       // 绕开 Flutter Skia multi_frame_codec 的 #85831 bug。
       // RepaintBoundary 将每帧 setImage 触发的重绘限制在头像区域内,
       // 避免列表中多个动图头像同时连累整个 list item 重绘。
-      child = RepaintBoundary(
-        child: Image(
-          image: discourseImageProvider(
-            widget.imageUrl!,
-            bucket: BlobImageCache.avatarBucket,
+      final decodeSide = (innerSize * MediaQuery.devicePixelRatioOf(context))
+          .ceil()
+          .clamp(1, 0x7fffffff);
+      child = AnimationVisibility(
+        child: RepaintBoundary(
+          child: Image(
+            image: discourseImageProvider(
+              widget.imageUrl!,
+              bucket: BlobImageCache.avatarBucket,
+              cacheWidth: decodeSide,
+              cacheHeight: decodeSide,
+            ),
+            width: innerSize,
+            height: innerSize,
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+            frameBuilder:
+                (context, displayChild, frame, wasSynchronouslyLoaded) {
+                  if (wasSynchronouslyLoaded || frame != null)
+                    return displayChild;
+                  return _buildLoading(fgColor, innerRadius);
+                },
+            errorBuilder: (context, error, stack) {
+              // 动图链路出错(网络 / Rust 解码失败),退化到字母 fallback
+              return _buildFallback(fgColor, innerRadius);
+            },
           ),
-          width: innerSize,
-          height: innerSize,
-          fit: BoxFit.cover,
-          gaplessPlayback: true,
-          frameBuilder: (context, displayChild, frame, wasSynchronouslyLoaded) {
-            if (wasSynchronouslyLoaded || frame != null) return displayChild;
-            return _buildLoading(fgColor, innerRadius);
-          },
-          errorBuilder: (context, error, stack) {
-            // 动图链路出错(网络 / Rust 解码失败),退化到字母 fallback
-            return _buildFallback(fgColor, innerRadius);
-          },
         ),
       );
     } else if (_svgProbeResolved) {

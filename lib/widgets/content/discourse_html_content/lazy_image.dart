@@ -3,22 +3,22 @@ import 'package:app_icons/app_icons.dart';
 import 'package:m3e_ui/m3e_ui.dart';
 
 import '../../../services/blob_image_cache.dart';
+import '../../../services/discourse_cache_manager.dart'
+    show resizeDiscourseImageProvider;
 import '../../../services/image_decode_spec_memo.dart';
 import '../../../services/media_geometry_memo.dart';
 import '../../../utils/frame_jank_monitor.dart';
 import '../../../utils/image_paint_gate.dart';
 import '../../common/anchor_guard_sliver.dart';
+import '../../common/animation_visibility.dart';
 import '../../common/first_paint_probe.dart';
 import '../../common/hero_image.dart';
 import '../svg_view.dart';
 
 /// 帖子正文内容图组件:固定占位尺寸 + 解码分辨率约束 + 重绘隔离 + Hero。
 ///
-/// 懒加载边界由 sliver 虚拟化承担(item 进入 cacheExtent 才挂载,挂载即
-/// 开始加载 = 提前一个 cacheExtent 预取,进视口时大概率已就绪)。此前在
-/// 组件内再用 VisibilityDetector 拦一道反而把加载起点推迟到"已进视口",
-/// 用户必然先看到占位/spinner;且每张图一个 VisibilityDetector 有全局
-/// 可见性计算开销。
+/// sliver 挂载时仍可预取首帧；真正播放由视口、页面和窗口的可见性共同控制，
+/// 避免 cacheExtent 中的动图和加载指示器持续提交帧。
 ///
 /// 性能关键点:
 /// - **解码约束**:按显示宽 × dpr 解码([ResizeImage.resizeIfNeeded]),
@@ -264,11 +264,10 @@ class _LazyImageState extends State<LazyImage> {
         LazyImage._kMaxDecodeHeight,
       );
     }
-    return ResizeImage(
+    return resizeDiscourseImageProvider(
       widget.imageProvider,
       width: cacheWidth,
       height: LazyImage._kMaxDecodeHeight,
-      policy: ResizeImagePolicy.fit,
     );
   }
 
@@ -426,7 +425,9 @@ class _LazyImageState extends State<LazyImage> {
     }
 
     // 重绘隔离:spinner/动图/首绘只重画图片区域,不连带整个帖子 segment
-    imageWidget = RepaintBoundary(child: imageWidget);
+    imageWidget = AnimationVisibility(
+      child: RepaintBoundary(child: imageWidget),
+    );
 
     if (hasFixedBox) {
       return AspectRatio(aspectRatio: width / height, child: imageWidget);

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../common/skeleton.dart';
-import '../../../../../l10n/s.dart';
+import '../../l10n/s.dart';
 import '../../theme/mojian_theme.dart';
 
 /// 我的徽章页骨架屏

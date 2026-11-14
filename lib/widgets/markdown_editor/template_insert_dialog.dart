@@ -5,7 +5,7 @@ import '../../models/template.dart';
 import '../../utils/dialog_utils.dart';
 import '../common/app_bottom_sheet.dart';
 import 'package:m3e_ui/m3e_ui.dart';
-import '../../../../../l10n/s.dart';
+import '../../l10n/s.dart';
 
 /// 模板选择底部弹窗
 class TemplateInsertDialog extends StatefulWidget {

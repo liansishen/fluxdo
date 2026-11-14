@@ -46,28 +46,77 @@ bool _isAvifUrl(String url) {
 ///   绕 Skia multi_frame_codec 的 #85831 bug)
 /// - 其他静态格式 → BlobImageProvider(content bucket,零 sqlite 寻址)
 ///
-/// 需要限制解码尺寸时在外层包 decode-time 的 `ResizeImage(policy: fit)`。
+/// [cacheWidth] 和 [cacheHeight] 是物理像素尺寸上限。
 ImageProvider discourseImageProvider(
   String url, {
   double scale = 1.0,
   String bucket = BlobImageCache.contentBucket,
   DownloadPriority priority = DownloadPriority.normal,
+  int? cacheWidth,
+  int? cacheHeight,
 }) {
   if (_isAvifUrl(url)) {
-    return AvifImageProvider(url, scale: scale, bucket: bucket);
+    return AvifImageProvider(
+      url,
+      scale: scale,
+      bucket: bucket,
+      cacheWidth: cacheWidth,
+      cacheHeight: cacheHeight,
+    );
   }
   if (isNativeAnimatedUrl(url)) {
     return NativeAnimatedImageProvider.fromBytesProvider(
       loader: () => BlobImageCache.fetch(bucket, url, priority: priority),
       tag: url,
       scale: scale,
+      cacheWidth: cacheWidth,
+      cacheHeight: cacheHeight,
     );
   }
-  return BlobImageProvider(
+  final provider = BlobImageProvider(
     url,
     bucket: bucket,
     scale: scale,
     priority: priority,
+  );
+  if (cacheWidth == null && cacheHeight == null) return provider;
+  return ResizeImage(
+    provider,
+    width: cacheWidth,
+    height: cacheHeight,
+    policy: ResizeImagePolicy.fit,
+    allowUpscaling: false,
+  );
+}
+
+/// 为自解码图片及普通图片统一指定物理解码尺寸。
+ImageProvider resizeDiscourseImageProvider(
+  ImageProvider provider, {
+  int? width,
+  int? height,
+}) {
+  if (width == null && height == null) return provider;
+  if (provider is NativeAnimatedImageProvider) {
+    return provider.resize(cacheWidth: width, cacheHeight: height);
+  }
+  if (provider is AvifImageProvider) {
+    return AvifImageProvider(
+      provider.url,
+      scale: provider.scale,
+      bucket: provider.bucket,
+      singleFrame: provider.singleFrame,
+      targetSize: provider.targetSize,
+      maxDimension: provider.maxDimension,
+      cacheWidth: width,
+      cacheHeight: height,
+    );
+  }
+  return ResizeImage(
+    provider,
+    width: width,
+    height: height,
+    policy: ResizeImagePolicy.fit,
+    allowUpscaling: false,
   );
 }
 

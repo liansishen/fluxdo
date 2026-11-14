@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:app_icons/app_icons.dart';
 import 'package:m3e_ui/m3e_ui.dart';
+
 import '../../services/discourse/discourse_service.dart';
 import '../../services/discourse_cache_manager.dart';
 import '../../pages/image_viewer_page.dart';
 import 'svg_view.dart';
 import '../common/hero_image.dart';
+import '../common/animation_visibility.dart';
 
 /// Discourse 图片组件
 ///
@@ -139,6 +141,8 @@ class _DiscourseImageState extends State<DiscourseImage> {
       imageWidget = _buildCachedImage(theme);
     }
 
+    imageWidget = AnimationVisibility(child: imageWidget);
+
     // Hero 动画:走 HeroImage 统一件 —— 源端隐藏/占位/飞行起点/裁切插值
     // 都由它保证,style 同时约束 openViewer 侧参数(见 ViewerSourceStyle)。
     if (widget.heroTag != null) {
@@ -157,10 +161,7 @@ class _DiscourseImageState extends State<DiscourseImage> {
 
     // Lightbox(无 heroTag:纯点击打开,无飞行)
     if (widget.enableLightbox && !_isSvg) {
-      return GestureDetector(
-        onTap: _openLightbox,
-        child: imageWidget,
-      );
+      return GestureDetector(onTap: _openLightbox, child: imageWidget);
     }
 
     return imageWidget;
@@ -169,8 +170,16 @@ class _DiscourseImageState extends State<DiscourseImage> {
   /// 动图渲染 — 走 native_animated_image (Rust pipeline),不踩 Flutter Skia
   /// multi_frame_codec 的 #85831 / #94205 bug。
   Widget _buildNativeAnimatedImage(ThemeData theme) {
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final logicalWidth = widget.width ?? MediaQuery.sizeOf(context).width;
     return Image(
-      image: discourseImageProvider(_resolvedUrl!),
+      image: discourseImageProvider(
+        _resolvedUrl!,
+        cacheWidth: (logicalWidth * dpr).round().clamp(1, 1 << 16),
+        cacheHeight: widget.height == null
+            ? _kMaxDecodeHeight
+            : (widget.height! * dpr).round().clamp(1, _kMaxDecodeHeight),
+      ),
       width: widget.width,
       height: widget.height,
       fit: widget.fit,
@@ -197,11 +206,10 @@ class _DiscourseImageState extends State<DiscourseImage> {
         : _kMaxDecodeHeight;
 
     return Image(
-      image: ResizeImage(
+      image: resizeDiscourseImageProvider(
         discourseImageProvider(_resolvedUrl!),
         width: cacheWidth,
         height: cacheHeight,
-        policy: ResizeImagePolicy.fit,
       ),
       width: widget.width,
       height: widget.height,
@@ -300,7 +308,9 @@ class _DiscourseImageState extends State<DiscourseImage> {
       _resolvedUrl!,
       heroTag: widget.heroTag,
       thumbnailUrl: _resolvedUrl,
-      galleryImages: widget.galleryImages.isNotEmpty ? widget.galleryImages : null,
+      galleryImages: widget.galleryImages.isNotEmpty
+          ? widget.galleryImages
+          : null,
       initialIndex: widget.initialIndex,
       enableShare: true,
       // 与源端同源:_viewerStyle 一处给出,两侧不可能不一致
@@ -309,5 +319,4 @@ class _DiscourseImageState extends State<DiscourseImage> {
       heroSourceCircular: args.circular,
     );
   }
-
 }

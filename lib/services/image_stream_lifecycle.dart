@@ -1,11 +1,29 @@
 import 'dart:async';
 
 import 'package:dio/dio.dart';
-import 'package:flutter/painting.dart';
+import 'package:flutter/widgets.dart';
 
 /// 标记 ImageCache 自己的 pending 监听，避免它被误算成仍在看图的视图。
 /// ResizeImage 也使用同一缓存入口，淘汰时使用外层真实 key。
 class ManagedImageCache extends ImageCache {
+  static bool _disposalFramePending = false;
+
+  /// 缓存淘汰使用帧尾释放；没有正常绘帧时也必须让原生引用真正归还。
+  static void scheduleDisposalFrame() {
+    if (_disposalFramePending) return;
+    _disposalFramePending = true;
+    scheduleMicrotask(() {
+      _disposalFramePending = false;
+      final binding = WidgetsBinding.instance;
+      if (binding.framesEnabled) {
+        binding.scheduleFrame();
+      } else if (binding.lifecycleState != AppLifecycleState.detached) {
+        // 强制单帧允许后台完成释放；它不会像暖帧那样锁住输入事件。
+        binding.scheduleForcedFrame();
+      }
+    });
+  }
+
   @override
   ImageStreamCompleter? putIfAbsent(
     Object key,
@@ -16,6 +34,7 @@ class ManagedImageCache extends ImageCache {
     try {
       return super.putIfAbsent(key, () {
         final result = loader();
+        result.addOnLastListenerRemovedCallback(scheduleDisposalFrame);
         if (result is CancelableImageStreamCompleter) {
           created = result;
           result.registeringCache = true;

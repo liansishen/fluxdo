@@ -1,11 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/widgets.dart';
-import 'package:native_animated_image/native_animated_image.dart'
-    show NativeAnimatedImageProvider;
 
 import '../../services/discourse_cache_manager.dart';
 import '../../services/sticker_thumbnail_provider.dart';
+import 'animation_visibility.dart';
 
 /// 统一的缓存网络图片组件
 ///
@@ -16,13 +15,9 @@ import '../../services/sticker_thumbnail_provider.dart';
 ///   首次解码 → 缩放 → PNG cache → 后续直接 Flutter 内置 PNG codec
 ///   (毫秒级,完全跳过 AV1 / GIF disposal 等慢路径)
 ///
-/// **没 target size 的完整动画场景**(长按预览 / 大图查看):
-/// - `.avif` → [AvifImageProvider] 完整动画 path
-/// - `.gif` / `.webp` / `.apng` → [NativeAnimatedImageProvider]
-///   (Rust pipeline,绕开 Skia multi_frame_codec 的 #85831 bug)
+/// **完整动画场景**(长按预览 / 大图查看):走统一图片路由。
 ///
-/// **静态图**(PNG / JPEG):
-/// - 走 [CachedNetworkImageProvider] + 可选 [ResizeImage]
+/// **静态图**(PNG / JPEG):走 blob 缓存与可选的解码尺寸限制。
 ///
 /// 直接使用 Flutter [Image] + [frameBuilder],不依赖 OctoImage,
 /// 避免每张图加载时创建 Stack + 2 FadeWidget + 2 AnimationController 的开销。
@@ -94,7 +89,7 @@ class CachedImage extends StatelessWidget {
 
     final provider = _resolveProvider(hasTargetSize, targetSize);
 
-    return Image(
+    final image = Image(
       image: provider,
       width: width,
       height: height,
@@ -103,6 +98,14 @@ class CachedImage extends StatelessWidget {
       frameBuilder: placeholder != null ? _buildFrame : null,
       errorBuilder: _wrapErrorBuilder(provider),
     );
+    final path = Uri.tryParse(url)?.path.toLowerCase() ?? '';
+    final animated = isNativeAnimatedUrl(url) || path.endsWith('.avif');
+    return animated &&
+            !(thumbnailMode &&
+                hasTargetSize &&
+                StickerThumbnailProvider.supports(url))
+        ? AnimationVisibility(child: image)
+        : image;
   }
 
   /// 兜底 evict:部分 provider(如 NativeAnimatedImageProvider)加载失败后,
@@ -131,43 +134,13 @@ class CachedImage extends StatelessWidget {
       );
     }
 
-    final lower = url.toLowerCase();
-
-    // 完整 AVIF 动画(长按预览 / 大图):flutter_avif (libavif + dav1d) 解码
-    if (lower.endsWith('.avif')) {
-      return AvifImageProvider(url, bucket: bucket);
-    }
-
-    // 完整 GIF / animated WebP / APNG 动画:NativeAnimatedImageProvider 走
-    // Rust pipeline,绕 Skia multi_frame_codec 的 #85831 bug。
-    //
-    // 安全性(v0.3.0 后):native_animated_image 已经把 AVIF 解码彻底剥离,
-    // 即使 URL 后缀失真(`.gif/.webp` 实际是 AVIF bytes),Rust 端 AVIF
-    // magic 现在返 UnsupportedFormat,触发 provider 内置 Flutter codec
-    // fallback,不会再撞 zenavif crash。
-    if (lower.endsWith('.gif') ||
-        lower.endsWith('.webp') ||
-        lower.endsWith('.apng')) {
-      return NativeAnimatedImageProvider.fromBytesProvider(
-        loader: () => BlobImageCache.fetch(bucket, url, priority: priority),
-        tag: url,
-      );
-    }
-
-    // 静态格式:blob 直寻址 + ResizeImage(节省内存)
-    ImageProvider provider = BlobImageProvider(
+    return discourseImageProvider(
       url,
       bucket: bucket,
       priority: priority,
+      cacheWidth: memCacheWidth,
+      cacheHeight: memCacheHeight,
     );
-    if (hasTargetSize) {
-      provider = ResizeImage(
-        provider,
-        width: memCacheWidth,
-        height: memCacheHeight,
-      );
-    }
-    return provider;
   }
 
   Widget _buildFrame(

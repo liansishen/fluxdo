@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import 'animation_visibility.dart';
+
 /// 头像脉冲光晕效果
-class AvatarGlow extends StatefulWidget {
+class AvatarGlow extends StatelessWidget {
   final Widget child;
   final Color glowColor;
 
@@ -12,10 +14,22 @@ class AvatarGlow extends StatefulWidget {
   });
 
   @override
-  State<AvatarGlow> createState() => _AvatarGlowState();
+  Widget build(BuildContext context) => AnimationVisibility(
+    child: _AvatarGlowAnimation(glowColor: glowColor, child: child),
+  );
 }
 
-class _AvatarGlowState extends State<AvatarGlow>
+class _AvatarGlowAnimation extends StatefulWidget {
+  final Widget child;
+  final Color glowColor;
+
+  const _AvatarGlowAnimation({required this.child, required this.glowColor});
+
+  @override
+  State<_AvatarGlowAnimation> createState() => _AvatarGlowState();
+}
+
+class _AvatarGlowState extends State<_AvatarGlowAnimation>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
 

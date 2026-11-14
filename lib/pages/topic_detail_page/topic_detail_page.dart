@@ -3312,9 +3312,12 @@ class _TopicDetailPageState extends ConsumerState<TopicDetailPage>
         // 使用 Offstage 保持帖子列表存在但在搜索模式下隐藏，保留滚动位置
         Offstage(
           offstage: isSearchMode,
-          child: VscodeReaderFlowScope(
-            selectedPost: _vscodeSelectedPost,
-            child: content,
+          child: TickerMode(
+            enabled: !isSearchMode,
+            child: VscodeReaderFlowScope(
+              selectedPost: _vscodeSelectedPost,
+              child: content,
+            ),
           ),
         ),
 

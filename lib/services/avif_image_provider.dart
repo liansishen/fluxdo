@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:ui' as ui;
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:flutter_avif/flutter_avif.dart' as fa;
+
 import '../l10n/s.dart';
 import '../utils/scroll_busy_signal.dart';
 import 'avif_fast_bridge.dart';
@@ -36,33 +39,55 @@ bool _avifPlatformCodecUnavailable = false;
 /// 这条路解码全程在引擎 IO 线程,零主 isolate 拷贝;而 Rust FFI 路径每帧
 /// 要在主 isolate 上做 protobuf 解析拷贝 + `Uint8List.fromList` +
 /// `decodeImageFromPixels` 三次 MB 级搬运,静态大图首次解码卡顿的大头在此。
-Future<ui.Codec?> _tryPlatformAvifCodec(Uint8List bytes, {int? maxDim}) async {
+Future<ui.Codec?> _tryPlatformAvifCodec(
+  Uint8List bytes, {
+  int? maxDim,
+  int? cacheWidth,
+  int? cacheHeight,
+}) async {
   ui.ImmutableBuffer? buffer;
   try {
     buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
     final descriptor = await ui.ImageDescriptor.encoded(buffer);
-    int? targetW, targetH;
-    final w = descriptor.width, h = descriptor.height;
-    if (maxDim != null && (w > maxDim || h > maxDim)) {
-      // 只给长边,短边由引擎按宽高比推出
-      if (w >= h) {
-        targetW = maxDim;
-      } else {
-        targetH = maxDim;
-      }
-    }
+    final size = _boundedAvifSize(
+      descriptor.width,
+      descriptor.height,
+      maxDimension: maxDim,
+      cacheWidth: cacheWidth,
+      cacheHeight: cacheHeight,
+    );
     // 注意:codec 存活期间引用着 descriptor 的 generator,不能在这里
     // dispose descriptor(引擎自带的 instantiateImageCodecWithSize 同款
     // 处理 —— 只 dispose buffer,descriptor 随 codec 的 GC finalizer 走)。
     return await descriptor.instantiateCodec(
-      targetWidth: targetW,
-      targetHeight: targetH,
+      targetWidth: size.$1,
+      targetHeight: size.$2,
     );
   } catch (_) {
     return null;
   } finally {
     buffer?.dispose();
   }
+}
+
+/// 同时限制宽高且保持比例，不放大原始像素。
+(int, int) _boundedAvifSize(
+  int width,
+  int height, {
+  int? maxDimension,
+  int? cacheWidth,
+  int? cacheHeight,
+}) {
+  var ratio = 1.0;
+  if (maxDimension != null) {
+    ratio = math.min(ratio, maxDimension / math.max(width, height));
+  }
+  if (cacheWidth != null) ratio = math.min(ratio, cacheWidth / width);
+  if (cacheHeight != null) ratio = math.min(ratio, cacheHeight / height);
+  return (
+    (width * ratio).round().clamp(1, width),
+    (height * ratio).round().clamp(1, height),
+  );
 }
 
 /// ftyp box 的 major/compatible brands 是否含动画 brand(avis/msf1)。
@@ -72,7 +97,10 @@ Future<ui.Codec?> _tryPlatformAvifCodec(Uint8List bytes, {int? maxDim}) async {
 bool _looksAnimatedAvif(Uint8List bytes) {
   if (bytes.length < 16) return false;
   // offset 4..8 应为 'ftyp'
-  if (bytes[4] != 0x66 || bytes[5] != 0x74 || bytes[6] != 0x79 || bytes[7] != 0x70) {
+  if (bytes[4] != 0x66 ||
+      bytes[5] != 0x74 ||
+      bytes[6] != 0x79 ||
+      bytes[7] != 0x70) {
     return false;
   }
   bool isAnimBrand(int o) {
@@ -82,7 +110,8 @@ bool _looksAnimatedAvif(Uint8List bytes) {
 
   if (isAnimBrand(8)) return true; // major brand
   // compatible brands:16..ftyp box 末尾,4 字节一个
-  final boxSize = (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3];
+  final boxSize =
+      (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3];
   final end = boxSize.clamp(16, bytes.length);
   for (var o = 16; o + 4 <= end; o += 4) {
     if (isAnimBrand(o)) return true;
@@ -125,6 +154,13 @@ class AvifImageProvider extends ImageProvider<AvifImageProvider> {
   /// 需要原图的场景显式传更大值或 null(不限制)。
   final int? maxDimension;
 
+  /// 调用方实际显示区域对应的物理像素边界。
+  final int? cacheWidth;
+  final int? cacheHeight;
+
+  /// 宿主窗口可见性；隐藏窗口不再构建时仍能直接停止逐帧解码。
+  static ValueListenable<bool>? animationEnabled;
+
   const AvifImageProvider(
     this.url, {
     this.scale = 1.0,
@@ -132,7 +168,10 @@ class AvifImageProvider extends ImageProvider<AvifImageProvider> {
     this.singleFrame = false,
     this.targetSize,
     this.maxDimension = 2048,
-  });
+    this.cacheWidth,
+    this.cacheHeight,
+  }) : assert(cacheWidth == null || cacheWidth > 0),
+       assert(cacheHeight == null || cacheHeight > 0);
 
   static bool isAvifUrl(String url) {
     try {
@@ -204,6 +243,8 @@ class AvifImageProvider extends ImageProvider<AvifImageProvider> {
       scale: key.scale,
       singleFrame: key.singleFrame,
       maxDimension: key.maxDimension,
+      cacheWidth: key.cacheWidth,
+      cacheHeight: key.cacheHeight,
       onError: () {
         scheduleMicrotask(() {
           PaintingBinding.instance.imageCache.evict(key);
@@ -222,8 +263,12 @@ class AvifImageProvider extends ImageProvider<AvifImageProvider> {
   static Future<fa.AvifCodec> _createCodec(AvifImageProvider key) async {
     final bytes = await BlobImageCache.fetch(key.bucket, key.url);
     if (!_avifPlatformCodecUnavailable && !_looksAnimatedAvif(bytes)) {
-      final platformCodec =
-          await _tryPlatformAvifCodec(bytes, maxDim: key.maxDimension);
+      final platformCodec = await _tryPlatformAvifCodec(
+        bytes,
+        maxDim: key.maxDimension,
+        cacheWidth: key.cacheWidth,
+        cacheHeight: key.cacheHeight,
+      );
       if (platformCodec != null) {
         return _PlatformAvifCodec(platformCodec);
       }
@@ -345,9 +390,7 @@ class AvifImageProvider extends ImageProvider<AvifImageProvider> {
     return ImageInfo(image: displayImage, scale: key.scale);
   }
 
-  static Future<Uint8List?> _readCachedThumbnailBytes(
-    String thumbKey,
-  ) async {
+  static Future<Uint8List?> _readCachedThumbnailBytes(String thumbKey) async {
     final bytes = await BlobImageCache.read(
       BlobImageCache.stickerThumbBucket,
       thumbKey,
@@ -471,12 +514,22 @@ class AvifImageProvider extends ImageProvider<AvifImageProvider> {
         other.scale == scale &&
         other.singleFrame == singleFrame &&
         other.targetSize == targetSize &&
-        other.maxDimension == maxDimension;
+        other.maxDimension == maxDimension &&
+        other.cacheWidth == cacheWidth &&
+        other.cacheHeight == cacheHeight;
   }
 
   @override
-  int get hashCode =>
-      Object.hash(url, bucket, scale, singleFrame, targetSize, maxDimension);
+  int get hashCode => Object.hash(
+    url,
+    bucket,
+    scale,
+    singleFrame,
+    targetSize,
+    maxDimension,
+    cacheWidth,
+    cacheHeight,
+  );
 
   @override
   String toString() => 'AvifImageProvider("$url", scale: $scale)';
@@ -593,9 +646,11 @@ class _AvifAnimatedImageStreamCompleter extends ImageStreamCompleter
     required this.scale,
     this.singleFrame = false,
     this.maxDimension,
+    this.cacheWidth,
+    this.cacheHeight,
     VoidCallback? onError,
-  })  : _codecFactory = codecFactory,
-        _onError = onError;
+  }) : _codecFactory = codecFactory,
+       _onError = onError;
 
   final Future<fa.AvifCodec> Function() _codecFactory;
   final double scale;
@@ -605,9 +660,13 @@ class _AvifAnimatedImageStreamCompleter extends ImageStreamCompleter
 
   /// 帧尺寸上限(长边)。超限帧 GPU 缩放后 setImage,防全尺寸纹理上传。
   final int? maxDimension;
+  final int? cacheWidth;
+  final int? cacheHeight;
 
   /// 初始化 / 解帧失败时回调(provider 用它做 ImageCache evict)。
   final VoidCallback? _onError;
+  final ValueListenable<bool>? _animationEnabled =
+      AvifImageProvider.animationEnabled;
 
   fa.AvifCodec? _codec;
   bool _starting = false;
@@ -637,8 +696,9 @@ class _AvifAnimatedImageStreamCompleter extends ImageStreamCompleter
   void addListener(ImageStreamListener listener) {
     final hadListeners = hasListeners;
     super.addListener(listener);
-    if (!hadListeners) {
-      _start();
+    if (!hadListeners && hasListeners) {
+      _animationEnabled?.addListener(_onAnimationChanged);
+      unawaited(_start());
     }
   }
 
@@ -646,12 +706,33 @@ class _AvifAnimatedImageStreamCompleter extends ImageStreamCompleter
   void removeListener(ImageStreamListener listener) {
     super.removeListener(listener);
     if (!hasListeners) {
+      _animationEnabled?.removeListener(_onAnimationChanged);
+      _pause();
+    }
+  }
+
+  @override
+  void onDisposed() {
+    _animationEnabled?.removeListener(_onAnimationChanged);
+    _pause();
+    super.onDisposed();
+  }
+
+  void _onAnimationChanged() {
+    if (!hasListeners) return;
+    if (_animationEnabled?.value ?? true) {
+      unawaited(_start());
+    } else {
       _pause();
     }
   }
 
   Future<void> _start() async {
-    if (_codec != null || _starting) return;
+    if (!hasListeners ||
+        !(_animationEnabled?.value ?? true) ||
+        _codec != null ||
+        _starting)
+      return;
     _starting = true;
     // 新解码器从第 0 帧解起(暂停前交付的旧帧序号作废)
     _frameIndex = -1;
@@ -667,6 +748,7 @@ class _AvifAnimatedImageStreamCompleter extends ImageStreamCompleter
       _frameCount = codec.frameCount;
       await _decodeAndEmitNext();
     } catch (error, stack) {
+      if (gen != _generation || !hasListeners) return;
       _onError?.call();
       reportError(
         context: ErrorDescription(S.current.common_decodeAvif),
@@ -675,6 +757,10 @@ class _AvifAnimatedImageStreamCompleter extends ImageStreamCompleter
       );
     } finally {
       _starting = false;
+      // 初始化期间暂停后又恢复时，旧结果丢弃后重新建立解码器。
+      if (gen != _generation && hasListeners && _codec == null) {
+        unawaited(_start());
+      }
     }
   }
 
@@ -715,10 +801,29 @@ class _AvifAnimatedImageStreamCompleter extends ImageStreamCompleter
 
     // 超限帧缩到上限再交付:防原图级帧全尺寸上传纹理独占 raster
     var image = frame.image;
-    final cap = maxDimension;
-    if (cap != null && (image.width > cap || image.height > cap)) {
-      final resized = await AvifImageProvider._resize(image, cap);
-      image.dispose();
+    final size = _boundedAvifSize(
+      image.width,
+      image.height,
+      maxDimension: maxDimension,
+      cacheWidth: cacheWidth,
+      cacheHeight: cacheHeight,
+    );
+    if (image.width != size.$1 || image.height != size.$2) {
+      final recorder = ui.PictureRecorder();
+      ui.Canvas(recorder).drawImageRect(
+        image,
+        ui.Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+        ui.Rect.fromLTWH(0, 0, size.$1.toDouble(), size.$2.toDouble()),
+        ui.Paint()..filterQuality = ui.FilterQuality.low,
+      );
+      final picture = recorder.endRecording();
+      final ui.Image resized;
+      try {
+        resized = await picture.toImage(size.$1, size.$2);
+      } finally {
+        picture.dispose();
+        image.dispose();
+      }
       if (gen != _generation || !hasListeners) {
         resized.dispose();
         return;
@@ -732,6 +837,7 @@ class _AvifAnimatedImageStreamCompleter extends ImageStreamCompleter
     _frameIndex = count > 0 ? (_frameIndex + 1) % count : 0;
     setImage(ImageInfo(image: image, scale: scale));
     _hasEmittedFrame = true;
+    if (gen != _generation || !hasListeners) return;
 
     if (singleFrame || codec.frameCount <= 1) {
       // 静态图 / 单帧:不会再要帧,立即释放 Rust 端 decoder

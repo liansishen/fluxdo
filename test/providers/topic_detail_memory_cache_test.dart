@@ -167,6 +167,41 @@ void main() {
     });
   });
 
+  testWidgets('无人再次读取时也会主动释放过期话题', (tester) async {
+    TopicDetailMemoryCache.put(_detail());
+    await tester.pump(
+      TopicDetailMemoryCache.ttl - const Duration(milliseconds: 1),
+    );
+    expect(TopicDetailMemoryCache.entryCount, 1);
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(TopicDetailMemoryCache.entryCount, 0);
+  });
+
+  testWidgets('替换或清空后旧定时器不能删除新话题缓存', (tester) async {
+    TopicDetailMemoryCache.put(_detail());
+    await tester.pump(const Duration(minutes: 1));
+    clock = clock.add(const Duration(minutes: 1));
+    TopicDetailMemoryCache.put(_detail(highest: 4));
+    await tester.pump(const Duration(minutes: 2));
+    expect(TopicDetailMemoryCache.entryCount, 1);
+    expect(
+      TopicDetailMemoryCache.take(
+        7,
+        expectedHighestPostNumber: 4,
+        targetPostNumber: 1,
+      )?.highestPostNumber,
+      4,
+    );
+    TopicDetailMemoryCache.put(_detail());
+    await tester.pump(const Duration(minutes: 1));
+    TopicDetailMemoryCache.clear();
+    TopicDetailMemoryCache.put(_detail(id: 8));
+    await tester.pump(const Duration(minutes: 2));
+    expect(TopicDetailMemoryCache.entryCount, 1);
+    await tester.pump(const Duration(minutes: 1));
+    expect(TopicDetailMemoryCache.entryCount, 0);
+  });
+
   group('详情 provider', () {
     late _FakeDiscourseService service;
     late ProviderContainer container;

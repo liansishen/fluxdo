@@ -1,7 +1,7 @@
 import 'dart:ui';
 
 import 'package:pro_image_editor/pro_image_editor.dart';
-import '../../../../../l10n/s.dart';
+import '../../l10n/s.dart';
 
 /// pro_image_editor 中文本地化配置
 I18n buildImageEditorI18nZh() => I18n(

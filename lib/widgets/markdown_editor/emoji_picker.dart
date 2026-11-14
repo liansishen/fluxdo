@@ -11,7 +11,7 @@ import '../../services/discourse_cache_manager.dart';
 import '../../utils/dialog_utils.dart';
 import '../common/app_bottom_sheet.dart';
 import 'package:m3e_ui/m3e_ui.dart';
-import '../../../../../l10n/s.dart';
+import '../../l10n/s.dart';
 
 /// 常用表情的 Key
 const String _recentEmojisKey = 'recent_emojis';
