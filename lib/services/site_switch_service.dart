@@ -10,6 +10,7 @@ import 'cf_clearance_refresh_service.dart';
 import 'log/log_writer.dart';
 import 'network/doh/network_settings_service.dart';
 import 'network/doh_proxy/doh_proxy_service.dart';
+import 'session/session_token_diagnostics.dart';
 import 'site_context.dart';
 import 'site_data_lifecycle.dart';
 import 'user_api_key_service.dart';
@@ -67,6 +68,13 @@ class SiteSwitchService {
       }
       await SiteContext.persistSelection(target);
       selectionSaved = true;
+      // 离站前记录各站点两端的 _t 摘要，保留本地切站回滚与服务重启顺序。
+      await SessionTokenDiagnostics.log(
+        'site_switch',
+        extra: {'target': target.host},
+        timeout: const Duration(seconds: 2),
+      );
+      await LogWriter.instance.flushNow();
 
       // 移动端代理由进程级 Rust 状态持有，重建引擎前必须停止。
       // iOS 不退出进程；否则新引擎会继承旧代理和验证 WebView 的运行状态。

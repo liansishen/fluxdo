@@ -70,6 +70,7 @@ import 'services/cf_challenge_logger.dart';
 import 'services/browser_trust_coordinator.dart';
 import 'services/startup/app_startup.dart';
 import 'services/startup/startup_timeline.dart';
+import 'services/session/session_token_diagnostics.dart';
 import 'services/site_context.dart';
 import 'config/forum_site.dart';
 import 'services/update_service.dart';
@@ -463,6 +464,13 @@ Future<void> main(List<String> args) async {
   unawaited(
     WidgetsBinding.instance.waitUntilFirstFrameRasterized.then(
       (_) => StartupTimeline.mark('first_frame'),
+    ),
+  );
+
+  // 首帧后记录两站 CookieJar / WebView 的脱敏会话摘要，保留原启动顺序。
+  unawaited(
+    WidgetsBinding.instance.waitUntilFirstFrameRasterized.then(
+      (_) => SessionTokenDiagnostics.log('app_start'),
     ),
   );
 
