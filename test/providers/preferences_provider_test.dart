@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxdo/providers/preferences_provider.dart';
 import 'package:fluxdo/providers/theme_provider.dart';
+import 'package:fluxdo/models/vscode_body_style.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Future<ProviderContainer> _createContainer({
@@ -16,6 +17,28 @@ Future<ProviderContainer> _createContainer({
 }
 
 void main() {
+  test('VS Code 正文偏好独立持久化，不覆盖首页上滑刷新设置', () async {
+    final container = await _createContainer(
+      initialValues: {'pref_home_fab_refresh_on_scroll_up': false},
+    );
+    addTearDown(container.dispose);
+    final notifier = container.read(preferencesProvider.notifier);
+    expect(container.read(preferencesProvider).vscodeBodyStyle, VscodeBodyStyle.compact);
+    expect(container.read(preferencesProvider).vscodeCodeLanguage, VscodeCodeLanguage.java);
+    await notifier.setVscodeBodyStyle(VscodeBodyStyle.programming);
+    await notifier.setVscodeCodeLanguage(VscodeCodeLanguage.python);
+    final prefs = container.read(sharedPreferencesProvider);
+    final restored = ProviderContainer(
+      overrides: [sharedPreferencesProvider.overrideWithValue(prefs)],
+    );
+    addTearDown(restored.dispose);
+    final state = restored.read(preferencesProvider);
+    expect(state.vscodeBodyStyle, VscodeBodyStyle.programming);
+    expect(state.vscodeCodeLanguage, VscodeCodeLanguage.python);
+    expect(state.homeFabRefreshOnScrollUp, isFalse);
+    expect(prefs.getBool('pref_home_fab_refresh_on_scroll_up'), isFalse);
+  });
+
   test('全局玻璃默认自动开启，不继承旧底栏关闭值', () async {
     final container = await _createContainer(
       initialValues: {
@@ -92,6 +115,31 @@ void main() {
     addTearDown(reloaded.dispose);
 
     expect(reloaded.read(preferencesProvider).exitOnSingleBack, isTrue);
+  });
+
+  test('预测性返回默认开启，关闭后持久化并同步给手势探测器', () async {
+    addTearDown(() => PredictiveBackSettings.enabled = true);
+    final container = await _createContainer();
+    addTearDown(container.dispose);
+
+    expect(container.read(preferencesProvider).predictiveBack, isTrue);
+    expect(PredictiveBackSettings.enabled, isTrue);
+
+    await container
+        .read(preferencesProvider.notifier)
+        .setPredictiveBack(false);
+    expect(container.read(preferencesProvider).predictiveBack, isFalse);
+    expect(PredictiveBackSettings.enabled, isFalse);
+
+    // 下次启动：读回关闭，并在建 provider 时就同步给探测器
+    PredictiveBackSettings.enabled = true;
+    final prefs = container.read(sharedPreferencesProvider);
+    final reloaded = ProviderContainer(
+      overrides: [sharedPreferencesProvider.overrideWithValue(prefs)],
+    );
+    addTearDown(reloaded.dispose);
+    expect(reloaded.read(preferencesProvider).predictiveBack, isFalse);
+    expect(PredictiveBackSettings.enabled, isFalse);
   });
 
   test('书签默认打开方式默认值为 defaultRoute', () async {

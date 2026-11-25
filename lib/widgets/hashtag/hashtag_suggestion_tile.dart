@@ -27,9 +27,7 @@ class HashtagSuggestionTile extends StatelessWidget {
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-        color: selected
-            ? scheme.primaryContainer.withValues(alpha: 0.35)
-            : null,
+        color: selected ? scheme.primaryContainer.withValues(alpha: 0.35) : null,
         child: Row(
           children: [
             SizedBox(
@@ -71,11 +69,7 @@ class HashtagSuggestionTile extends StatelessWidget {
       final tagIcon = FontAwesomeHelper.getIcon(suggestion.icon ?? 'tag');
       return tagIcon != null
           ? Icon(tagIcon.data, size: 14, color: scheme.onSurfaceVariant)
-          : Icon(
-              Symbols.sell_rounded,
-              size: 16,
-              color: scheme.onSurfaceVariant,
-            );
+          : Icon(Symbols.sell_rounded, size: 16, color: scheme.onSurfaceVariant);
     }
     final icon = suggestion.styleType == 'square'
         ? null

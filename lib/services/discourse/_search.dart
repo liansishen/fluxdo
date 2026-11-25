@@ -74,10 +74,7 @@ mixin _SearchMixin on _DiscourseServiceBase {
         queryParams['selected_tags'] = selectedTags;
       }
 
-      final response = await _dio.get(
-        '/tags/filter/search',
-        queryParameters: queryParams,
-      );
+      final response = await _dio.get('/tags/filter/search', queryParameters: queryParams);
       return TagSearchResult.fromJson(response.data as Map<String, dynamic>);
     } catch (e) {
       debugPrint('[DiscourseService] searchTags failed: $e');
@@ -133,9 +130,7 @@ mixin _SearchMixin on _DiscourseServiceBase {
         queryParameters: queryParams,
         options: Options(extra: {'isSilent': true, 'priority': 'normal'}),
       );
-      return MentionSearchResult.fromJson(
-        response.data as Map<String, dynamic>,
-      );
+      return MentionSearchResult.fromJson(response.data as Map<String, dynamic>);
     } catch (e) {
       debugPrint('[DiscourseService] searchUsers failed: $e');
       return const MentionSearchResult(users: [], groups: []);
@@ -175,7 +170,9 @@ mixin _SearchMixin on _DiscourseServiceBase {
     try {
       final response = await _dio.get(
         '/composer/mentions',
-        queryParameters: {'names[]': names},
+        queryParameters: {
+          'names[]': names,
+        },
         // 编辑器内自动触发的校验请求,同样不应弹前台验证;
         // 同样显式声明 normal,避免被调度器按 isSilent 降级排队。
         options: Options(extra: {'isSilent': true, 'priority': 'normal'}),

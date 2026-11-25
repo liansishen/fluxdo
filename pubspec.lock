@@ -105,14 +105,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.1.2"
-  build_cli_annotations:
-    dependency: transitive
-    description:
-      name: build_cli_annotations
-      sha256: e563c2e01de8974566a1998410d3f6f03521788160a02503b0b1f1a46c7b3d95
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.1.1"
   catcher_2:
     dependency: "direct main"
     description:
@@ -316,11 +308,10 @@ packages:
   dio:
     dependency: "direct main"
     description:
-      name: dio
-      sha256: "0df44ebba85e503958eb75d07eedd3c86275a58c1d3eda2f2ce8f0a2c3abbb3c"
-      url: "https://pub.dev"
-    source: hosted
-    version: "5.11.0"
+      path: "third_party/dio"
+      relative: true
+    source: path
+    version: "5.11.1"
   dio_web_adapter:
     dependency: transitive
     description:
@@ -753,14 +744,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.3.2"
-  flutter_rust_bridge:
-    dependency: "direct overridden"
-    description:
-      name: flutter_rust_bridge
-      sha256: e87d6b9ee934dcd24a128ccb2bd91905d2d5fe5c06245d6a8f5477d4907a437a
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.12.0"
   flutter_secure_storage:
     dependency: "direct main"
     description:
@@ -987,14 +970,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.1.2"
-  http_profile:
-    dependency: transitive
-    description:
-      name: http_profile
-      sha256: "7e679e355b09aaee2ab5010915c932cce3f2d1c11c3b2dc177891687014ffa78"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.1.0"
   image:
     dependency: "direct main"
     description:
@@ -1294,10 +1269,9 @@ packages:
   native_animated_image:
     dependency: "direct main"
     description:
-      name: native_animated_image
-      sha256: d9c806cee4c157bb000fdad7d46a9929cdec1949532f084fa8d2da92670b3923
-      url: "https://pub.dev"
-    source: hosted
+      path: "third_party/native_animated_image"
+      relative: true
+    source: path
     version: "0.3.4"
   native_animated_image_android:
     dependency: transitive
@@ -1723,15 +1697,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.2.2"
-  rhttp:
-    dependency: "direct main"
-    description:
-      path: rhttp
-      ref: HEAD
-      resolved-ref: "02eb4114b57c108e76a9ed526b6118bc048b5604"
-      url: "https://github.com/Lingyan000/rhttp_plus.git"
-    source: git
-    version: "0.18.0"
   riverpod:
     dependency: transitive
     description:

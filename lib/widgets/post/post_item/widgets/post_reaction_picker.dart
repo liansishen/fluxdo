@@ -4,17 +4,11 @@ import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:app_icons/app_icons.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../models/topic.dart';
-import '../../../../services/discourse_cache_manager.dart';
-import '../../../../services/emoji_handler.dart';
 import '../../../../theme/mojian_theme.dart';
-
-String _getEmojiUrl(String emojiName) {
-  return EmojiHandler().getEmojiUrl(emojiName);
-}
+import 'reaction_emoji.dart';
 
 // ============================== 布局常量 ==============================
 
@@ -241,6 +235,9 @@ class ReactionPickerController {
     _attachScrollListeners(context);
     _attachLifecycleObserver();
     _attachPopEntry(context);
+    if (!MediaQuery.disableAnimationsOf(context)) {
+      prefetchReactionAnimations(_reactions);
+    }
 
     enter.forward(from: 0);
   }
@@ -897,23 +894,22 @@ class _ReactionPickerOverlayState extends State<_ReactionPickerOverlay> {
     );
   }
 
-  /// 选中的表情沿弧线飞回按钮:起飞时是高亮放大态,落地前缩到图标大小并淡出
+  /// 选中的表情沿弧线飞回按钮:起飞时是高亮放大态,落地时缩到按钮里
+  /// 表情的大小、正好落在它的位置上,由按钮接着显示(不淡出,否则落地
+  /// 那一下会先消失再出现)。途中持续播放动态表情,与槽位、按钮共用
+  /// 同一个解码流,动画不断档。
   Widget _buildFlight(_Flight flight) {
     final ft = Curves.easeInOutCubic.transform(ctrl.flightAnim.value);
     final p = flight.at(ft);
     final scale = lerpDouble(flight.startScale, 20 / _kIconSize, ft)!;
     final size = _kIconSize * scale;
-    final opacity = ft < 0.85 ? 1.0 : 1 - (ft - 0.85) / 0.15;
     return Positioned(
       left: p.dx - size / 2,
       top: p.dy - size / 2,
       width: size,
       height: size,
       child: IgnorePointer(
-        child: Opacity(
-          opacity: opacity.clamp(0.0, 1.0),
-          child: _EmojiImage(reactionId: flight.id, size: size),
-        ),
+        child: ReactionEmoji(reactionId: flight.id, size: size, loop: true),
       ),
     );
   }
@@ -1070,29 +1066,35 @@ class _ReactionItem extends StatelessWidget {
         ? primary.withValues(alpha: 0.1)
         : primary.withValues(alpha: 0);
 
-    Widget content = AnimatedContainer(
+    final Widget content = AnimatedContainer(
       duration: _kHighlightDuration,
       curve: Curves.easeOutCubic,
       margin: const EdgeInsets.all(2),
       decoration: BoxDecoration(color: background, borderRadius: borderRadius),
       child: Center(
-        child: _EmojiImage(reactionId: reactionId, size: _kIconSize),
+        // 面板开着就一直循环:Noto 动画起止姿势与静态图不同,播一遍
+        // 停下来总有一下跳变;面板收起时表情随之缩没,不存在「停下」
+        child: ReactionEmoji(
+          reactionId: reactionId,
+          size: _kIconSize,
+          loop: true,
+        ),
       ),
     );
 
-    if (onTap != null) {
-      // 按压反馈与选中底色保持相同圆角，整个槽位均可点击。
-      content = Material(
-        type: MaterialType.transparency,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: borderRadius,
-          splashFactory: NoSplash.splashFactory,
-          highlightColor: primary.withValues(alpha: 0.08),
-          child: content,
-        ),
-      );
-    }
+    // 按压反馈与选中底色保持相同圆角，整个槽位均可点击。
+    // InkWell 恒在、不可点时 onTap 为 null:拖选 → 停驻点选 → 收回切换
+    // 交互态时树结构不变,否则底下的表情被重新挂载,动画从头再播。
+    final tappable = Material(
+      type: MaterialType.transparency,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: borderRadius,
+        splashFactory: NoSplash.splashFactory,
+        highlightColor: primary.withValues(alpha: 0.08),
+        child: content,
+      ),
+    );
 
     return Semantics(
       button: true,
@@ -1108,29 +1110,10 @@ class _ReactionItem extends StatelessWidget {
             scale: highlightScale,
             duration: _kHighlightDuration,
             curve: Curves.easeOutCubic,
-            child: content,
+            child: tappable,
           ),
         ),
       ),
-    );
-  }
-}
-
-class _EmojiImage extends StatelessWidget {
-  const _EmojiImage({required this.reactionId, required this.size});
-
-  final String reactionId;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    return Image(
-      image: emojiImageProvider(_getEmojiUrl(reactionId)),
-      width: size,
-      height: size,
-      gaplessPlayback: true,
-      errorBuilder: (_, _, _) =>
-          Icon(Symbols.emoji_emotions_rounded, size: size * 0.9),
     );
   }
 }

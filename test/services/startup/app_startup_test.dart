@@ -97,28 +97,21 @@ void main() {
       expect(startup.isLoggedIn, isFalse);
       expect(ports.log, isNot(contains('publishUser:alice')));
       expect(ports.log, isNot(contains('message_bus:start')));
-      expect(
-        ports.log.where((e) => e.startsWith('startClearanceRefresh:')),
-        isEmpty,
-      );
+      expect(ports.log.where((e) => e.startsWith('startClearanceRefresh:')), isEmpty);
     });
 
     test('标准站点：jar 丢失登录 Cookie 时，先经会话权威从 WebView 恢复再发布用户', () async {
-      final rig = SessionTokenRig(
-        webView: 'test-session',
-        forumSession: 'test-forum',
-      );
+      final rig = SessionTokenRig(webView: 'test-session', forumSession: 'test-forum');
       rig.server.valid.add('test-session');
-      ports =
-          FakeStartupPorts(
-              preloadedUser: aliceJson,
-              path: StartupPreloadPath.webView,
-            )
-            ..validatePreloadedSession = true
-            ..storedSessionBody = () async {
-              final verdict = await rig.authority.recoverMissingJarToken();
-              return verdict.kind == SessionTokenVerdictKind.valid;
-            };
+      ports = FakeStartupPorts(
+        preloadedUser: aliceJson,
+        path: StartupPreloadPath.webView,
+      )
+        ..validatePreloadedSession = true
+        ..storedSessionBody = () async {
+          final verdict = await rig.authority.recoverMissingJarToken();
+          return verdict.kind == SessionTokenVerdictKind.valid;
+        };
       startup = build(ports);
       startup.storesReady();
       startup.launch();
@@ -131,13 +124,12 @@ void main() {
     });
 
     test('标准站点：原生会话恢复确认前不提前发布用户或启动登录后任务', () async {
-      ports =
-          FakeStartupPorts(
-              preloadedUser: aliceJson,
-              path: StartupPreloadPath.webView,
-            )
-            ..validatePreloadedSession = true
-            ..storedSessionGate = Completer<bool>();
+      ports = FakeStartupPorts(
+        preloadedUser: aliceJson,
+        path: StartupPreloadPath.webView,
+      )
+        ..validatePreloadedSession = true
+        ..storedSessionGate = Completer<bool>();
       startup = build(ports);
       startup.registerPostLogin(FakePostLoginStart(ports.log));
       startup.storesReady();

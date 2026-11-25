@@ -1,4 +1,5 @@
 // 帖子数据模型
+import 'package:fluxdo/utils/avatar_url.dart';
 import 'package:flutter/foundation.dart' show listEquals;
 
 import '../l10n/s.dart';
@@ -239,7 +240,7 @@ class TopicUser {
 
   /// 静态模板端点 URL(恒为尺寸化静态小图);动图原件见 [animatedAvatarUrl]
   String getAvatarUrl({int size = 40}) {
-    final template = avatarTemplate.replaceAll('{size}', '$size');
+    final template = AvatarUrl.resolve(avatarTemplate, size: size);
     return UrlHelper.resolveUrlWithCdn(template);
   }
 
@@ -361,6 +362,7 @@ class Topic {
   final int newPosts; // 新帖子数
   final int? lastReadPostNumber; // 最后阅读的帖子编号
   final int highestPostNumber; // 最高帖子编号
+  final int? notificationLevel; // 话题通知级别（无用户数据时为 null）
 
   // 书签相关（从书签列表 API 获取）
   final int? bookmarkedPostNumber; // 帖子书签对应的帖子编号（bookmarkable_type 为 Post 时有值）
@@ -407,6 +409,7 @@ class Topic {
     this.newPosts = 0,
     this.lastReadPostNumber,
     this.highestPostNumber = 0,
+    this.notificationLevel,
     this.bookmarkedPostNumber,
     this.bookmarkId,
     this.bookmarkName,
@@ -453,6 +456,7 @@ class Topic {
           ? null
           : (lastReadPostNumber ?? this.lastReadPostNumber),
       highestPostNumber: highestPostNumber ?? this.highestPostNumber,
+      notificationLevel: notificationLevel,
       bookmarkedPostNumber: bookmarkedPostNumber,
       bookmarkId: bookmarkId,
       bookmarkName: bookmarkName,
@@ -507,6 +511,7 @@ class Topic {
       newPosts: json['new_posts'] as int? ?? 0,
       lastReadPostNumber: json['last_read_post_number'] as int?,
       highestPostNumber: json['highest_post_number'] as int? ?? 0,
+      notificationLevel: json['notification_level'] as int?,
       bookmarkedPostNumber: json['_bookmarked_post_number'] as int?,
       bookmarkId: json['_bookmark_id'] as int?,
       bookmarkName: normalizeBookmarkName(json['_bookmark_name'] as String?),
@@ -709,7 +714,7 @@ class ReactionUser {
   }
 
   String getAvatarUrl({int size = 96}) {
-    final template = avatarTemplate.replaceAll('{size}', '$size');
+    final template = AvatarUrl.resolve(avatarTemplate, size: size);
     return UrlHelper.resolveUrlWithCdn(template);
   }
 }
@@ -1146,7 +1151,7 @@ class Post {
     if (animatedAvatar != null && animatedAvatar!.isNotEmpty) {
       return UrlHelper.resolveUrlWithCdn(animatedAvatar!);
     }
-    final template = avatarTemplate.replaceAll('{size}', '$size');
+    final template = AvatarUrl.resolve(avatarTemplate, size: size);
     return UrlHelper.resolveUrlWithCdn(template);
   }
 
@@ -1472,7 +1477,7 @@ class PolicyUser {
   }
 
   String getAvatarUrl({int size = 40}) {
-    final template = avatarTemplate.replaceAll('{size}', '$size');
+    final template = AvatarUrl.resolve(avatarTemplate, size: size);
     return UrlHelper.resolveUrlWithCdn(template);
   }
 
@@ -1571,7 +1576,7 @@ class BoostUser {
 
   /// 获取头像 URL
   String getAvatarUrl({int size = 48}) {
-    final template = avatarTemplate.replaceAll('{size}', '$size');
+    final template = AvatarUrl.resolve(avatarTemplate, size: size);
     return UrlHelper.resolveUrlWithCdn(template);
   }
 }

@@ -14,6 +14,7 @@ import '../../../../../providers/discourse_providers.dart';
 import '../../../../../providers/ai_translation_provider.dart';
 import '../../../../../providers/preferences_provider.dart';
 import '../../../../../utils/blocked_user_filter.dart';
+import '../../../../../utils/reaction_toggle.dart';
 import '../../../../../utils/share_utils.dart';
 import '../../../../../utils/frame_jank_monitor.dart';
 
@@ -162,6 +163,13 @@ class _PostFooterSectionState extends ConsumerState<PostFooterSection> {
   bool _isBookmarking = false;
   late List<PostReaction> _reactions;
   PostReaction? _currentUserReaction;
+
+  /// 回应提交序号:乐观更新后只认最后一次提交的结果(见 _submitReaction)
+  int _reactionSeq = 0;
+
+  /// 在途的回应提交数。期间帖子对象被别处换掉(MessageBus 的 liked 推送
+  /// 只改点赞数、acted 刷新等),回应字段以本地乐观状态为准,不回写成旧值。
+  int _pendingReactions = 0;
   late List<Boost> _boosts;
   late bool _canBoost;
   final List<Post> _replies = [];
@@ -197,8 +205,10 @@ class _PostFooterSectionState extends ConsumerState<PostFooterSection> {
   }
 
   void _syncState() {
-    _reactions = List.from(widget.post.reactions ?? []);
-    _currentUserReaction = widget.post.currentUserReaction;
+    if (_pendingReactions == 0) {
+      _reactions = List.from(widget.post.reactions ?? []);
+      _currentUserReaction = widget.post.currentUserReaction;
+    }
     _isBookmarked = widget.post.bookmarked;
     _bookmarkId = widget.post.bookmarkId;
     _bookmarkName = widget.post.bookmarkName;
@@ -331,7 +341,7 @@ class _PostFooterSectionState extends ConsumerState<PostFooterSection> {
       if (boosts.isEmpty) return const SizedBox.shrink();
       return VscodePeekSection(
         label: 'Boost',
-        summary: '${boosts.length} 条',
+        summary: context.l10n.post_vscodeItemCount(boosts.length),
         builder: (_) => list,
       );
     }
@@ -388,7 +398,7 @@ class _PostFooterSectionState extends ConsumerState<PostFooterSection> {
         children: [
           _buildActionBar(isGuest, isOwnPost, theme),
           IconButton(
-            tooltip: '楼层信息：Boost、签名与相关链接',
+            tooltip: context.l10n.post_vscodeFloorInfo,
             icon: const Icon(Icons.info_outline),
             onPressed: () => AppBottomSheet.show(
               context: context,
@@ -429,7 +439,11 @@ class _PostFooterSectionState extends ConsumerState<PostFooterSection> {
             Wrap(
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                Text('已指定给 ${widget.assignmentInfo!.displayName}'),
+                Text(
+                  context.l10n.post_vscodeAssignedTo(
+                    widget.assignmentInfo!.displayName,
+                  ),
+                ),
                 TextButton(
                   onPressed: () => showPostAssignDialog(
                     context,
@@ -438,7 +452,7 @@ class _PostFooterSectionState extends ConsumerState<PostFooterSection> {
                     postId: widget.post.id,
                     current: widget.assignmentInfo,
                   ),
-                  child: const Text('编辑指定'),
+                  child: Text(context.l10n.post_vscodeEditAssign),
                 ),
                 TextButton(
                   onPressed: () => unassignPost(
@@ -446,7 +460,7 @@ class _PostFooterSectionState extends ConsumerState<PostFooterSection> {
                     topicId: widget.topicId,
                     postId: widget.post.id,
                   ),
-                  child: const Text('取消指定'),
+                  child: Text(context.l10n.post_vscodeUnassign),
                 ),
               ],
             ),
@@ -477,7 +491,7 @@ class _PostFooterSectionState extends ConsumerState<PostFooterSection> {
           if (widget.post.postNumber == 1 && widget.opTopSlot != null) ...[
             if (vscode)
               VscodePeekSection(
-                label: '楼主附属操作',
+                label: context.l10n.post_vscodeOpExtras,
                 builder: (_) => Align(
                   alignment: AlignmentDirectional.centerStart,
                   child: widget.opTopSlot,

@@ -1,23 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:app_icons/app_icons.dart';
 import 'package:m3e_ui/m3e_ui.dart';
+
 import '../../../services/blob_image_cache.dart';
+import '../../../services/discourse_cache_manager.dart'
+    show resizeDiscourseImageProvider;
 import '../../../services/image_decode_spec_memo.dart';
 import '../../../services/media_geometry_memo.dart';
 import '../../../utils/frame_jank_monitor.dart';
 import '../../../utils/image_paint_gate.dart';
 import '../../common/anchor_guard_sliver.dart';
+import '../../common/animation_visibility.dart';
 import '../../common/first_paint_probe.dart';
 import '../../common/hero_image.dart';
 import '../svg_view.dart';
 
 /// 帖子正文内容图组件:固定占位尺寸 + 解码分辨率约束 + 重绘隔离 + Hero。
 ///
-/// 懒加载边界由 sliver 虚拟化承担(item 进入 cacheExtent 才挂载,挂载即
-/// 开始加载 = 提前一个 cacheExtent 预取,进视口时大概率已就绪)。此前在
-/// 组件内再用 VisibilityDetector 拦一道反而把加载起点推迟到"已进视口",
-/// 用户必然先看到占位/spinner;且每张图一个 VisibilityDetector 有全局
-/// 可见性计算开销。
+/// sliver 挂载时仍可预取首帧；真正播放由视口、页面和窗口的可见性共同控制，
+/// 避免 cacheExtent 中的动图和加载指示器持续提交帧。
 ///
 /// 性能关键点:
 /// - **解码约束**:按显示宽 × dpr 解码([ResizeImage.resizeIfNeeded]),
@@ -119,6 +120,7 @@ class _LazyImageState extends State<LazyImage> {
 
   /// 非 null = 正在闸门队列中排队(防重复入队;dispose/换图时出队)
   VoidCallback? _gateWaiter;
+  VoidCallback? _releaseDownloadPriority;
 
   /// raster 大帧归因:本 State 是否已记过"缓存命中上屏"(挂载期一次,
   /// 防 rebuild 刷屏)。img+ = 新解码首绘(上传嫌疑);img≈ = 缓存图
@@ -141,6 +143,10 @@ class _LazyImageState extends State<LazyImage> {
   @override
   void didUpdateWidget(LazyImage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.cacheKey != widget.cacheKey) {
+      _releaseDownloadPriority?.call();
+      _releaseDownloadPriority = null;
+    }
     if (oldWidget.imageProvider != widget.imageProvider) {
       _stopRatioResolve();
       _resolvedRatio = null;
@@ -156,12 +162,7 @@ class _LazyImageState extends State<LazyImage> {
     _stopRatioResolve();
     _cancelGateWait();
     _scrollAwareContext.dispose();
-    // 滚出视口:仍在下载等待队列的请求沉回低优队尾,给新视野让路。
-    // 在途 HTTP 不取消 —— 下完写盘即缓存,滚回来直接命中。
-    final url = widget.cacheKey;
-    if (url != null && url.startsWith('http')) {
-      BlobImageCache.sink(BlobImageCache.contentBucket, url);
-    }
+    _releaseDownloadPriority?.call();
     super.dispose();
   }
 
@@ -177,9 +178,7 @@ class _LazyImageState extends State<LazyImage> {
     final stream = ScrollAwareImageProvider(
       context: _scrollAwareContext,
       imageProvider: _buildProvider(context),
-    ).resolve(
-      createLocalImageConfiguration(context),
-    );
+    ).resolve(createLocalImageConfiguration(context));
     void onImage(ImageInfo info, bool synchronousCall) {
       final imgW = info.image.width.toDouble();
       final imgH = info.image.height.toDouble();
@@ -230,9 +229,7 @@ class _LazyImageState extends State<LazyImage> {
   void _handleGateAdmitted() {
     _gateWaiter = null;
     if (!mounted) return;
-    FrameJankMonitor.noteBuild(
-      'img+${(widget.width ?? 0).round()}w',
-    );
+    FrameJankMonitor.noteBuild('img+${(widget.width ?? 0).round()}w');
     setState(() => _paintAdmitted = true);
   }
 
@@ -252,20 +249,25 @@ class _LazyImageState extends State<LazyImage> {
     // 显示宽拿到的是**声明宽**(手机原图 3000px+),不 cap 就全尺寸
     // 解码(×dpr = 6000px 位图,单张几十 MB,网格滚动/交互卡顿主因);
     // 屏宽解码对任何在屏显示都足够,查看器高清走独立路径。
-    final logicalWidth =
-        (widget.decodeWidth ?? widget.width ?? screenW).clamp(1.0, screenW);
+    final logicalWidth = (widget.decodeWidth ?? widget.width ?? screenW).clamp(
+      1.0,
+      screenW,
+    );
     final cacheWidth = (logicalWidth * dpr).round().clamp(1, 1 << 16);
     // 登记解码参数:查看器缩略图占位按同参重建 provider → 同 key 命中
     // ImageCache,Hero 转场帧零重解码。
     final key = widget.cacheKey;
     if (key != null && key.isNotEmpty) {
-      ImageDecodeSpecMemo.remember(key, cacheWidth, LazyImage._kMaxDecodeHeight);
+      ImageDecodeSpecMemo.remember(
+        key,
+        cacheWidth,
+        LazyImage._kMaxDecodeHeight,
+      );
     }
-    return ResizeImage(
+    return resizeDiscourseImageProvider(
       widget.imageProvider,
       width: cacheWidth,
       height: LazyImage._kMaxDecodeHeight,
-      policy: ResizeImagePolicy.fit,
     );
   }
 
@@ -311,11 +313,7 @@ class _LazyImageState extends State<LazyImage> {
           // 首字节前无进度 = 不定态用 LoadingSpinner;有进度走 wavy 圆环
           child: progress == null
               ? const LoadingSpinner(size: 24)
-              : M3eCircularProgress(
-                  value: progress,
-                  size: 24,
-                  strokeWidth: 2,
-                ),
+              : M3eCircularProgress(value: progress, size: 24, strokeWidth: 2),
         ),
       );
     }
@@ -359,7 +357,8 @@ class _LazyImageState extends State<LazyImage> {
         if (loadingProgress == null) return child;
         if (loadingProgress.expectedTotalBytes == null) return child;
         return placeholderBox(
-          progress: loadingProgress.cumulativeBytesLoaded /
+          progress:
+              loadingProgress.cumulativeBytesLoaded /
               loadingProgress.expectedTotalBytes!,
         );
       },
@@ -414,20 +413,24 @@ class _LazyImageState extends State<LazyImage> {
     final bumpUrl = widget.cacheKey;
     if (bumpUrl != null && bumpUrl.startsWith('http')) {
       imageWidget = FirstPaintProbe(
-        onFirstPaint: () =>
-            BlobImageCache.bump(BlobImageCache.contentBucket, bumpUrl),
+        key: ValueKey(bumpUrl),
+        onFirstPaint: () {
+          _releaseDownloadPriority ??= BlobImageCache.retainForeground(
+            BlobImageCache.contentBucket,
+            bumpUrl,
+          );
+        },
         child: imageWidget,
       );
     }
 
     // 重绘隔离:spinner/动图/首绘只重画图片区域,不连带整个帖子 segment
-    imageWidget = RepaintBoundary(child: imageWidget);
+    imageWidget = AnimationVisibility(
+      child: RepaintBoundary(child: imageWidget),
+    );
 
     if (hasFixedBox) {
-      return AspectRatio(
-        aspectRatio: width / height,
-        child: imageWidget,
-      );
+      return AspectRatio(aspectRatio: width / height, child: imageWidget);
     }
 
     // 无声明尺寸:有实测/记忆比例就以其占位 —— 重访(回收后重建)首帧

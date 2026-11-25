@@ -94,9 +94,10 @@ class CustomFontService {
   }
 
   /// 删除已导入的字体文件（换字体/移除后调用；文件已不存在时静默跳过）。
-  /// 推荐字体由自己的服务管理，取消选用时保留已下载文件。
+  /// 推荐字体由自己的服务管理；这里只移除选用记录，保留已下载文件。
   static Future<void> delete(String? path) async {
     if (path == null) return;
+    // 推荐字体的文件归 RecommendedFontService 管：取消选用不等于删文件
     if (RecommendedFontService.isRecommendedFontPath(path)) return;
     try {
       final file = File(path);

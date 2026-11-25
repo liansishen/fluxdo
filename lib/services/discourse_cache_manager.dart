@@ -1,12 +1,16 @@
 import 'package:flutter/painting.dart';
 import 'package:native_animated_image/native_animated_image.dart'
     show NativeAnimatedImageProvider;
+
 import 'avif_image_provider.dart';
 export 'avif_image_provider.dart' show AvifImageProvider;
 import 'blob_image_cache.dart';
+import '../utils/image_format.dart';
+export '../utils/image_format.dart' show isNativeAnimatedUrl;
 export 'blob_image_cache.dart' show BlobImageCache, BlobImageProvider;
 import 'dio_http_client.dart' show DownloadPriority;
 export 'dio_http_client.dart' show DownloadPriority;
+import 'emoji_handler.dart';
 
 /// 旧 flutter_cache_manager 时代的缓存 cacheKey(2026-07 全量退役,
 /// 仅供迁移 v7/v8/v9 清理旧目录与 db 引用)。
@@ -34,25 +38,6 @@ bool _isAvifUrl(String url) {
   }
 }
 
-/// 检查 URL 是否指向需要走 native 解码器的动图(GIF / APNG / 动画 WebP)
-///
-/// 走 native_animated_image 的 Rust pipeline,绕开 Flutter Skia
-/// multi_frame_codec 的 #85831 bug。
-bool isNativeAnimatedUrl(String url) => _isNativeAnimatedUrl(url);
-
-bool _isNativeAnimatedUrl(String url) {
-  try {
-    final path = Uri.parse(url).path.toLowerCase();
-    // .gif 一定走 native(Skia 在某些 disposal 组合下会失败)
-    // .apng / .webp 也走 native(后续 Rust 端补全解码器)
-    return path.endsWith('.gif') ||
-        path.endsWith('.apng') ||
-        path.endsWith('.webp');
-  } catch (_) {
-    return false;
-  }
-}
-
 /// 创建 Discourse 图片 Provider
 ///
 /// 用于需要 ImageProvider 的场景（CircleAvatar、DecorationImage 等）
@@ -61,41 +46,95 @@ bool _isNativeAnimatedUrl(String url) {
 ///   绕 Skia multi_frame_codec 的 #85831 bug)
 /// - 其他静态格式 → BlobImageProvider(content bucket,零 sqlite 寻址)
 ///
-/// 需要限制解码尺寸时在外层包 decode-time 的 `ResizeImage(policy: fit)`。
+/// [cacheWidth] 和 [cacheHeight] 是物理像素尺寸上限。
 ImageProvider discourseImageProvider(
   String url, {
   double scale = 1.0,
   String bucket = BlobImageCache.contentBucket,
   DownloadPriority priority = DownloadPriority.normal,
+  int? cacheWidth,
+  int? cacheHeight,
 }) {
   if (_isAvifUrl(url)) {
-    return AvifImageProvider(url, scale: scale, bucket: bucket);
+    return AvifImageProvider(
+      url,
+      scale: scale,
+      bucket: bucket,
+      cacheWidth: cacheWidth,
+      cacheHeight: cacheHeight,
+    );
   }
-  if (_isNativeAnimatedUrl(url)) {
+  if (isNativeAnimatedUrl(url)) {
     return NativeAnimatedImageProvider.fromBytesProvider(
       loader: () => BlobImageCache.fetch(bucket, url, priority: priority),
       tag: url,
       scale: scale,
+      cacheWidth: cacheWidth,
+      cacheHeight: cacheHeight,
     );
   }
-  return BlobImageProvider(
+  final provider = BlobImageProvider(
     url,
     bucket: bucket,
     scale: scale,
     priority: priority,
   );
+  if (cacheWidth == null && cacheHeight == null) return provider;
+  return ResizeImage(
+    provider,
+    width: cacheWidth,
+    height: cacheHeight,
+    policy: ResizeImagePolicy.fit,
+    allowUpscaling: false,
+  );
+}
+
+/// 为自解码图片及普通图片统一指定物理解码尺寸。
+ImageProvider resizeDiscourseImageProvider(
+  ImageProvider provider, {
+  int? width,
+  int? height,
+}) {
+  if (width == null && height == null) return provider;
+  if (provider is NativeAnimatedImageProvider) {
+    return provider.resize(cacheWidth: width, cacheHeight: height);
+  }
+  if (provider is AvifImageProvider) {
+    return AvifImageProvider(
+      provider.url,
+      scale: provider.scale,
+      bucket: provider.bucket,
+      singleFrame: provider.singleFrame,
+      targetSize: provider.targetSize,
+      maxDimension: provider.maxDimension,
+      cacheWidth: width,
+      cacheHeight: height,
+    );
+  }
+  return ResizeImage(
+    provider,
+    width: width,
+    height: height,
+    policy: ResizeImagePolicy.fit,
+    allowUpscaling: false,
+  );
 }
 
 /// 创建 Emoji 图片 Provider
 ///
-/// 走 [BlobImageCache](Telegram 式 MD5 确定性寻址,零 sqlite 索引)。
+/// 走 [BlobImageCache](MD5 确定性寻址,零 sqlite 索引)。
 /// emoji 全集实测 100% 静态 PNG,单一路径即可;64px 目标尺寸走解码
 /// 闸门的小图旁路,由引擎 worker 池并行解码。
+///
+/// 标准 emoji 地址(含 cooked 里的站点表情集地址)统一改写到展示表情集
+/// [EmojiHandler.displaySet],缺图 404 回退站点表情集。
 ImageProvider emojiImageProvider(String url, {double scale = 1.0}) {
+  final displayUrl = EmojiHandler.displayUrl(url);
   return BlobImageProvider(
-    url,
+    displayUrl,
     bucket: BlobImageCache.emojiBucket,
     scale: scale,
+    fallbackUrl: EmojiHandler.fallbackUrl(displayUrl),
   );
 }
 

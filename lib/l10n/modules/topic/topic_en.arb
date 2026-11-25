@@ -166,9 +166,6 @@
   "topicsScreen_createTopic": "Create Topic",
   "topicsScreen_myDrafts": "My Drafts",
   "topics_browseCategories": "Browse categories",
-  "topics_scorePill": "{score} pts",
-  "@topics_scorePill": {"placeholders": {"score": {"type": "String"}}},
-  "topics_scorePillTooltip": "Community points · open the leaderboard",
   "topics_leaderboard": "Leaderboard",
   "topics_debugJump": "Debug: Jump to topic",
   "topics_dismiss": "Dismiss",
@@ -191,5 +188,11 @@
   "topicDetail_likeTopic": "Like this topic",
   "topicDetail_bookmarkTopic": "Bookmark",
   "topicDetail_like": "Like",
-  "topicDetail_jumpFloor": "Jump to…"
+  "topicDetail_jumpFloor": "Jump to…",
+  "topic_vscodeAuthorActions": "Actions for this post's author",
+  "topic_vscodeHideFloorActions": "Hide post actions",
+  "topic_vscodeTopicInfo": "Topic info",
+  "topic_vscodeLocating": "Locating…",
+  "topic_vscodeReadingProgress": "Reading #{number} · {current} / {total}",
+  "@topic_vscodeReadingProgress": {"placeholders": {"number": {"type": "int"}, "current": {"type": "int"}, "total": {"type": "int"}}}
 }

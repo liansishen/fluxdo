@@ -93,7 +93,6 @@ Widget _app(ProviderContainer container, Widget child) {
     child: TranslationProvider(
       child: MaterialApp(
         navigatorKey: navigatorKey,
-
         locale: const Locale('zh'),
         supportedLocales: AppLocaleUtils.supportedLocales,
         localizationsDelegates: const [
@@ -361,8 +360,9 @@ void main() {
       _app(
         container,
         BalanceCardCfAction(
-          businessUrl: 'https://credit.linux.do',
           isLoading: false,
+          businessUrl: 'https://credit.linux.do',
+          outlined: true,
           verify: (_) async {
             verifications++;
             return true;
@@ -374,12 +374,14 @@ void main() {
       ),
     );
 
+    expect(_action(tester), isA<OutlinedButton>());
     await tester.tap(find.text(S.current.cf_manualVerifyAction));
     await tester.pump();
     await tester.pump();
     expect(verifications, 1);
     expect(retries, 1);
     expect(find.text(S.current.cf_openInBrowserAction), findsOneWidget);
+    expect(_action(tester), isA<OutlinedButton>());
 
     await tester.tap(find.text(S.current.cf_openInBrowserAction));
     await tester.pump();
@@ -397,8 +399,8 @@ void main() {
       _app(
         container,
         BalanceCardCfAction(
-          businessUrl: 'https://credit.linux.do',
           isLoading: false,
+          businessUrl: 'https://credit.linux.do',
           verify: (_) async => true,
           onRetry: () async {},
           stillBlocked: () => false,
@@ -422,8 +424,9 @@ void main() {
       _app(
         container,
         BalanceCardCfAction(
-          businessUrl: 'https://credit.linux.do',
           isLoading: false,
+          businessUrl: 'https://credit.linux.do',
+          outlined: true,
           preferBrowser: true,
           verify: (_) async {
             verifications++;
@@ -436,6 +439,7 @@ void main() {
     );
 
     expect(find.text(S.current.cf_openInBrowserAction), findsOneWidget);
+    expect(_action(tester), isA<OutlinedButton>());
     await tester.tap(find.text(S.current.cf_openInBrowserAction));
     await tester.pump();
     expect(verifications, 0);

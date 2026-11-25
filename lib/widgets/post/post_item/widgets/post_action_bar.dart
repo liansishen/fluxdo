@@ -16,6 +16,8 @@ import '../../../../utils/platform_utils.dart';
 import 'post_reaction_picker.dart';
 import '../../../../theme/mojian_theme.dart';
 import '../../../../theme/vscode_theme.dart';
+import 'reaction_emoji.dart';
+import '../../../../theme/vscode_theme.dart';
 
 /// 获取 emoji 图片 URL（未加载完成时返回空字符串，由 errorBuilder 处理）
 String _getEmojiUrl(String emojiName) {
@@ -120,9 +122,20 @@ class _PostActionBarState extends State<PostActionBar>
         vsync: this,
         onReactionSelected: (id) {
           widget.onReactionSelected(id);
-          _bounce.forward(from: 0);
+          _playLanding();
         },
       );
+
+  /// 按钮里的表情播一遍的触发令牌:选中的表情落地、点赞加上 ❤️ 时递增。
+  /// 滚动进出视口重建的按钮令牌为 0,不会无端播放。
+  int _emojiPlayToken = 0;
+
+  /// 表情落进按钮:按钮弹跳一下,按钮里的表情接着播一遍动画
+  void _playLanding() {
+    if (!mounted) return;
+    setState(() => _emojiPlayToken++);
+    _bounce.forward(from: 0);
+  }
 
   @override
   void initState() {
@@ -310,7 +323,9 @@ class _PostActionBarState extends State<PostActionBar>
                         showReplies ? Icons.expand_less : Icons.expand_more,
                         size: 16,
                       ),
-                label: Text('${widget.post.replyCount} 条回复'),
+                label: Text(
+                  context.l10n.post_replyCount(widget.post.replyCount),
+                ),
               );
             }
             return GestureDetector(
@@ -398,7 +413,7 @@ class _PostActionBarState extends State<PostActionBar>
           if (!widget.isOwnPost && reactions.isNotEmpty) {
             actions.add(
               PopupMenuButton<String>(
-                tooltip: '选择回应',
+                tooltip: context.l10n.post_vscodePickReaction,
                 onSelected: (id) {
                   widget.onReactionSelected(id);
                   _bounce.forward(from: 0);
@@ -413,7 +428,7 @@ class _PostActionBarState extends State<PostActionBar>
                     padding: const EdgeInsets.symmetric(horizontal: 6),
                     child: Center(
                       child: Text(
-                        '回应',
+                        context.l10n.post_reactions,
                         style: TextStyle(color: tokens.muted, fontSize: 11),
                       ),
                     ),
@@ -450,7 +465,9 @@ class _PostActionBarState extends State<PostActionBar>
     actions.add(
       _iconCircle(
         theme,
-        tooltip: theme.extension<VscodeTokens>() != null ? '更多操作' : null,
+        tooltip: theme.extension<VscodeTokens>() != null
+            ? context.l10n.post_vscodeMoreActions
+            : null,
         icon: Symbols.more_horiz_rounded,
         onTap: widget.onShowMoreMenu,
       ),
@@ -468,7 +485,7 @@ class _PostActionBarState extends State<PostActionBar>
       return TextButton.icon(
         onPressed: onTap,
         icon: Icon(icon, size: 16),
-        label: Text(tooltip ?? '更多'),
+        label: Text(tooltip ?? context.l10n.common_more),
         style: VscodeTheme.toolbarTheme(theme).textButtonTheme.style,
       );
     }
@@ -581,9 +598,9 @@ class _PostActionBarState extends State<PostActionBar>
             );
       if (vscode) {
         reactionStack = Tooltip(
-          message: '查看回应用户；悬停可选择回应',
+          message: context.l10n.post_vscodeReactionUsersHint,
           child: Semantics(
-            label: '查看回应用户',
+            label: context.l10n.post_vscodeReactionUsers,
             button: true,
             child: FocusableActionDetector(
               shortcuts: const {
@@ -615,14 +632,11 @@ class _PostActionBarState extends State<PostActionBar>
       ),
       alignment: Alignment.center,
       child: widget.currentUserReaction != null
-          ? Image(
-              image: emojiImageProvider(
-                _getEmojiUrl(widget.currentUserReaction!.id),
-              ),
-              width: vscode ? 16 : 20,
-              height: vscode ? 16 : 20,
-              errorBuilder: (_, _, _) =>
-                  Icon(Symbols.favorite_rounded, size: vscode ? 16 : 20),
+          ? ReactionEmoji(
+              reactionId: widget.currentUserReaction!.id,
+              size: vscode ? 16 : 20,
+              playToken: _emojiPlayToken,
+              fallbackIcon: Symbols.favorite_rounded,
             )
           : Icon(
               Symbols.favorite_rounded,
@@ -638,15 +652,23 @@ class _PostActionBarState extends State<PostActionBar>
         : RawGestureDetector(
             behavior: HitTestBehavior.opaque,
             gestures: _touchGestures(() {
-              if (!widget.isLiking) widget.onToggleLike();
+              if (widget.isLiking) return;
+              final adding = widget.currentUserReaction == null;
+              widget.onToggleLike();
+              // 点赞是乐观更新,❤️ 当帧就出现,跟着播一遍
+              if (adding) setState(() => _emojiPlayToken++);
             }),
             child: likeIcon,
           );
     if (vscode) {
       likeButton = Tooltip(
-        message: widget.isOwnPost ? '当前回应' : '点赞；悬停可选择回应',
+        message: widget.isOwnPost
+            ? context.l10n.post_vscodeCurrentReaction
+            : context.l10n.post_vscodeLikeHint,
         child: Semantics(
-          label: widget.currentUserReaction == null ? '点赞' : '更改或取消回应',
+          label: widget.currentUserReaction == null
+              ? context.l10n.post_vscodeLike
+              : context.l10n.post_vscodeChangeReaction,
           button: !widget.isOwnPost,
           enabled: !widget.isOwnPost && !widget.isLiking,
           child: FocusableActionDetector(

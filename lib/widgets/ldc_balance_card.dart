@@ -645,7 +645,7 @@ class LdcBalanceCard extends ConsumerWidget {
             isCfChallenge
                 ? (nativeUntrusted
                       ? S.current.cf_serviceStillBlocked
-                      : S.current.cf_operationBlockedByChallenge)
+                      : S.current.cf_dataBlockedByChallenge)
                 : isExpired
                 ? S.current.ldc_reAuthHint
                 : S.current.common_checkNetworkRetry,

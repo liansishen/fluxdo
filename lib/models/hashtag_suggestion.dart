@@ -73,9 +73,7 @@ class HashtagSuggestion {
 }
 
 /// 按搜索词取 `#` 补全候选
-typedef HashtagDataSource = Future<List<HashtagSuggestion>> Function(
-  String term,
-);
+typedef HashtagDataSource = Future<List<HashtagSuggestion>> Function(String term);
 
 /// 光标前的 `#查询`：`#` 前面是行首或空白（不把 `a#b`、`&#123;` 当成补全），
 /// 查询里可以有字母数字（含中文）、`-`、`_` 和类型后缀用的 `:`。

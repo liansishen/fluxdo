@@ -2,62 +2,31 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/notification.dart';
 import '../services/discourse/discourse_service.dart';
-import '../services/auth_session.dart';
-import '../services/site_context.dart';
 import 'core_providers.dart';
 import 'message_bus_providers.dart';
-
-typedef _NotificationPrefetchIdentity = ({
-  String siteId,
-  int userId,
-  String username,
-  int sessionGeneration,
-});
 
 /// 最近通知 Notifier（非分页，供快捷面板和 messageBus 使用）
 class RecentNotificationsNotifier
     extends AsyncNotifier<List<DiscourseNotification>> {
   /// 未读数涨了、面板还没打开过时后台先取的一份（silent，不更新"已看到"
   /// 位置）。面板打开时先显示它，再正常拉一次。
-  static ({
-    List<DiscourseNotification> list,
-    DateTime at,
-    _NotificationPrefetchIdentity identity,
-  })?
-  _prefetched;
+  static ({List<DiscourseNotification> list, DateTime at})? _prefetched;
   static DateTime? _lastPrefetchAt;
   static Future<void>? _prefetching;
   static int _prefetchGeneration = 0;
-  static _NotificationPrefetchIdentity? _prefetchIdentity;
   static const _prefetchMaxAge = Duration(minutes: 2);
   static const _prefetchMinInterval = Duration(seconds: 30);
 
-  static _NotificationPrefetchIdentity? _identity(DiscourseService service) {
-    final user = service.currentUserNotifier.value;
-    if (user == null) return null;
-    return (
-      siteId: SiteContext.current.id,
-      userId: user.id,
-      username: user.username,
-      sessionGeneration: AuthSession().generation,
-    );
-  }
-
-  /// 退出登录 / 换账号时作废缓存及旧在途请求。
+  /// 退出登录 / 换账号时清掉（预取的是当前账号的通知）
   static void clearPrefetched() {
     _prefetchGeneration++;
     _prefetched = null;
     _lastPrefetchAt = null;
     _prefetching = null;
-    _prefetchIdentity = null;
   }
 
-  /// 同一站点、账号及会话内合并请求，两次至少隔 30 秒；失败不打扰。
+  /// 后台预取（同时只一个、两次至少隔 30 秒）。失败不打扰。
   static Future<void> prefetch(DiscourseService service) {
-    final identity = _identity(service);
-    if (identity != _prefetchIdentity) clearPrefetched();
-    if (identity == null) return Future.value();
-    _prefetchIdentity = identity;
     final running = _prefetching;
     if (running != null) return running;
     final last = _lastPrefetchAt;
@@ -65,35 +34,24 @@ class RecentNotificationsNotifier
         DateTime.now().difference(last) < _prefetchMinInterval) {
       return Future.value();
     }
-    final generation = _prefetchGeneration;
     _lastPrefetchAt = DateTime.now();
+    final generation = _prefetchGeneration;
     return _prefetching = () async {
       try {
         final response = await service.getRecentNotifications(silent: true);
-        if (generation != _prefetchGeneration ||
-            _identity(service) != identity) {
-          return;
-        }
-        _prefetched = (
-          list: response.notifications,
-          at: DateTime.now(),
-          identity: identity,
-        );
+        if (generation != _prefetchGeneration) return;
+        _prefetched = (list: response.notifications, at: DateTime.now());
       } catch (_) {
       } finally {
-        // 旧请求结束不能释放新账号的在途请求。
         if (generation == _prefetchGeneration) _prefetching = null;
       }
     }();
   }
 
-  static List<DiscourseNotification>? _takePrefetched(
-    DiscourseService service,
-  ) {
+  static List<DiscourseNotification>? _takePrefetched() {
     final prefetched = _prefetched;
     _prefetched = null;
     if (prefetched == null ||
-        prefetched.identity != _identity(service) ||
         DateTime.now().difference(prefetched.at) > _prefetchMaxAge) {
       return null;
     }
@@ -105,9 +63,9 @@ class RecentNotificationsNotifier
 
   @override
   Future<List<DiscourseNotification>> build() async {
-    final service = ref.read(discourseServiceProvider);
-    final prefetched = _takePrefetched(service);
+    final prefetched = _takePrefetched();
     if (prefetched != null) return prefetched;
+    final service = ref.read(discourseServiceProvider);
     final response = await service.getRecentNotifications();
     _fetchedAt = DateTime.now();
     return response.notifications;

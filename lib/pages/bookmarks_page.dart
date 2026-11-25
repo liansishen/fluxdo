@@ -34,12 +34,11 @@ import '../widgets/search/user_content_search_view.dart';
 import 'topics_page.dart';
 import 'topic_detail_page/topic_detail_page.dart';
 
-typedef BookmarksWorkspaceTopicPageBuilder =
-    Widget Function(
-      BuildContext context,
-      BookmarkWorkspaceTopicTab tab,
-      bool parentActive,
-    );
+typedef BookmarksWorkspaceTopicPageBuilder = Widget Function(
+  BuildContext context,
+  BookmarkWorkspaceTopicTab tab,
+  bool parentActive,
+);
 
 /// 我的书签页面
 class BookmarksPage extends ConsumerStatefulWidget {
@@ -798,21 +797,28 @@ class _BookmarksPageState extends ConsumerState<BookmarksPage> {
     AppPreferences preferences, {
     required bool showDesktopTabBar,
   }) {
+    final activeIndex = _workspaceActiveIndex();
     final workspaceContent = IndexedStack(
-      index: _workspaceActiveIndex(),
+      index: activeIndex,
       children: [
-        _buildBookmarksPane(
-          context,
-          bookmarksAsync,
-          bookmarksNotifier,
-          searchState,
-          preferences,
-          workspaceOpenEnabled: true,
+        TickerMode(
+          enabled: activeIndex == 0,
+          child: _buildBookmarksPane(
+            context,
+            bookmarksAsync,
+            bookmarksNotifier,
+            searchState,
+            preferences,
+            workspaceOpenEnabled: true,
+          ),
         ),
-        for (final tab in _workspaceState.topicTabs)
+        for (final (index, tab) in _workspaceState.topicTabs.indexed)
           KeyedSubtree(
             key: ValueKey(tab.instanceId),
-            child: _buildWorkspaceTopicPage(tab),
+            child: TickerMode(
+              enabled: activeIndex == index + 1,
+              child: _buildWorkspaceTopicPage(tab),
+            ),
           ),
       ],
     );
@@ -868,35 +874,38 @@ class _BookmarksPageState extends ConsumerState<BookmarksPage> {
       children: [
         Offstage(
           offstage: searchState.isSearchMode,
-          child: BookmarksListContent(
-            bookmarksAsync: bookmarksAsync,
-            bookmarkNameSuggestions: bookmarkNameSuggestions,
-            bookmarkNameSuggestionsLoader: bookmarkNameSuggestionsLoader,
-            scrollController: _scrollController,
-            onRefresh: _onRefresh,
-            onTap: _onBookmarkTap,
-            onMiddleClick: _onBookmarkMiddleClick,
-            enableLongPress: preferences.longPressPreview,
-            showSummaryBar: !searchState.isSearchMode,
-            selectedBookmarkName: _selectedBookmarkName,
-            onSelectedBookmarkName: (value) {
-              setState(() {
-                _selectedBookmarkName = value;
-              });
-            },
-            hasMore: bookmarksNotifier.hasMore,
-            isLoadMoreFailed: bookmarksNotifier.isLoadMoreFailed,
-            // footer 只反映本地分页 hydrate,对账/同步不再牵动列表 loading
-            isLoadingMore: bookmarksNotifier.isLoadingMore,
-            syncState: ref.watch(bookmarkSyncControllerProvider),
-            onRetrySync: () => ref
-                .read(bookmarkSyncControllerProvider.notifier)
-                .ensureFreshness(force: true),
-            onRetryLoadMore: bookmarksNotifier.retryLoadMore,
-            onEditBookmark: _editBookmark,
-            onQuickRenameBookmark: _quickRenameBookmark,
-            onClearReminder: _clearReminder,
-            onDeleteBookmark: _deleteBookmark,
+          child: TickerMode(
+            enabled: !searchState.isSearchMode,
+            child: BookmarksListContent(
+              bookmarksAsync: bookmarksAsync,
+              bookmarkNameSuggestions: bookmarkNameSuggestions,
+              bookmarkNameSuggestionsLoader: bookmarkNameSuggestionsLoader,
+              scrollController: _scrollController,
+              onRefresh: _onRefresh,
+              onTap: _onBookmarkTap,
+              onMiddleClick: _onBookmarkMiddleClick,
+              enableLongPress: preferences.longPressPreview,
+              showSummaryBar: !searchState.isSearchMode,
+              selectedBookmarkName: _selectedBookmarkName,
+              onSelectedBookmarkName: (value) {
+                setState(() {
+                  _selectedBookmarkName = value;
+                });
+              },
+              hasMore: bookmarksNotifier.hasMore,
+              isLoadMoreFailed: bookmarksNotifier.isLoadMoreFailed,
+              // footer 只反映本地分页 hydrate,对账/同步不再牵动列表 loading
+              isLoadingMore: bookmarksNotifier.isLoadingMore,
+              syncState: ref.watch(bookmarkSyncControllerProvider),
+              onRetrySync: () => ref
+                  .read(bookmarkSyncControllerProvider.notifier)
+                  .ensureFreshness(force: true),
+              onRetryLoadMore: bookmarksNotifier.retryLoadMore,
+              onEditBookmark: _editBookmark,
+              onQuickRenameBookmark: _quickRenameBookmark,
+              onClearReminder: _clearReminder,
+              onDeleteBookmark: _deleteBookmark,
+            ),
           ),
         ),
         if (searchState.isSearchMode)
@@ -911,9 +920,8 @@ class _BookmarksPageState extends ConsumerState<BookmarksPage> {
                   }) {
                     ref
                         .read(
-                          userContentSearchProvider(
-                            SearchInType.bookmarks,
-                          ).notifier,
+                          userContentSearchProvider(SearchInType.bookmarks)
+                              .notifier,
                         )
                         .exitSearchMode();
                     _openWorkspaceTab(

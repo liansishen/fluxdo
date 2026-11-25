@@ -291,7 +291,7 @@ class _ReplySheetState extends ConsumerState<ReplySheet> {
         _isLoadingDraft ||
         (_editorKey.currentState?.hasPendingUploads ?? false) ||
         (_richKey.currentState?.hasPendingUploads ?? false)) {
-      if (mounted) ToastService.showInfo('编辑器正在加载或处理内容，请稍后重新追加引用');
+      if (mounted) ToastService.showInfo(context.l10n.post_vscodeQuoteBusy);
       return false;
     }
     if (!_flushRichContent()) return false;
@@ -355,7 +355,22 @@ class _ReplySheetState extends ConsumerState<ReplySheet> {
               S.current.editor_noContent,
               style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
             )
-          : MarkdownBody(data: text),
+          : MarkdownBody(
+              data: text,
+              // 富文本通过图片菜单修改尺寸；直接改 raw 会使语义镜像失效。
+              onImageScaleChanged: _richModeEnabled && !_richFallback
+                  ? null
+                  : (image, scale) {
+                      final next = applyImageScaleToRaw(
+                        _contentController.text,
+                        image,
+                        scale,
+                      );
+                      if (next == null) return;
+                      _contentController.text = next;
+                      setState(() {});
+                    },
+            ),
     );
   }
 
@@ -607,7 +622,11 @@ class _ReplySheetState extends ConsumerState<ReplySheet> {
             centerTitle: false,
             automaticallyImplyLeading: false,
             leading: CloseButton(
-              onPressed: () => _closeWithCurrentContent(null),
+              // 弹层照旧走 maybePop（表情面板开着时先收面板，再点才关）；
+              // 嵌入式面板没有自己的路由，直接收尾。
+              onPressed: widget.embedded
+                  ? () => _closeWithCurrentContent(null)
+                  : () => Navigator.of(context).maybePop(),
             ),
             title: separateTarget
                 ? Text(context.l10n.common_reply)

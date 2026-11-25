@@ -232,6 +232,7 @@ void main() {
         expect(after.maxAge, before.maxAge);
         onlyUserInfoRequests();
       });
+
       test('卡片手动验证后的读取不再进过盾恢复，普通读取照常', () async {
         await client.getUserInfo(expectedUsername: 'alice');
         await client.getUserInfo(

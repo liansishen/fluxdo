@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import '../../../../../l10n/s.dart';
+import '../../l10n/s.dart';
 import '../../models/search_result.dart';
 import '../../services/discourse/discourse_service.dart';
 import '../../utils/dialog_utils.dart';

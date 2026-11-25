@@ -13,6 +13,7 @@ import 'cf_challenge_logger.dart';
 import 'cf_clearance_authority.dart';
 import 'network/cf/turnstile_configuration.dart';
 import 'session/webview_use.dart';
+import 'webview_render_gone.dart';
 import 'webview_settings.dart';
 import 'windows_webview_environment_service.dart';
 
@@ -95,8 +96,9 @@ class CfClearanceRefreshService {
   bool _webViewPausedForScroll = false;
 
   /// 仅暴露当前站点的公开配置，不允许跨站复用。
-  String? get sitekey =>
-      _configuration?.origin == _origin.origin ? _configuration?.sitekey : null;
+  String? get sitekey => _configuration?.origin == _origin.origin
+      ? _configuration?.sitekey
+      : null;
 
   void setForeground(bool foreground) {
     _isForeground = foreground;
@@ -127,8 +129,7 @@ class CfClearanceRefreshService {
 
   void _adoptConfiguration(TurnstileConfiguration configuration) {
     if (configuration.origin != _origin.origin) return;
-    final changed =
-        _configuration?.origin != configuration.origin ||
+    final changed = _configuration?.origin != configuration.origin ||
         _configuration?.sitekey != configuration.sitekey;
     if (!changed) return;
     _configuration = configuration;
@@ -167,9 +168,7 @@ class CfClearanceRefreshService {
     );
     if (configuration != null) {
       _adoptConfiguration(configuration);
-    } else if (!_reportedManagedPage &&
-        snapshot is Map &&
-        snapshot['managed'] == true) {
+    } else if (!_reportedManagedPage && snapshot is Map && snapshot['managed'] == true) {
       _reportedManagedPage = true;
       CfChallengeLogger.log(
         '[CfRefresh] Managed Challenge 不作为可复用 Turnstile 配置: ${_origin.host}',
@@ -304,13 +303,10 @@ class CfClearanceRefreshService {
 
     final key = sitekey;
     if (key == null) {
-      unawaited(
-        ensureConfigurationLoaded().then((_) {
-          // stop / 切后台期间完成的缓存读取不应再拉起 WebView。
-          if (_shouldBeRunning && _isForeground && sitekey != null)
-            _startWebView();
-        }),
-      );
+      unawaited(ensureConfigurationLoaded().then((_) {
+        // stop / 切后台期间完成的缓存读取不应再拉起 WebView。
+        if (_shouldBeRunning && _isForeground && sitekey != null) _startWebView();
+      }));
       CfChallengeLogger.log(
         '[CfRefresh] 本站暂无可复用的 Turnstile 配置，保留按需验证: ${_origin.host}',
       );
@@ -364,6 +360,15 @@ class CfClearanceRefreshService {
       initialUserScripts: WebViewSettings.compatPolyfillScripts,
       onReceivedServerTrustAuthRequest: (_, challenge) =>
           WebViewSettings.handleServerTrustAuthRequest(challenge),
+      // 渲染进程没了：这个 WebView 不能再碰，停掉定时器、按失败退避重建
+      // （连续失败到上限就停续期，免得弱机型上反复撑崩）
+      onRenderProcessGone: (_, detail) {
+        WebViewRenderGone.report('cf_clearance_refresh', detail);
+        if (gen != _generation || _isDisposing) return;
+        _cancelRuntimeTimers();
+        _webViewController = null;
+        _recordFailure('render_process_gone', gen: gen, restart: true);
+      },
       onWebViewCreated: (controller) {
         if (!_canHandleGeneration(gen)) {
           CfChallengeLogger.log(
@@ -712,15 +717,16 @@ document.close();
     // 后自然补上。初始 Turnstile 运行期(_initialTimer 未清)只恢复不
     // 挂起,避免把首次验证拖到超时误判重建。
     if (io.Platform.isAndroid) {
-      _scrollPauseTicker = Timer.periodic(const Duration(milliseconds: 500), (
-        _,
-      ) {
-        if (!_canHandleGeneration(gen)) {
-          _scrollPauseTicker?.cancel();
-          return;
-        }
-        unawaited(_updateScrollPause());
-      });
+      _scrollPauseTicker = Timer.periodic(
+        const Duration(milliseconds: 500),
+        (_) {
+          if (!_canHandleGeneration(gen)) {
+            _scrollPauseTicker?.cancel();
+            return;
+          }
+          unawaited(_updateScrollPause());
+        },
+      );
     }
   }
 

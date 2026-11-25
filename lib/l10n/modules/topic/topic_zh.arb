@@ -255,9 +255,6 @@
   "topicsScreen_createTopic": "创建话题",
   "topicsScreen_myDrafts": "我的草稿",
   "topics_browseCategories": "浏览分类",
-  "topics_scorePill": "点数 {score}",
-  "@topics_scorePill": {"placeholders": {"score": {"type": "String"}}},
-  "topics_scorePillTooltip": "社区点数，点开排行榜",
   "topics_leaderboard": "排行榜",
   "topics_debugJump": "调试：跳转话题",
   "topics_dismiss": "忽略",
@@ -308,5 +305,11 @@
   "topicDetail_likeTopic": "赞这个话题",
   "topicDetail_bookmarkTopic": "书签",
   "topicDetail_like": "赞",
-  "topicDetail_jumpFloor": "跳转楼层"
+  "topicDetail_jumpFloor": "跳转楼层",
+  "topic_vscodeAuthorActions": "当前楼层作者操作",
+  "topic_vscodeHideFloorActions": "收起楼层操作",
+  "topic_vscodeTopicInfo": "话题信息",
+  "topic_vscodeLocating": "正在定位",
+  "topic_vscodeReadingProgress": "阅读 #{number} · {current} / {total}",
+  "@topic_vscodeReadingProgress": {"placeholders": {"number": {"type": "int"}, "current": {"type": "int"}, "total": {"type": "int"}}}
 }

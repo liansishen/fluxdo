@@ -9,7 +9,9 @@ import 'package:flutter/foundation.dart';
 import '../constants.dart';
 import '../utils/client_id_generator.dart';
 import '../utils/scroll_busy_signal.dart';
+import 'message_bus_latency_probe.dart';
 import 'network/background_gate.dart';
+import 'network/cf/cf_rate_challenge_limiter.dart';
 import 'network/cf/cf_challenge_classifier.dart';
 import 'network/discourse_dio.dart';
 import 'preloaded_data_service.dart';
@@ -24,11 +26,15 @@ class MessageBusMessage {
   final int messageId;
   final dynamic data;
 
+  /// 客户端收到的时刻（协议层解析时打点，早于滚动期延迟投递）
+  final DateTime receivedAt;
+
   MessageBusMessage({
     required this.channel,
     required this.messageId,
     required this.data,
-  });
+    DateTime? receivedAt,
+  }) : receivedAt = receivedAt ?? DateTime.now();
 
   factory MessageBusMessage.fromJson(Map<String, dynamic> json) {
     return MessageBusMessage(
@@ -97,6 +103,9 @@ class MessageBusService {
   // MessageBus 独立域名配置
   String? _baseUrl;
   String? _sharedSessionKey;
+
+  // /latest 投递时效诊断(聚合后落日志,见 MessageBusLatencyProbe)
+  final _latencyProbe = MessageBusLatencyProbe();
 
   // 消息流(用于全局监听)
   final _messageController = StreamController<MessageBusMessage>.broadcast();
@@ -383,7 +392,6 @@ class MessageBusService {
               'isSilent': true,
               'skipCsrf': true,
               'skipNetworkLog': true,
-              'skipRhttpAdapter': true,
             },
           ),
         );
@@ -428,6 +436,13 @@ class MessageBusService {
               retryAfter: retryAfter == null
                   ? null
                   : Duration(seconds: retryAfter),
+            );
+          } else if (e.requestOptions.uri.host.toLowerCase() ==
+              CfRateChallengeLimiter.instance.mainHost) {
+            // 主站的挑战型 429（CF 速率规则）：和业务请求共用一份冷却
+            CfRateChallengeLimiter.instance.report(
+              e.requestOptions.uri.host,
+              path: e.requestOptions.uri.path,
             );
           }
         } else if (e.type == DioExceptionType.receiveTimeout) {
@@ -591,7 +606,9 @@ class MessageBusService {
           if (next == null) break;
           consumed = next.endOffset;
           if (next.payload.isNotEmpty) {
-            if (await _processChunk(next.payload, generation)) gotData = true;
+            if (await _processChunk(next.payload, generation, chunked: true)) {
+              gotData = true;
+            }
           }
         }
 
@@ -611,7 +628,7 @@ class MessageBusService {
         !cancelToken.isCancelled &&
         !_shouldStop &&
         generation == _pollGeneration) {
-      if (await _processChunk(tail, generation)) gotData = true;
+      if (await _processChunk(tail, generation, chunked: true)) gotData = true;
     }
 
     return gotData;
@@ -634,7 +651,7 @@ class MessageBusService {
     if (bytes.isEmpty) return false;
     final body = utf8.decode(bytes, allowMalformed: true).trim();
     if (body.isEmpty) return false;
-    return _processChunk(body, generation);
+    return _processChunk(body, generation, chunked: false);
   }
 
   /// 提取下一个 chunk 块,返回 `(payload, endOffset)`;无完整 chunk 时返回 null
@@ -672,7 +689,11 @@ class MessageBusService {
   static const int _isolateDecodeThreshold = 32 * 1024;
 
   /// 处理单个消息块,返回是否产生了实际的数据消息
-  Future<bool> _processChunk(String chunk, int generation) async {
+  Future<bool> _processChunk(
+    String chunk,
+    int generation, {
+    required bool chunked,
+  }) async {
     try {
       final parsed = chunk.length >= _isolateDecodeThreshold
           ? await compute(_decodeJsonChunk, chunk)
@@ -688,6 +709,7 @@ class MessageBusService {
         if (_shouldStop || generation != _pollGeneration) break;
         if (item is Map<String, dynamic>) {
           final message = MessageBusMessage.fromJson(item);
+          _latencyProbe.onReceived(message, chunked: chunked);
           _handleMessage(message);
           if (message.channel != '/__status') got = true;
         }
@@ -770,6 +792,7 @@ class MessageBusService {
 
   /// 投递给订阅回调与消息流(与协议推进分离,可被滚动期延迟)
   void _deliverMessage(MessageBusMessage message) {
+    _latencyProbe.onDelivered(message);
     final sub = _subscriptions[message.channel];
     if (sub != null) {
       for (final callback in sub.callbacks) {

@@ -13,6 +13,7 @@ import 'network/cookie/cookie_jar_service.dart';
 import 'preloaded_data_service.dart';
 import 'site_context.dart';
 import 'session/webview_use.dart';
+import 'webview_render_gone.dart';
 import 'webview_settings.dart';
 import 'windows_webview_environment_service.dart';
 
@@ -205,18 +206,8 @@ class WebViewSessionCookieRefreshService {
     // 主线程,恰是"长时间挂后台回来卡"的来源之一)。产物 _rt/_forum_session
     // 不随 _t 轮换失效;换账号由 logout → [resetSessionState] 复位,
     // CF recover 走 force,失败补跑由退避链继续。
+    // 这是稳态(每个请求都会问一次),不记日志:以前每次都记,占了应用日志的一半
     if (!force && _lastSuccessAt != null) {
-      _logEnsureEvent(
-        event: 'webview_session_sync_skipped',
-        reason: reason,
-        level: 'info',
-        extra: {
-          'skipReason': 'synced_this_session',
-          'lastSuccessAgeMs': DateTime.now()
-              .difference(_lastSuccessAt!)
-              .inMilliseconds,
-        },
-      );
       return const SessionBootstrapResult.success();
     }
 
@@ -332,6 +323,8 @@ class WebViewSessionCookieRefreshService {
     await webViewUse.ready;
 
     final loadCompleter = Completer<void>();
+    // 渲染进程没了：这个 WebView 不能再用，本轮按失败收场、不回写
+    final renderGone = Completer<void>();
     HeadlessInAppWebView? webView;
     InAppWebViewController? controller;
 
@@ -353,6 +346,11 @@ class WebViewSessionCookieRefreshService {
       initialUserScripts: WebViewSettings.compatPolyfillScripts,
       onReceivedServerTrustAuthRequest: (_, challenge) =>
           WebViewSettings.handleServerTrustAuthRequest(challenge),
+      onRenderProcessGone: (_, detail) {
+        WebViewRenderGone.report('session_bootstrap', detail);
+        controller = null;
+        if (!renderGone.isCompleted) renderGone.complete();
+      },
       onWebViewCreated: (createdController) {
         controller = createdController;
         WebViewSettings.applyWindowsHeadlessMemoryTarget(createdController);
@@ -394,9 +392,15 @@ class WebViewSessionCookieRefreshService {
       }
 
       try {
-        await loadCompleter.future.timeout(const Duration(seconds: 8));
+        await Future.any<void>([
+          loadCompleter.future.timeout(const Duration(seconds: 8)),
+          renderGone.future,
+        ]);
       } on TimeoutException {
         debugPrint('[WebViewSessionSync] 轻量 bootstrap 文档加载等待超时，继续尝试');
+      }
+      if (renderGone.isCompleted) {
+        return const SessionBootstrapResult.failure(phase: 'render_gone');
       }
 
       if (io.Platform.isWindows) {
@@ -407,7 +411,12 @@ class WebViewSessionCookieRefreshService {
         c,
         reason: reason,
         pluginCandidates: PreloadedDataService().pluginCandidatesSync,
+        isCancelled: () => renderGone.isCompleted,
+        cancellationSignal: renderGone.future,
       );
+      if (renderGone.isCompleted) {
+        return const SessionBootstrapResult.failure(phase: 'render_gone');
+      }
       if (!bootstrap.ok) {
         await syncCookies();
         await logCookieSummary(reason: reason, bootstrapOk: false);

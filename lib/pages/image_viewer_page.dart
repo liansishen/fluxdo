@@ -458,7 +458,7 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage>
     final longestPx = (view.physicalSize.longestSide * 3)
         .clamp(2048.0, 8192.0)
         .round();
-    return ResizeImage(
+    return resizeDiscourseImageProvider(
       discourseImageProvider(
         url,
         bucket: BlobImageCache.originalBucket,
@@ -467,7 +467,6 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage>
       ),
       width: longestPx,
       height: longestPx,
-      policy: ResizeImagePolicy.fit,
     );
   }
 
@@ -485,11 +484,10 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage>
     }
     final spec = ImageDecodeSpecMemo.peek(url);
     if (spec == null) return discourseImageProvider(url);
-    return ResizeImage(
+    return resizeDiscourseImageProvider(
       discourseImageProvider(url),
       width: spec.$1,
       height: spec.$2,
-      policy: ResizeImagePolicy.fit,
     );
   }
 

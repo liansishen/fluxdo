@@ -46,7 +46,9 @@ class _PerfDiagnosticsPageState extends State<PerfDiagnosticsPage> {
   }
 
   Future<void> _copy() async {
-    await Clipboard.setData(ClipboardData(text: FrameJankMonitor.exportText()));
+    await Clipboard.setData(
+      ClipboardData(text: FrameJankMonitor.exportText()),
+    );
     ToastService.showSuccess('诊断报告已复制');
   }
 
@@ -149,7 +151,9 @@ class _PerfDiagnosticsPageState extends State<PerfDiagnosticsPage> {
                   padding: const EdgeInsets.only(top: 48),
                   child: Center(
                     child: Text(
-                      FrameJankMonitor.isRunning ? '暂无掉帧记录,去滚动几屏试试' : '监控未启用',
+                      FrameJankMonitor.isRunning
+                          ? '暂无掉帧记录,去滚动几屏试试'
+                          : '监控未启用',
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
@@ -182,7 +186,9 @@ class _PerfDiagnosticsPageState extends State<PerfDiagnosticsPage> {
               contentPadding: EdgeInsets.zero,
               title: const Text('启用监控'),
               subtitle: Text(
-                kReleaseMode ? '记录掉帧与场景事件(重启后保持)' : 'debug/profile 构建自动启用',
+                kReleaseMode
+                    ? '记录掉帧与场景事件(重启后保持)'
+                    : 'debug/profile 构建自动启用',
               ),
               value: FrameJankMonitor.isRunning,
               onChanged: _toggle,
@@ -271,7 +277,8 @@ class _PerfDiagnosticsPageState extends State<PerfDiagnosticsPage> {
       '${t.minute.toString().padLeft(2, '0')}:'
       '${t.second.toString().padLeft(2, '0')}';
 
-  String _fmtSnapshotTime(DateTime t) => '${t.month}/${t.day} ${_fmtTime(t)}';
+  String _fmtSnapshotTime(DateTime t) =>
+      '${t.month}/${t.day} ${_fmtTime(t)}';
 
   Widget _jankTile(ThemeData theme, JankRecord j) {
     final heavy = j.total.inMilliseconds >= 20;

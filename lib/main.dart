@@ -1,3 +1,6 @@
+import 'widgets/common/animation_visibility.dart';
+import 'services/avif_image_provider.dart';
+
 import 'dart:async';
 import 'dart:io';
 
@@ -18,6 +21,7 @@ import 'pages/appearance_page.dart';
 import 'pages/topics_page.dart';
 import 'pages/data_management_page.dart';
 import 'providers/discourse_providers.dart';
+import 'providers/topic_detail/detail_memory_cache.dart';
 import 'providers/selected_topic_provider.dart';
 import 'providers/locale_provider.dart';
 import 'widgets/ai/builtin_presets_factory.dart';
@@ -25,6 +29,7 @@ import 'providers/message_bus_providers.dart';
 import 'providers/chat/chat_notification_alert_provider.dart';
 import 'services/auth_issue_notice_service.dart';
 import 'providers/app_state_refresher.dart';
+import 'services/preloaded_data_service.dart';
 import 'services/highlighter_service.dart';
 import 'widgets/common/notification_icon_button.dart';
 import 'widgets/common/anchor_guard_sliver.dart';
@@ -38,6 +43,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import 'services/network/cookie/csrf_token_service.dart';
 import 'services/network/system_proxy_service.dart';
+import 'services/cf_clearance_authority.dart';
+import 'services/network/cf/cf_rate_challenge_limiter.dart';
 import 'services/network/cookie/cookie_devtools_extension.dart';
 import 'services/network/cookie/cookie_jar_service.dart';
 import 'services/network/cookie/cookie_store_observer.dart';
@@ -58,16 +65,15 @@ import 'services/network/doh/cf_select_notice.dart';
 import 'services/network/doh/cfhub_probe_auth_service.dart';
 import 'services/network/doh/network_settings_service.dart';
 import 'services/network/proxy/proxy_settings_service.dart';
-import 'services/network/rhttp/rhttp_settings_service.dart';
 import 'services/network/webview/webview_adapter_settings_service.dart';
 import 'services/eruda_settings_service.dart';
-import 'services/network/adapters/rhttp_adapter.dart' show RhttpRuntime;
 import 'services/network/vpn_auto_toggle_service.dart';
 import 'services/network/doh_proxy/proxy_certificate.dart';
 import 'services/cf_challenge_logger.dart';
 import 'services/browser_trust_coordinator.dart';
 import 'services/startup/app_startup.dart';
 import 'services/startup/startup_timeline.dart';
+import 'services/session/session_token_diagnostics.dart';
 import 'services/site_context.dart';
 import 'config/forum_site.dart';
 import 'services/update_service.dart';
@@ -81,6 +87,7 @@ import 'services/deep_link_service.dart';
 import 'services/windows_protocol_registrar_stub.dart'
     if (dart.library.ffi) 'services/windows_protocol_registrar_io.dart';
 import 'services/background/background_notification_service.dart';
+import 'services/background_memory_reclaimer.dart';
 import 'services/message_bus_service.dart';
 import 'services/connectivity_service.dart';
 import 'services/log/json_file_handler.dart';
@@ -230,6 +237,9 @@ Future<void> main(List<String> args) async {
   // Rust 动图管线的首帧(挂载瞬态的裸 RGBA 上传,不经 binding)注入
   // 同一个闸门,与标准路径统一错峰;播放中的后续帧不过闸。
   NativeAnimatedImageProvider.firstFrameGate = ImageDecodeGate.run;
+  NativeAnimatedImageProvider.animationEnabled =
+      AppAnimationLifecycle.animationEnabled;
+  AvifImageProvider.animationEnabled = AppAnimationLifecycle.animationEnabled;
 
   // FlattenCache / ParagraphLayoutCache miss 的成本上报 span 账单
   // (flat:/tlay: 前缀,与 parse:/lay:/pnt: 同一管道;监控关闭时
@@ -365,18 +375,24 @@ Future<void> main(List<String> args) async {
   // 开发者模式下 debug 级日志落盘（高频追踪信息）
   AppLogger.setVerbose(developerMode);
   await ProxySettingsService.instance.initialize(prefs);
-  // rhttp (Rust reqwest) 初始化：在 ProxySettingsService 之后、NetworkSettingsService 之前
-  await RhttpSettingsService.instance.initialize(prefs);
   // WebView 适配器设置
   await WebViewAdapterSettingsService.instance.initialize(prefs);
   // Eruda 调试控制台开关 (默认关)
   await ErudaSettingsService.instance.initialize(prefs);
   StartupTimeline.mark('settings');
-  // 仅在启用 rhttp 时预热运行时，其余客户端首次使用时再初始化。
-  if (RhttpSettingsService.instance.current.enabled) {
-    await RhttpRuntime.ensureInitialized();
-  }
 
+  // 系统代理（Windows 注册表 / 安卓默认网络）必须先于本地 DoH/WebView 网关读取，网关才能按
+  // 「应用代理 > 系统代理 > 直连」选择首次启动的上游出口。
+  // 上次没冷却完的挑战型 429（CF 速率规则的质询）接着冷却，别一启动就接着撞
+  CfRateChallengeLimiter.instance.initialize(
+    prefs,
+    mainHost: CfClearanceAuthority.mainHost,
+  );
+  // 安卓的系统代理（Wi-Fi 代理 / PAC / VPN 下发）经原生通道异步读，最多等 300 ms
+  if (Platform.isWindows || Platform.isAndroid) {
+    SystemProxyService.instance.start();
+    if (Platform.isAndroid) await SystemProxyService.instance.ready();
+  }
   // 首次签名最多额外等待 300ms；迟到结果仍补种，不能依赖首页挂载后才启动的监听。
   final startupConnectivity = await startupConnectivityCheck.timeout(
     const Duration(milliseconds: 300),
@@ -399,12 +415,6 @@ Future<void> main(List<String> args) async {
     debugPrint('[Main] 初始 VPN 状态同步失败: $e');
   }
 
-  // Windows 固定系统代理必须先于本地 DoH/WebView 网关读取，网关才能按
-  // 「应用代理 > 系统代理 > 直连」选择首次启动的上游出口。
-  if (Platform.isWindows) {
-    SystemProxyService.instance.start();
-  }
-  StartupTimeline.mark('rhttp');
   await NetworkSettingsService.instance.initialize(prefs);
   StartupTimeline.mark('proxy');
   // 桌面端 WebView UA 必须等本地代理端口确定后再取：WebView2 Environment
@@ -465,6 +475,13 @@ Future<void> main(List<String> args) async {
   unawaited(
     WidgetsBinding.instance.waitUntilFirstFrameRasterized.then(
       (_) => StartupTimeline.mark('first_frame'),
+    ),
+  );
+
+  // 首帧后记录两站 CookieJar / WebView 的脱敏会话摘要，保留原启动顺序。
+  unawaited(
+    WidgetsBinding.instance.waitUntilFirstFrameRasterized.then(
+      (_) => SessionTokenDiagnostics.log('app_start'),
     ),
   );
 
@@ -933,6 +950,9 @@ class MainApp extends ConsumerWidget {
                   ),
                 );
 
+                // 失焦或隐藏时同时暂停图片流和 ticker，回到前台再恢复。
+                result = AppAnimationLifecycle(child: result);
+
                 result = Listener(
                   behavior: HitTestBehavior.translucent,
                   onPointerDown: (event) {
@@ -1093,11 +1113,13 @@ class _MainPageState extends ConsumerState<MainPage>
     this,
   );
   VoidCallback? _unregisterMessageBusChannels;
+  VoidCallback? _onFreshPreload;
   int? _lastTappedIndex;
   DateTime? _lastTapTime;
   Timer? _pendingSingleTap;
   List<NavEntry> _lastResolvedEntries = const [];
   Timer? _resumeDebounceTimer;
+  late final BackgroundMemoryReclaimer _memoryReclaimer;
   final BackExitGuard _backExitGuard = BackExitGuard();
   bool _clipboardCheckInFlight = false;
 
@@ -1106,6 +1128,9 @@ class _MainPageState extends ConsumerState<MainPage>
   @override
   void initState() {
     super.initState();
+    _memoryReclaimer = BackgroundMemoryReclaimer(
+      imageCache: PaintingBinding.instance.imageCache,
+    )..handleLifecycleState(WidgetsBinding.instance.lifecycleState);
     WidgetsBinding.instance.addObserver(this);
     UserPresenceService().setForeground(true, countAsActivity: true);
     HardwareKeyboard.instance.addHandler(_handlePresenceKeyEvent);
@@ -1153,7 +1178,11 @@ class _MainPageState extends ConsumerState<MainPage>
     // 窗口内,届时 containerOf(context) 会抛错把刷新链掐死(登录后无
     // 登录态)。container 与根 ProviderScope 同生命周期,不受元素影响。
     final appContainer = ProviderScope.containerOf(context, listen: false);
-    _authStateSub = ref.listenManual<AsyncValue<void>>(authStateProvider, (
+    // 冷启动先显示的是启动快照：这次运行的首页数据到了以后，把从快照里取的
+    // 分类、追踪状态等换成新的
+    _onFreshPreload = () => AppStateRefresher.applyFreshPreload(appContainer);
+    PreloadedDataService().freshRevision.addListener(_onFreshPreload!);
+    _authStateSub = ref.listenManual<AsyncValue<int>>(authStateProvider, (
       _,
       next,
     ) {
@@ -1404,9 +1433,14 @@ class _MainPageState extends ConsumerState<MainPage>
     HardwareKeyboard.instance.removeHandler(_handlePresenceKeyEvent);
     WidgetsBinding.instance.removeObserver(this);
     _resumeDebounceTimer?.cancel();
+    _memoryReclaimer.dispose();
     _pendingSingleTap?.cancel();
     _authErrorSub?.close();
     _authStateSub?.close();
+    final onFreshPreload = _onFreshPreload;
+    if (onFreshPreload != null) {
+      PreloadedDataService().freshRevision.removeListener(onFreshPreload);
+    }
     _unregisterMessageBusChannels?.call();
     _messageBusChannels.stop();
     _connectivitySub?.close();
@@ -1416,6 +1450,7 @@ class _MainPageState extends ConsumerState<MainPage>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
+    _memoryReclaimer.handleLifecycleState(state);
 
     if (state == AppLifecycleState.resumed) {
       UserPresenceService().setForeground(true, countAsActivity: true);
@@ -1424,6 +1459,13 @@ class _MainPageState extends ConsumerState<MainPage>
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       UserPresenceService().setForeground(false);
+    }
+    // 让路实测只在前台做：后台时系统可能直接拒掉 App 的连接。inactive（下拉通知栏、
+    // 权限弹窗）还算前台
+    if (state == AppLifecycleState.resumed) {
+      VpnAutoToggleService.instance.setAppForeground(true);
+    } else if (state != AppLifecycleState.inactive) {
+      VpnAutoToggleService.instance.setAppForeground(false);
     }
 
     if (state == AppLifecycleState.hidden) {
@@ -1458,10 +1500,11 @@ class _MainPageState extends ConsumerState<MainPage>
     //   仅 reassemble 全量重建场景安全),且量级仅数 MB 不值得冒险。
     RenderParseCache.clear();
     FlattenCache.evictAll();
+    TopicDetailMemoryCache.clear();
     // 公平内存机制下持续增长会触达查杀线,先把监控现场落盘(未启用
     // 或无记录时内部直接返回,静默失败)。
     unawaited(FrameJankMonitor.persistSnapshot());
-    debugPrint('[MainPage] 内存压力:已清理解析/flatten 缓存');
+    debugPrint('[MainPage] 内存压力:已清理话题详情、解析和 flatten 缓存');
   }
 
   Future<void> _resumeFromBackground() async {
@@ -1541,19 +1584,6 @@ class _MainPageState extends ConsumerState<MainPage>
 
   /// App 进入后台：先启动前台服务保活，再切换到只轮询通知频道
   Future<void> _enterBackground() async {
-    // 清后台图片内存缓存按平台分派:
-    // - 桌面端跳过——最小化即触发本回调,一次性并发销毁大量 GPU 贴图
-    //   (SkImage_Ganesh/GrTextureProxy)疑撞 Skia disposal 问题
-    //   (discourse_cache_manager.dart 里动图那块引用过的 Flutter
-    //   #85831 同一类坑),聊天页同屏头像/emoji 最多最易踩中;桌面
-    //   也不存在后台 OOM 击杀,清空只省一点驻留,不值得冒崩溃风险。
-    // - 移动端保留——降后台驻留配合保活,降低 LMKD 击杀概率(被杀
-    //   = 通知轮询没了);LMKD 不总先发 memory pressure,框架自清
-    //   兜不住这个场景。
-    if (!PlatformUtils.isDesktop) {
-      PaintingBinding.instance.imageCache.clear();
-    }
-
     // 诊断快照落盘:进程随后被杀时环形缓冲现场不再全丢(监控未启用
     // 或无记录时内部直接返回;静默失败,不干扰退后台路径)
     unawaited(FrameJankMonitor.persistSnapshot());

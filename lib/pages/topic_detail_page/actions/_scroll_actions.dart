@@ -37,6 +37,7 @@ extension _ScrollActions on _TopicDetailPageState {
 
   void _onPostListLayout() {
     if (!mounted || _isRefreshing || _isNestedView) return;
+
     final params = _params;
     if (ref.read(topicDetailProvider(params)).isLoading) return;
     final notifier = ref.read(topicDetailProvider(params).notifier);

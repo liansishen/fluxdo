@@ -62,9 +62,7 @@ Future<void> _openEditPage(
           requestOptions: request,
           data: request.path == '/posts/21.json'
               ? post
-              : {
-                  'basic_topic': {'id': 11, 'title': _title},
-                },
+              : {'basic_topic': {'id': 11, 'title': _title}},
         ),
       );
     },

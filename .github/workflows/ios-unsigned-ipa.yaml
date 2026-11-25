@@ -1,0 +1,190 @@
+name: iOS Unsigned IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      flutter-version:
+        description: 'Flutter SDK 版本'
+        required: false
+        default: '3.47.7'
+      ui-runner:
+        description: '原生 UI 测试运行器（ARM 排队时可选 Intel）'
+        type: choice
+        options:
+          - macos-latest
+          - macos-26-intel
+        default: macos-latest
+      native-tests-only:
+        description: '仅运行原生交互测试，复用已有 IPA 构建结果'
+        type: boolean
+        default: false
+  push:
+    branches:
+      - feat/ios-unsigned-ipa
+    paths:
+      - 'ios/**'
+      - 'lib/**'
+      - 'packages/**'
+      - 'core/doh_proxy/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'tool/**'
+      - '.github/workflows/ios-unsigned-ipa.yaml'
+
+concurrency:
+  group: ios-unsigned-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  share-preview:
+    name: Share preview (${{ matrix.device }})
+    runs-on: ${{ inputs.ui-runner || 'macos-latest' }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [iPhone, iPad]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Exercise native preview
+        run: tool/ios_share_preview_tests/run_ios_ui_tests.sh "${{ matrix.device }}"
+
+      - name: Upload native preview test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-share-preview-tests-${{ matrix.device }}
+          path: ${{ runner.temp }}/fluxdo-share-preview-tests/*.xcresult
+          if-no-files-found: error
+          retention-days: 7
+  build:
+    if: ${{ !inputs.native-tests-only }}
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ inputs.flutter-version || '3.47.7' }}
+          channel: stable
+          cache: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core/doh_proxy
+          key: ios-unsigned
+
+      - name: Show toolchain versions
+        run: |
+          flutter --version
+          xcodebuild -version
+          pod --version
+
+      - name: Exercise share link and export behavior
+        run: |
+          node tool/ios_share_web_fetch_test.mjs
+          plutil -lint ios/Runner.xcodeproj/project.pbxproj ios/ShareExtension/Info.plist ios/ShareExtension/ShareExtension.entitlements
+          swiftc ios/Shared/ShareSessionStore.swift ios/ShareExtension/ForumShareClient.swift ios/ShareExtension/ShareImageDocument.swift tool/ios_share_extension_smoke.swift -o "$RUNNER_TEMP/share-extension-smoke"
+          "$RUNNER_TEMP/share-extension-smoke"
+          swiftc -swift-version 5 ios/Shared/ShareSessionStore.swift ios/ShareExtension/ForumShareClient.swift tool/ios_share_native_first_smoke.swift -o "$RUNNER_TEMP/share-native-first-smoke"
+          "$RUNNER_TEMP/share-native-first-smoke"
+          swiftc ios/ShareExtension/ShareLongImageWriter.swift tool/ios_share_image_smoke.swift -lz -o "$RUNNER_TEMP/share-image-smoke"
+          "$RUNNER_TEMP/share-image-smoke"
+
+      - name: Typecheck native iOS share extension
+        run: |
+          swiftc -typecheck -swift-version 5 -application-extension \
+            -target arm64-apple-ios15.0 -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" \
+            ios/Shared/ShareSessionStore.swift ios/ShareExtension/ForumShareClient.swift \
+            ios/ShareExtension/ShareImageRenderer.swift ios/ShareExtension/ShareWebSession.swift \
+            ios/ShareExtension/ShareImageDocument.swift ios/ShareExtension/ShareLongImageWriter.swift \
+            ios/ShareExtension/ShareImagePreviewController.swift ios/ShareExtension/ShareExportViewController.swift \
+            ios/ShareExtension/ShareViewController.swift
+
+      - name: Cache iOS engine artifacts
+        run: flutter precache --ios
+
+      - name: Install Dart dependencies
+        run: flutter pub get
+
+      - name: Resolve version
+        id: version
+        run: |
+          version=$(sed -n 's/^version: //p' pubspec.yaml | cut -d+ -f1)
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build unsigned IPA
+        run: dart tool/build_ipa_nosign.dart "${{ steps.version.outputs.value }}" -y
+
+      - name: Verify native DOH library
+        run: |
+          test -f build/ios/iphoneos/Runner.app/Runner
+          nm -gU build/ios/iphoneos/Runner.app/Runner | grep "_doh_proxy_start_with_config_json"
+
+      - name: Verify share extension packaging
+        run: |
+          app=build/ios/iphoneos/Runner.app
+          extension="$app/PlugIns/ShareExtension.appex"
+          test -f "$extension/ShareExtension"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' "$extension/Info.plist")" = com.apple.share-services
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$extension/Info.plist")" = "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Info.plist")"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$extension/Info.plist")" = "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Info.plist")"
+          file "$extension/ShareExtension"
+          python3 - <<'PY'
+          import pathlib, zipfile
+          for ipa in pathlib.Path('build/ios/ipa').glob('*.ipa'):
+              with zipfile.ZipFile(ipa) as archive:
+                  member = 'Payload/Runner.app/PlugIns/ShareExtension.appex/ShareExtension'
+                  assert archive.getinfo(member).file_size > 0, 'IPA 缺少分享扩展可执行文件'
+                  print(f'{ipa.name}: 分享扩展已打包')
+          PY
+
+      - name: Verify SideStore entitlement carrier
+        run: |
+          python3 - <<'PYCODE'
+          import pathlib, plistlib, subprocess, tempfile, zipfile
+          group = 'group.com.github.lingyan000.fluxdo'
+          carriers = list(pathlib.Path('build/ios/ipa').glob('*-sidestore.ipa'))
+          assert len(carriers) == 1, '缺少 SideStore 重签准备包'
+          assert list(pathlib.Path('build/ios/ipa').glob('*-nosign.ipa')), '缺少原未签名包'
+          with tempfile.TemporaryDirectory() as directory:
+              subprocess.run(['ditto', '-x', '-k', str(carriers[0]), directory], check=True)
+              app = pathlib.Path(directory) / 'Payload/Runner.app'
+              for target in [app, app / 'PlugIns/ShareExtension.appex']:
+                  result = subprocess.run(['codesign', '-d', '--entitlements', ':-', str(target)],
+                                          check=True, capture_output=True)
+                  entitlements = plistlib.loads(result.stdout)
+                  assert entitlements['com.apple.security.application-groups'] == [group], '主应用或扩展缺少共享组权限声明'
+                  assert not (target / 'embedded.mobileprovision').exists(), '准备包不应包含开发者描述文件'
+              subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
+          print('通过：SideStore 准备包的主应用及扩展均携带同一 App Groups 声明')
+          PYCODE
+
+      - name: Generate checksum
+        run: |
+          cd build/ios/ipa
+          shasum -a 256 ./*.ipa | tee SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: fluxdo-unsigned-ipa
+          path: |
+            build/ios/ipa/*.ipa
+            build/ios/ipa/SHA256SUMS.txt
+          retention-days: 30
+          if-no-files-found: error

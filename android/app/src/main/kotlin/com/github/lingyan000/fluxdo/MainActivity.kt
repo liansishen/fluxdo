@@ -156,6 +156,8 @@ class MainActivity : FlutterActivity() {
         FairMemoryReceiver.detachEngine(flutterEngine)
         MediaTranscodeChannel.dispose(flutterEngine.dartExecutor.binaryMessenger)
         PublicFileChannel.dispose(this, flutterEngine.dartExecutor.binaryMessenger)
+        SystemProxyChannel.dispose(flutterEngine.dartExecutor.binaryMessenger)
+        CfNativeClickChannel.dispose(flutterEngine.dartExecutor.binaryMessenger)
         super.cleanUpFlutterEngine(flutterEngine)
     }
 
@@ -226,6 +228,12 @@ class MainActivity : FlutterActivity() {
         MediaTranscodeChannel.register(this, flutterEngine.dartExecutor.binaryMessenger)
         // 公共文件落盘通道(MediaStore 下载目录 / SAF 另存为 / 打开 content uri)
         PublicFileChannel.register(this, flutterEngine.dartExecutor.binaryMessenger)
+        // 会话通知快捷方式(系统通知左侧显示发送者头像)
+        ConversationShortcutChannel.register(this, flutterEngine.dartExecutor.binaryMessenger)
+        // 系统 HTTP 代理只读通道(网关上游跟随系统代理,与内置网页同一出口)
+        SystemProxyChannel.register(this, flutterEngine.dartExecutor.binaryMessenger)
+        // 验证页替用户点 Turnstile 勾选框(只点 Dart 指定的那个 WebView)
+        CfNativeClickChannel.register(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "openInBrowser" -> {

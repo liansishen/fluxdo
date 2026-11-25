@@ -2,15 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxdo/services/network/gateway_media_source.dart';
 
 void main() {
-  GatewayMediaSource rewrite(
-    String url, {
-    bool gateway = true,
-    int? port = 40527,
-  }) => GatewayMediaSource.rewrite(
-    Uri.parse(url),
-    gatewayMode: gateway,
-    port: port,
-  );
+  GatewayMediaSource rewrite(String url, {bool gateway = true, int? port = 40527}) =>
+      GatewayMediaSource.rewrite(Uri.parse(url), gatewayMode: gateway, port: port);
 
   test('网关模式下 https 媒体改写成本机网关 + Host 头，路径和查询原样保留', () {
     final source = rewrite(
@@ -25,10 +18,7 @@ void main() {
 
   test('不在网关模式、没有端口时原样返回', () {
     const url = 'https://linux.do/uploads/default/original/1X/a.mp4';
-    for (final source in [
-      rewrite(url, gateway: false),
-      rewrite(url, port: null),
-    ]) {
+    for (final source in [rewrite(url, gateway: false), rewrite(url, port: null)]) {
       expect(source.uri.toString(), url);
       expect(source.headers, isEmpty);
     }

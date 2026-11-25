@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import 'package:enhanced_cookie_jar/enhanced_cookie_jar.dart';
 
-import '../../utils/time_utils.dart';
 import '../site_context.dart';
 import '../storage/secret_store.dart';
 import '../storage/system_secret_store.dart';
@@ -53,7 +52,7 @@ class SavedAccount {
     name: json['name'] as String?,
     avatarTemplate: json['avatarTemplate'] as String?,
     savedAt:
-        TimeUtils.parseUtcTime(json['savedAt'] as String?) ??
+        DateTime.tryParse(json['savedAt'] as String? ?? '') ??
         DateTime.fromMillisecondsSinceEpoch(0),
     needsLogin: json['needsLogin'] == true,
   );

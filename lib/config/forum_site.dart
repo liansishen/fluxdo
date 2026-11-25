@@ -34,7 +34,7 @@ enum ForumSite {
   final String host;
   final String logoAsset;
 
-  /// 验证页必须访问本站受 CF 保护的入口，不能假定各站都有 /challenge。
+  /// 验证页访问本站受 CF 保护的入口，不能假定各站都有 /challenge。
   final String cfVerificationPath;
   final String? cfVerificationFallbackPath;
 
@@ -42,6 +42,7 @@ enum ForumSite {
   Uri? get cfVerificationFallbackUri => cfVerificationFallbackPath == null
       ? null
       : Uri.parse(baseUrl).resolve(cfVerificationFallbackPath!);
+
   bool get isLinuxDo => this == linuxDo;
 
   /// 只有 LINUX DO 的 fingerprint 插件协议已经确认过，不能把它的

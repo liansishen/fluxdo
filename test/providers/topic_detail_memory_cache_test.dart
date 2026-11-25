@@ -1,6 +1,3 @@
-import 'dart:async';
-
-import 'package:fluxdo/services/auth_session.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxdo/models/topic.dart';
@@ -44,7 +41,6 @@ TopicDetail _detail({
 class _FakeDiscourseService implements DiscourseService {
   int detailRequests = 0;
   TopicDetail Function() next = _detail;
-  Completer<TopicDetail>? pending;
 
   @override
   Future<TopicDetail> getTopicDetail(
@@ -56,8 +52,6 @@ class _FakeDiscourseService implements DiscourseService {
     bool filterTopLevelReplies = false,
   }) async {
     detailRequests++;
-    final pending = this.pending;
-    if (pending != null) return pending.future;
     return next();
   }
 
@@ -173,6 +167,41 @@ void main() {
     });
   });
 
+  testWidgets('无人再次读取时也会主动释放过期话题', (tester) async {
+    TopicDetailMemoryCache.put(_detail());
+    await tester.pump(
+      TopicDetailMemoryCache.ttl - const Duration(milliseconds: 1),
+    );
+    expect(TopicDetailMemoryCache.entryCount, 1);
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(TopicDetailMemoryCache.entryCount, 0);
+  });
+
+  testWidgets('替换或清空后旧定时器不能删除新话题缓存', (tester) async {
+    TopicDetailMemoryCache.put(_detail());
+    await tester.pump(const Duration(minutes: 1));
+    clock = clock.add(const Duration(minutes: 1));
+    TopicDetailMemoryCache.put(_detail(highest: 4));
+    await tester.pump(const Duration(minutes: 2));
+    expect(TopicDetailMemoryCache.entryCount, 1);
+    expect(
+      TopicDetailMemoryCache.take(
+        7,
+        expectedHighestPostNumber: 4,
+        targetPostNumber: 1,
+      )?.highestPostNumber,
+      4,
+    );
+    TopicDetailMemoryCache.put(_detail());
+    await tester.pump(const Duration(minutes: 1));
+    TopicDetailMemoryCache.clear();
+    TopicDetailMemoryCache.put(_detail(id: 8));
+    await tester.pump(const Duration(minutes: 2));
+    expect(TopicDetailMemoryCache.entryCount, 1);
+    await tester.pump(const Duration(minutes: 1));
+    expect(TopicDetailMemoryCache.entryCount, 0);
+  });
+
   group('详情 provider', () {
     late _FakeDiscourseService service;
     late ProviderContainer container;
@@ -194,112 +223,6 @@ void main() {
       return detail;
     }
 
-    for (final flushCancellation in [false, true]) {
-      test('换号失效后同一 keepAlive 详情不能复用旧状态：取消微任务已执行=$flushCancellation', () async {
-        const params = TopicDetailParams(
-          7,
-          instanceId: 'same-instance',
-          expectedHighestPostNumber: 3,
-        );
-        final provider = topicDetailProvider(params);
-        final oldSub = container.listen(provider, (_, _) {});
-        final oldDetail = await container.read(provider.future);
-        final oldNotifier = container.read(provider.notifier);
-        oldSub.close();
-        if (flushCancellation) await Future<void>.delayed(Duration.zero);
-        expect(container.read(provider).value, same(oldDetail));
-        expect(container.read(provider.notifier), same(oldNotifier));
-        expect(service.detailRequests, 1);
-
-        // 等价于 logout → _resetAccountState → _attach 的会话与详情清理顺序。
-        final pending = service.pending = Completer<TopicDetail>();
-        AuthSession().advance();
-        TopicDetailMemoryCache.clear();
-        container.invalidate(topicDetailProvider);
-        AuthSession().advance();
-        await Future<void>.delayed(Duration.zero);
-        expect(
-          TopicDetailMemoryCache.take(
-            7,
-            expectedHighestPostNumber: 3,
-            targetPostNumber: null,
-          ),
-          isNull,
-        );
-
-        final seen = <AsyncValue<TopicDetail>>[];
-        final newSub = container.listen(
-          provider,
-          (_, next) => seen.add(next),
-          fireImmediately: true,
-        );
-        addTearDown(newSub.close);
-        final fresh = container.read(provider.future);
-        await Future<void>.delayed(Duration.zero);
-        expect(service.detailRequests, 2);
-        expect(container.read(provider.notifier), isNot(same(oldNotifier)));
-        expect(container.read(provider).isLoading, isTrue);
-        expect(container.read(provider).hasValue, isFalse);
-        expect(seen.any((value) => value.hasValue), isFalse);
-
-        final newDetail = _detail(loaded: [1, 2, 3, 4], highest: 4);
-        pending.complete(newDetail);
-        final result = await fresh;
-        expect(result.highestPostNumber, 4);
-        expect(container.read(provider).value, same(result));
-        expect(seen.any((value) => identical(value.value, oldDetail)), isFalse);
-      });
-    }
-
-    for (final cancelBeforeClear in [false, true]) {
-      test('清空前后取消旧详情都不能回填：先取消=$cancelBeforeClear', () async {
-        const params = TopicDetailParams(7, instanceId: 'old');
-        final sub = container.listen(topicDetailProvider(params), (_, _) {});
-        await container.read(topicDetailProvider(params).future);
-        if (cancelBeforeClear) sub.close();
-        TopicDetailMemoryCache.clear();
-        if (!cancelBeforeClear) sub.close();
-        await Future<void>.delayed(Duration.zero);
-        await open(
-          const TopicDetailParams(
-            7,
-            instanceId: 'new',
-            expectedHighestPostNumber: 3,
-          ),
-        );
-        expect(service.detailRequests, 2);
-      });
-    }
-
-    test('会话已推进但尚未清缓存：旧详情卸载不能供新会话复用', () async {
-      const params = TopicDetailParams(7, instanceId: 'old');
-      final sub = container.listen(topicDetailProvider(params), (_, _) {});
-      await container.read(topicDetailProvider(params).future);
-      AuthSession().advance();
-      sub.close();
-      await Future<void>.delayed(Duration.zero);
-      await open(
-        const TopicDetailParams(
-          7,
-          instanceId: 'new',
-          expectedHighestPostNumber: 3,
-        ),
-      );
-      expect(service.detailRequests, 2);
-    });
-
-    test('已缓存详情不能跨会话取出', () {
-      TopicDetailMemoryCache.put(_detail());
-      AuthSession().advance();
-      expect(
-        TopicDetailMemoryCache.take(
-          7,
-          expectedHighestPostNumber: 3,
-          targetPostNumber: null,
-        ),
-        isNull,
-      );
-    });
     test('离开后马上从列表点回来、没有新回复：不再请求', () async {
       await open(
         const TopicDetailParams(

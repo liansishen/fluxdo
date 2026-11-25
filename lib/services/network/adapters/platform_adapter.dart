@@ -4,16 +4,17 @@ import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 
+import '../../../config/forum_site.dart';
 import '../doh/network_settings_service.dart';
+import '../doh_proxy/gateway_error.dart';
 import '../proxy/proxy_settings_service.dart';
-import '../rhttp/rhttp_settings_service.dart';
 import '../system_proxy_service.dart';
 import '../flux_request_spec.dart';
+import '../vpn_auto_toggle_service.dart';
 import '../webview/webview_adapter_settings_service.dart';
 import 'adapter_log_metadata.dart';
 import 'network_http_adapter.dart';
 import '../../../l10n/s.dart';
-import 'rhttp_adapter.dart';
 import 'webview_http_adapter.dart';
 
 /// 当前使用的适配器类型
@@ -21,12 +22,10 @@ enum AdapterType {
   webview, // WebView 适配器（仅 Windows 显式兜底）
   native, // Dart IO 适配器（dart:io HttpClient 直连）
   network, // Network 适配器（通过代理）
-  rhttp, // rhttp 引擎（Rust reqwest）
 }
 
 /// 当前适配器生效的原因（用于 UI 解释"为什么是这个引擎"）
 enum AdapterReason {
-  rhttp, // rhttp 已启用且满足使用条件
   gateway, // DoH 直连模式（Native + URL 改写到本地代理）
   proxy, // 本地代理（MITM）转发
   native, // 默认直连
@@ -73,8 +72,6 @@ String getAdapterDisplayName(AdapterType type) {
       return _getDesktopIoAdapterDisplayName();
     case AdapterType.network:
       return S.current.network_adapterNetwork;
-    case AdapterType.rhttp:
-      return S.current.network_adapterRhttp;
   }
 }
 
@@ -82,9 +79,8 @@ String getAdapterDisplayName(AdapterType type) {
 HttpClientAdapter createExternalHttpAdapter() {
   final settings = NetworkSettingsService.instance;
   final proxySettings = ProxySettingsService.instance;
-  final rhttpSettings = RhttpSettingsService.instance;
 
-  final adapter = _DynamicAdapter(settings, proxySettings, rhttpSettings);
+  final adapter = _DynamicAdapter(settings, proxySettings);
   return _GatewayAdapterWrapper(adapter);
 }
 
@@ -92,7 +88,6 @@ HttpClientAdapter createExternalHttpAdapter() {
 void configurePlatformAdapter(Dio dio, {bool preferWebViewFallback = false}) {
   final settings = NetworkSettingsService.instance;
   final proxySettings = ProxySettingsService.instance;
-  final rhttpSettings = RhttpSettingsService.instance;
 
   if (Platform.isWindows && preferWebViewFallback) {
     configureWebViewFallbackAdapter(dio);
@@ -101,16 +96,8 @@ void configurePlatformAdapter(Dio dio, {bool preferWebViewFallback = false}) {
 
   // 所有平台默认使用主链路动态适配；
   // 主链路为 Dio IO 适配器，WebView 仅保留显式兜底入口。
-  dio.httpClientAdapter = _DynamicAdapter(
-    settings,
-    proxySettings,
-    rhttpSettings,
-  );
-  _currentAdapterType = _resolveAdapterType(
-    settings,
-    proxySettings,
-    rhttpSettings,
-  );
+  dio.httpClientAdapter = _DynamicAdapter(settings, proxySettings);
+  _currentAdapterType = _resolveEffective(settings, proxySettings).type;
 
   // Gateway 包装：在传输层透明改写 URL 到 localhost 代理
   // 所有拦截器始终看到原始 URL，避免 cookie 域名不匹配等问题
@@ -137,28 +124,6 @@ void _configureWebViewAdapter(Dio dio) {
       });
 }
 
-AdapterType _resolveAdapterType(
-  NetworkSettingsService settings,
-  ProxySettingsService proxySettings,
-  RhttpSettingsService rhttpSettings,
-) {
-  return _resolveEffective(settings, proxySettings, rhttpSettings).type;
-}
-
-AdapterType _resolveAdapterTypeForRequest(
-  RequestOptions options,
-  NetworkSettingsService settings,
-  ProxySettingsService proxySettings,
-  RhttpSettingsService rhttpSettings,
-) {
-  return _resolveEffective(
-    settings,
-    proxySettings,
-    rhttpSettings,
-    requestOptions: options,
-  ).type;
-}
-
 /// 实时解析当前生效的适配器及原因（UI 单一数据源）。
 ///
 /// 不依赖请求触发，读取各 service 当前状态即时推算，
@@ -167,24 +132,16 @@ EffectiveAdapter resolveEffectiveAdapter() {
   return _resolveEffective(
     NetworkSettingsService.instance,
     ProxySettingsService.instance,
-    RhttpSettingsService.instance,
   );
 }
 
 EffectiveAdapter _resolveEffective(
   NetworkSettingsService settings,
   ProxySettingsService proxySettings,
-  RhttpSettingsService rhttpSettings, {
-  RequestOptions? requestOptions,
-}) {
-  // rhttp 优先（满足条件时）
-  if (rhttpSettings.shouldUseRhttp(settings.current, proxySettings.current) &&
-      (requestOptions == null || requestAllowsRhttpAdapter(requestOptions))) {
-    return const EffectiveAdapter(AdapterType.rhttp, AdapterReason.rhttp);
-  }
-  // Gateway 模式：Dart IO 直连 + 拦截器改写 URL 到 localhost 代理
-  // 比 MITM 少一层 TLS，作为 rhttp 不可用时的次优方案
-  if (settings.isGatewayMode) {
+) {
+  // Gateway 模式：Dart IO 直连 + 拦截器改写 URL 到 localhost 代理，
+  // 出站（优选、ECH、浏览器指纹）都在 Rust 网关里；加速关着时安卓的网关只管浏览器指纹
+  if (settings.routesAppThroughGateway) {
     return const EffectiveAdapter(AdapterType.native, AdapterReason.gateway);
   }
   // MITM 代理模式（gateway 不可用时的 fallback）
@@ -194,19 +151,14 @@ EffectiveAdapter _resolveEffective(
   return const EffectiveAdapter(AdapterType.native, AdapterReason.native);
 }
 
-@visibleForTesting
-bool requestAllowsRhttpAdapter(RequestOptions options) {
-  return !options.spec.skipRhttpAdapter;
-}
-
 /// 创建 Dart IO 适配器（dart:io HttpClient）。
 ///
 /// Android 下默认链路是 gateway 模式：请求被改写成明文 HTTP 送到 127.0.0.1
 /// 的 Rust 网关，TLS 在 Rust 侧完成，这里只需要一个可靠的本地 HTTP 客户端。
 HttpClientAdapter _createNativeAdapter() {
   debugPrint('[DIO] Dynamic adapter -> IOHttpClientAdapter');
-  // 与 RhttpAdapter 一致:跟随系统代理（目前仅 Windows 实现，其它平台恒为
-  // null 即直连），保持与 WebView 同一出口（cf_clearance 绑 IP，出口不一致
+  // 跟随系统代理（目前仅 Windows 实现，其它平台恒为 null 即直连），
+  // 保持与 WebView 同一出口（cf_clearance 绑 IP，出口不一致
   // 会导致 CF 验证无限循环）。findProxy 每个请求求值，代理开关变化即时生效。
   return IOHttpClientAdapter(
     createHttpClient: () {
@@ -268,20 +220,19 @@ class _GatewayAdapterWrapper implements HttpClientAdapter {
     if (_shouldUseWebView(options)) {
       return _getWebViewAdapter().fetch(options, requestStream, cancelFuture);
     }
+    return _fetchViaGateway(options, requestStream, cancelFuture);
+  }
 
+  /// 网关模式下把 https 请求改写成指向本地网关的明文 http 再发；其余原样发
+  Future<ResponseBody> _fetchViaGateway(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
     final settings = NetworkSettingsService.instance;
-    final proxySettings = ProxySettingsService.instance;
-    final rhttpSettings = RhttpSettingsService.instance;
-
-    // rhttp 直连时保留原始 HTTPS URL；显式旁路 rhttp 的请求
-    // 仍需要在 gateway 模式下改写到本地代理。
-    final shouldUseRhttp =
-        rhttpSettings.shouldUseRhttp(settings.current, proxySettings.current) &&
-        requestAllowsRhttpAdapter(options);
-
-    if (!shouldUseRhttp && settings.isGatewayMode) {
+    final uri = options.uri;
+    if (settings.routesAppThroughGateway) {
       final port = settings.current.proxyPort;
-      final uri = options.uri;
       if (port != null && uri.scheme == 'https') {
         // 保存原始状态
         final savedBaseUrl = options.baseUrl;
@@ -302,7 +253,10 @@ class _GatewayAdapterWrapper implements HttpClientAdapter {
         options.path = gatewayUri.toString();
 
         try {
-          return await _inner.fetch(options, requestStream, cancelFuture);
+          final body = await _inner.fetch(options, requestStream, cancelFuture);
+          // 连本机网关本身失败（抛错）不算论坛连不上，只看网关回的结果
+          _reportForumTransport(uri, viaGateway: true, body: body);
+          return body;
         } finally {
           // 恢复原始 URL，确保拦截器响应链始终看到原始域名
           options.baseUrl = savedBaseUrl;
@@ -316,7 +270,38 @@ class _GatewayAdapterWrapper implements HttpClientAdapter {
       }
     }
 
-    return _inner.fetch(options, requestStream, cancelFuture);
+    try {
+      final body = await _inner.fetch(options, requestStream, cancelFuture);
+      _reportForumTransport(uri, viaGateway: false, body: body);
+      return body;
+    } catch (e) {
+      _reportForumTransport(uri, viaGateway: false, error: e);
+      rethrow;
+    }
+  }
+
+  /// 论坛请求在连接层的结果交给「VPN 让路」：让路期间一直连不上就恢复加速
+  void _reportForumTransport(
+    Uri uri, {
+    required bool viaGateway,
+    ResponseBody? body,
+    Object? error,
+  }) {
+    if (!isForumHost(uri.host)) return;
+    final reachable = forumReachabilityOf(
+      viaGateway: viaGateway,
+      body: body,
+      error: error,
+    );
+    if (reachable == null) return;
+    VpnAutoToggleService.instance.reportForumTransport(
+      reachable: reachable,
+      detail: reachable
+          ? null
+          : _clipDetail(
+              body != null ? _gatewayErrorText(body) : error.toString(),
+            ),
+    );
   }
 
   @override
@@ -342,6 +327,60 @@ class _GatewayAdapterWrapper implements HttpClientAdapter {
     }
     return requestCanUseWebViewAdapter(options);
   }
+}
+
+/// 论坛（任一站点）的主域或子域
+@visibleForTesting
+bool isForumHost(String host) {
+  final normalized = host.toLowerCase();
+  return ForumSite.values.any(
+    (site) => normalized == site.host || normalized.endsWith('.${site.host}'),
+  );
+}
+
+/// 论坛请求在连接层通没通（给「VPN 让路时一直连不上就恢复加速」用）：
+/// - 拿到任何 HTTP 响应（含挑战 403、源站 5xx）→ 通；
+/// - 本机网关回的 502（带网关错误头）→ 网关连不上论坛；
+/// - 不经网关时连接出错 / 连接超时 / 握手失败 / 证书不对（DNS 被污染）→ 连不上；
+/// 其余（取消、读超时、网关自己的 4xx、连本机网关本身失败）返回 null，不算数
+@visibleForTesting
+bool? forumReachabilityOf({
+  required bool viaGateway,
+  ResponseBody? body,
+  Object? error,
+}) {
+  if (body != null) {
+    if (viaGateway && _gatewayErrorText(body) != null) {
+      return body.statusCode == 502 ? false : null;
+    }
+    return true;
+  }
+  if (viaGateway) return null;
+  if (error is DioException) {
+    return switch (error.type) {
+      DioExceptionType.connectionTimeout ||
+      DioExceptionType.connectionError ||
+      DioExceptionType.badCertificate => false,
+      DioExceptionType.unknown => error.error is IOException ? false : null,
+      _ => null,
+    };
+  }
+  return error is IOException ? false : null;
+}
+
+/// 网关错误头的值（网关自己回的错误才有）
+String? _gatewayErrorText(ResponseBody body) {
+  for (final entry in body.headers.entries) {
+    if (entry.key.toLowerCase() == GatewayError.header) {
+      return entry.value.isEmpty ? '' : entry.value.first;
+    }
+  }
+  return null;
+}
+
+String _clipDetail(String? text) {
+  final value = (text ?? '').trim();
+  return value.length > 200 ? value.substring(0, 200) : value;
 }
 
 /// 判断请求本身是否能由 WebView 适配器承载，不考虑当前兼容模式开关。
@@ -430,18 +469,16 @@ String _requestHeaderValueToString(Object? value) {
 
 /// 动态适配器：每次请求时根据设置 version 变化自动切换底层适配器
 ///
-/// 在 rhttp ↔ network ↔ native（Dart IO）之间切换。
+/// 在 network ↔ native（Dart IO）之间切换。
 class _DynamicAdapter implements HttpClientAdapter {
-  _DynamicAdapter(this._settings, this._proxySettings, this._rhttpSettings);
+  _DynamicAdapter(this._settings, this._proxySettings);
 
   final NetworkSettingsService _settings;
   final ProxySettingsService _proxySettings;
-  final RhttpSettingsService _rhttpSettings;
 
   final Map<AdapterType, HttpClientAdapter> _delegates = {};
   int _settingsVersion = -1;
   int _proxyVersion = -1;
-  int _rhttpVersion = -1;
   bool _closed = false;
 
   @override
@@ -455,12 +492,7 @@ class _DynamicAdapter implements HttpClientAdapter {
         "Can't establish connection after the adapter was closed.",
       );
     }
-    final desiredType = _resolveAdapterTypeForRequest(
-      options,
-      _settings,
-      _proxySettings,
-      _rhttpSettings,
-    );
+    final desiredType = _resolveEffective(_settings, _proxySettings).type;
     final delegate = _ensureDelegate(desiredType);
     setRequestAdapterLogName(options, desiredType.name);
     _currentAdapterType = desiredType;
@@ -470,15 +502,12 @@ class _DynamicAdapter implements HttpClientAdapter {
   HttpClientAdapter _ensureDelegate(AdapterType desiredType) {
     final settingsVersion = _settings.version;
     final proxyVersion = _proxySettings.version;
-    final rhttpVersion = _rhttpSettings.version;
 
     final configChanged =
-        _settingsVersion != settingsVersion ||
-        _proxyVersion != proxyVersion ||
-        _rhttpVersion != rhttpVersion;
+        _settingsVersion != settingsVersion || _proxyVersion != proxyVersion;
 
     if (configChanged) {
-      // 不要强杀旧 delegate，避免进行中的 rhttp 请求触发 native 崩溃。
+      // 不要强杀旧 delegate，让进行中的请求读完。
       for (final delegate in _delegates.values) {
         delegate.close(force: false);
       }
@@ -492,7 +521,6 @@ class _DynamicAdapter implements HttpClientAdapter {
 
     final delegate = switch (desiredType) {
       AdapterType.webview => WebViewHttpAdapter(),
-      AdapterType.rhttp => RhttpAdapter(_settings, _proxySettings),
       AdapterType.network => NetworkHttpAdapter(_settings, _proxySettings),
       AdapterType.native => _createNativeAdapter(),
     };
@@ -500,8 +528,6 @@ class _DynamicAdapter implements HttpClientAdapter {
     switch (desiredType) {
       case AdapterType.webview:
         debugPrint('[DIO] Dynamic adapter -> WebViewHttpAdapter');
-      case AdapterType.rhttp:
-        debugPrint('[DIO] Dynamic adapter -> RhttpAdapter');
       case AdapterType.network:
         debugPrint('[DIO] Dynamic adapter -> NetworkHttpAdapter');
       case AdapterType.native:
@@ -510,7 +536,6 @@ class _DynamicAdapter implements HttpClientAdapter {
 
     _settingsVersion = settingsVersion;
     _proxyVersion = proxyVersion;
-    _rhttpVersion = rhttpVersion;
     _delegates[desiredType] = delegate;
     return delegate;
   }

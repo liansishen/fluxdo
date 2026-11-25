@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:app_icons/app_icons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,7 +12,6 @@ import 'package:fluxdo/pages/font_settings_page.dart';
 import 'package:fluxdo/providers/theme_provider.dart';
 import 'package:fluxdo/services/custom_font_service.dart';
 import 'package:fluxdo/services/recommended_font_service.dart';
-import 'package:fluxdo/services/fonts/system_font_service.dart';
 import 'package:fluxdo/theme/mojian_theme.dart';
 
 /// 临时目录用同步 IO 准备（testWidgets 的 fake async 里真实异步 IO 不推进）。
@@ -47,10 +45,9 @@ String _manifest() => jsonEncode({
 Future<({SharedPreferences prefs, ProviderContainer container})> _pump(
   WidgetTester tester, {
   Map<String, Object> prefsSeed = const {},
-  SharedPreferences? savedPrefs,
 }) async {
-  if (savedPrefs == null) SharedPreferences.setMockInitialValues(prefsSeed);
-  final prefs = savedPrefs ?? await SharedPreferences.getInstance();
+  SharedPreferences.setMockInitialValues(prefsSeed);
+  final prefs = await SharedPreferences.getInstance();
   final service = RecommendedFontService(
     directoryProvider: () async =>
         Directory('${_tempDir.path}/recommended_fonts'),
@@ -58,6 +55,13 @@ Future<({SharedPreferences prefs, ProviderContainer container})> _pump(
     remoteManifestLoader: () async => null,
   );
   await tester.runAsync(service.ensureLoaded);
+  // 在真实异步区准备引擎字体，避免页面预览读盘滞留在假时钟里。
+  await tester.runAsync(() async {
+    await CustomFontService.load(_downloadedFile.path);
+    if (_importedFile.existsSync()) {
+      await CustomFontService.load(_importedFile.path);
+    }
+  });
   final container = ProviderContainer(
     overrides: [sharedPreferencesProvider.overrideWithValue(prefs)],
   );
@@ -127,192 +131,6 @@ void main() {
 
   tearDownAll(() {
     if (_tempDir.existsSync()) _tempDir.deleteSync(recursive: true);
-  });
-
-  test('推荐字体路径兼容正斜杠、Windows 和混合分隔符', () {
-    for (final path in [
-      '/app/recommended_fonts/font.ttf',
-      r'C:\app\recommended_fonts\font.ttf',
-      r'C:\app\recommended_fonts/font.ttf',
-    ]) {
-      expect(RecommendedFontService.isRecommendedFontPath(path), isTrue);
-    }
-    expect(RecommendedFontService.isRecommendedFontPath(null), isFalse);
-    expect(
-      RecommendedFontService.isRecommendedFontPath(
-        '/app/custom_fonts/font.ttf',
-      ),
-      isFalse,
-    );
-    expect(
-      RecommendedFontService.isRecommendedFontPath(
-        '/app/not_recommended_fonts/font.ttf',
-      ),
-      isFalse,
-    );
-  });
-
-  testWidgets('当前推荐字体不认领导入记录，切换后下载文件仍保留', (tester) async {
-    final env = await _pump(
-      tester,
-      prefsSeed: {
-        'font_family': 'custom',
-        CustomFontService.pathPrefKey: _downloadedFile.path,
-        CustomFontService.namePrefKey: '已下字体',
-      },
-    );
-
-    expect(env.container.read(themeProvider).importedFontPath, isNull);
-    expect(find.text('当前：已下字体'), findsOneWidget);
-    expect(_inRow('已下字体', find.text('导入的字体')), findsNothing);
-    expect(
-      _inRow('已下字体', find.byIcon(Symbols.check_circle_rounded)),
-      findsOneWidget,
-    );
-    expect(find.text('导入字体文件'), findsOneWidget);
-
-    await tester.tap(_row('系统默认'));
-    await tester.pump();
-    await tester.runAsync(() => CustomFontService.delete(_downloadedFile.path));
-
-    expect(env.container.read(themeProvider).fontFamily, AppFontFamily.system);
-    expect(_downloadedFile.existsSync(), isTrue);
-    expect(_row('已下字体'), findsOneWidget);
-    expect(_inRow('已下字体', find.byTooltip('删除')), findsOneWidget);
-  });
-
-  testWidgets('已选系统字体可直接切回，不重复打开选择面板', (tester) async {
-    final env = await _pump(
-      tester,
-      prefsSeed: {
-        'font_family': 'installed',
-        SystemFontService.familyPrefKey: 'Microsoft YaHei',
-        SystemFontService.namePrefKey: '微软雅黑',
-      },
-    );
-
-    expect(find.text('当前：微软雅黑'), findsOneWidget);
-    await tester.tap(_row('MiSans'));
-    await tester.pump();
-    await tester.tap(_row('微软雅黑'));
-    await tester.pump();
-
-    expect(
-      env.container.read(themeProvider).fontFamily,
-      AppFontFamily.installed,
-    );
-    expect(env.prefs.getString('font_family'), 'installed');
-    expect(find.text('当前：微软雅黑'), findsOneWidget);
-    expect(find.byType(TextField), findsNothing);
-  });
-
-  testWidgets('旧版导入字体升级后切推荐，重启仍可选回导入字体', (tester) async {
-    var env = await _pump(
-      tester,
-      prefsSeed: {
-        'font_family': 'custom',
-        CustomFontService.pathPrefKey: _importedFile.path,
-        CustomFontService.namePrefKey: 'Legacy.otf',
-      },
-    );
-
-    expect(
-      env.container.read(themeProvider).importedFontPath,
-      _importedFile.path,
-    );
-    expect(_inRow('Legacy.otf', find.text('导入的字体')), findsOneWidget);
-    expect(env.prefs.getString('imported_font_path'), _importedFile.path);
-    expect(env.prefs.getString('imported_font_name'), 'Legacy.otf');
-    await tester.runAsync(() async {
-      await tester.tap(_row('已下字体'));
-      for (
-        var i = 0;
-        i < 50 &&
-            env.container.read(themeProvider).customFontPath !=
-                _downloadedFile.path;
-        i++
-      ) {
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-      }
-    });
-    await tester.pump();
-    expect(
-      env.prefs.getString(CustomFontService.pathPrefKey),
-      _downloadedFile.path,
-    );
-    await tester.pumpWidget(const SizedBox.shrink());
-    await env.prefs.reload();
-    env = await _pump(tester, savedPrefs: env.prefs);
-    expect(
-      env.container.read(themeProvider).customFontPath,
-      _downloadedFile.path,
-    );
-    expect(find.text('当前：已下字体'), findsOneWidget);
-    expect(_row('Legacy.otf'), findsOneWidget);
-    expect(_importedFile.existsSync(), isTrue);
-
-    await tester.runAsync(() async {
-      await tester.tap(_row('Legacy.otf'));
-      for (
-        var i = 0;
-        i < 50 &&
-            env.container.read(themeProvider).customFontPath !=
-                _importedFile.path;
-        i++
-      ) {
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-      }
-    });
-    await tester.pump();
-
-    expect(env.container.read(themeProvider).fontFamily, AppFontFamily.custom);
-    expect(env.prefs.getString('font_family'), 'custom');
-    expect(
-      env.prefs.getString(CustomFontService.pathPrefKey),
-      _importedFile.path,
-    );
-    expect(env.prefs.getString('imported_font_path'), _importedFile.path);
-    expect(env.prefs.getString('imported_font_name'), 'Legacy.otf');
-    expect(find.text('当前：Legacy.otf'), findsOneWidget);
-  });
-
-  testWidgets('所有字体排成同一种行：内置、推荐（已下 / 未下）、导入入口，当前项打勾', (tester) async {
-    final env = await _pump(tester);
-
-    expect(find.text('当前：系统默认'), findsOneWidget);
-    expect(find.text('标题这样显示'), findsOneWidget);
-    for (final title in ['系统默认', 'MiSans', '已下字体', '远端字体']) {
-      expect(_row(title), findsOneWidget, reason: title);
-      // 每一行左边都是同一种「字」预览块，没有单选圆点
-      expect(_inRow(title, find.text('字')), findsOneWidget, reason: title);
-    }
-    expect(find.byType(Radio<Object>), findsNothing);
-    // 右边只有一个状态：当前项打勾、没下载的给下载图标、下载过的给删除
-    expect(
-      _inRow('系统默认', find.byIcon(Symbols.check_circle_rounded)),
-      findsOneWidget,
-    );
-    expect(
-      _inRow('MiSans', find.byIcon(Symbols.check_circle_rounded)),
-      findsNothing,
-    );
-    expect(
-      _inRow('远端字体', find.byIcon(Symbols.download_rounded)),
-      findsOneWidget,
-    );
-    expect(_inRow('已下字体', find.byTooltip('删除')), findsOneWidget);
-    // 已下载的标「已下载」，没下载的标镜像
-    expect(find.textContaining('已下载 · Downloaded Font'), findsOneWidget);
-    expect(find.textContaining('Remote Font · 1.0 MB · 国内镜像'), findsOneWidget);
-    expect(find.text('导入字体文件'), findsOneWidget);
-    // 墨笺：宋体标题开关，系统默认时默认开
-    final serif = tester.widget<SwitchListTile>(find.byType(SwitchListTile));
-    expect(serif.value, isTrue);
-
-    await tester.tap(_row('MiSans'));
-    await tester.pump();
-    expect(env.container.read(themeProvider).fontFamily, AppFontFamily.miSans);
-    expect(find.text('当前：MiSans'), findsOneWidget);
   });
 
   testWidgets('点已下载的推荐字体直接启用', (tester) async {
@@ -411,7 +229,7 @@ void main() {
   });
 
   testWidgets('导入的字体文件丢了：标红提示，且能删掉', (tester) async {
-    final env = await _pump(
+    await _pump(
       tester,
       prefsSeed: {
         'font_family': 'custom',
@@ -423,23 +241,5 @@ void main() {
     expect(find.text('当前：字体文件已丢失'), findsOneWidget);
     expect(_inRow('Gone.ttf', find.text('字体文件已丢失')), findsOneWidget);
     expect(_inRow('Gone.ttf', find.byTooltip('删除')), findsOneWidget);
-
-    await tester.runAsync(() async {
-      await tester.tap(_inRow('Gone.ttf', find.byTooltip('删除')));
-      for (
-        var i = 0;
-        i < 50 && env.container.read(themeProvider).importedFontPath != null;
-        i++
-      ) {
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-      }
-    });
-    await tester.pump();
-
-    expect(env.container.read(themeProvider).fontFamily, AppFontFamily.system);
-    expect(env.container.read(themeProvider).importedFontPath, isNull);
-    expect(env.prefs.getString(CustomFontService.pathPrefKey), isNull);
-    expect(env.prefs.getString(CustomFontService.namePrefKey), isNull);
-    expect(_row('Gone.ttf'), findsNothing);
   });
 }

@@ -14,7 +14,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:m3e_ui/m3e_ui.dart';
 
+import '../constants.dart';
+import '../utils/number_utils.dart';
+import 'webview_page.dart';
 import '../models/topic.dart';
+import '../services/preloaded_data_service.dart';
 import '../models/category.dart';
 import '../providers/discourse_providers.dart';
 import '../providers/selected_topic_provider.dart';
@@ -51,6 +55,7 @@ import '../utils/topic_keyword_filter.dart';
 import '../utils/frame_jank_monitor.dart';
 import '../utils/responsive.dart';
 import '../widgets/layout/master_detail_layout.dart';
+import '../widgets/layout/site_switch_button.dart';
 import '../widgets/common/error_view.dart';
 import '../widgets/common/loading_dialog.dart';
 import '../widgets/common/fading_edge_scroll_view.dart';
@@ -58,9 +63,6 @@ import '../widgets/common/fading_edge_scroll_view.dart';
 import 'package:common_ui/common_ui.dart';
 
 import '../widgets/offline_indicator.dart';
-import '../constants.dart';
-import '../utils/number_utils.dart';
-import 'webview_page.dart';
 import '../l10n/s.dart';
 import '../models/shortcut_binding.dart';
 import '../providers/shortcut_provider.dart';
@@ -144,7 +146,7 @@ class _ScorePill extends ConsumerWidget {
     return Padding(
       padding: const EdgeInsets.only(right: 4),
       child: Tooltip(
-        message: l10n.topics_scorePillTooltip,
+        message: l10n.topics_leaderboard,
         child: Material(
           key: const ValueKey('topics-score-pill'),
           color: vscode?.sidebar ?? mj?.paper2 ?? scheme.surfaceContainerHigh,
@@ -179,7 +181,7 @@ class _ScorePill extends ConsumerWidget {
                   const SizedBox(width: 4),
                   Flexible(
                     child: Text(
-                      l10n.topics_scorePill(NumberUtils.formatThousands(score)),
+                      '${l10n.profile_communityScore} ${NumberUtils.formatThousands(score)}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.labelMedium?.copyWith(
@@ -199,7 +201,6 @@ class _ScorePill extends ConsumerWidget {
     );
   }
 }
-
 /// Header 区域常量。
 ///
 /// 顶部 = 常驻工具栏 48px（☰ + 聚合筛选菜单标题「最新 ▾」+ 右簇
@@ -1273,8 +1274,13 @@ class _TopicsPageState extends ConsumerState<TopicsPage>
         if (index >= 0 && index < _tabController.length) {
           _tabController.animateTo(index);
         }
-        ref.read(tabTagsProvider(categoryId).notifier).state =
-            widget.externalTag == null ? const [] : [widget.externalTag!];
+        // 没变就不写：写入一个内容相同的新列表也会通知监听方。冷启动的首次
+        // 构建走到这里，曾让列表页把刚拿到的首屏丢掉重新请求一遍
+        final tags = widget.externalTag == null
+            ? const <String>[]
+            : [widget.externalTag!];
+        final notifier = ref.read(tabTagsProvider(categoryId).notifier);
+        if (!listEquals(notifier.state, tags)) notifier.state = tags;
       });
     }
 
@@ -1591,13 +1597,15 @@ class _TopicsPageState extends ConsumerState<TopicsPage>
           Expanded(
             child: Align(alignment: Alignment.centerLeft, child: filterMenu),
           ),
+          // 站点切换胶囊（手机布局才有；宽屏在侧栏顶部）。放在搜索落位格
+          // **左边**：落位格的位置是按「右缘 - 🔔」常量推算的（见
+          // _CollapsibleHeader），放右边会被折叠后的搜索图标压住。
+          // 这里原先是「点数」药丸，点数挪到了「我的」页余额卡组。
+          if (!Responsive.showNavigationRail(context))
+            const SiteSwitchButton.capsule(),
           // 搜索落位格：展开态零宽（右簇紧凑无空洞），折叠时随 morph
           // 同曲线张开迎接胶囊缩成的图标（胶囊本体在
           // _CollapsibleHeader 的 overlay 层绘制，这里只占位）
-          // 点数药丸放在搜索落位格**左边**：落位格的位置是按「右缘 - 🔔」
-          // 常量推算的（见 _CollapsibleHeader），放右边会被折叠后的
-          // 搜索图标压住
-          if (isLoggedIn) const _ScorePill(),
           _SearchSlotSpacer(controller: _headerController),
           if (isLoggedIn && !Responsive.showNavigationRail(context))
             const NotificationIconButton(compact: true),
@@ -3292,7 +3300,7 @@ class _TopicListState extends ConsumerState<_TopicList>
 
   /// 透明模式下列表顶部改用遮罩消隐（见 [_TopEdgeFadeMask]）。
   Widget _withTopEdgeMask(BuildContext context, Widget list) =>
-      VscodeTokens.maybeOf(context) == null && _isTransparentPage(context)
+      _isTransparentPage(context)
       ? _TopEdgeFadeMask(
           headerController: widget.headerController,
           scrollController: _scrollController,
@@ -3565,10 +3573,60 @@ class _TopicListState extends ConsumerState<_TopicList>
     );
   }
 
+  /// 冷启动先显示了启动快照里的列表、新的第一页到的时候用户已经往下读了：
+  /// 先收着，回到顶部时再并进来
+  TopicListResponse? _pendingFreshFirstPage;
+
   @override
   void initState() {
     super.initState();
     widget.scrollController.addListener(_onScrollForTopicUpdates);
+    PreloadedDataService().freshRevision.addListener(_onFreshPreload);
+  }
+
+  /// 这次运行的首页数据到了。冷启动时「全部」这一栏显示的可能是启动快照里的
+  /// 列表：没在看或还停在顶部就整页换成新的；已经往下读了就不打扰，等回到
+  /// 顶部再把新出现、有新回复的话题插进来。
+  void _onFreshPreload() {
+    final preloaded = PreloadedDataService();
+    if (!mounted ||
+        widget.categoryId != null ||
+        !preloaded.staleTopicListConsumed) {
+      return;
+    }
+    preloaded.markFreshTopicListHandled();
+    final reading =
+        widget.parentActive &&
+        ref.read(currentTabCategoryIdProvider) == widget.categoryId &&
+        !TopicListUpdatesMixin.scrolledToTop(_scrollController);
+    if (!reading) {
+      _pendingFreshFirstPage = null;
+      if (preloaded.hasInitialTopicList) {
+        ref.invalidate(topicListProvider(widget.categoryId));
+      }
+      return;
+    }
+    unawaited(
+      preloaded.getInitialTopicList().then((fresh) {
+        if (mounted) _pendingFreshFirstPage = fresh;
+      }),
+    );
+  }
+
+  void _mergePendingFreshFirstPage() {
+    final fresh = _pendingFreshFirstPage;
+    if (fresh == null) return;
+    _pendingFreshFirstPage = null;
+    final insertedIds = ref
+        .read(topicListProvider(widget.categoryId).notifier)
+        .mergeFreshFirstPage(fresh);
+    if (insertedIds.isEmpty) return;
+    setState(() => _highlightedTopicIds.addAll(insertedIds));
+    final idsToRemove = insertedIds.toSet();
+    Future.delayed(const Duration(milliseconds: 2500), () {
+      if (!mounted) return;
+      setState(() => _highlightedTopicIds.removeAll(idsToRemove));
+    });
   }
 
   @override
@@ -3586,6 +3644,7 @@ class _TopicListState extends ConsumerState<_TopicList>
     if (controller.hasClients &&
         controller.positions.length == 1 &&
         controller.position.pixels <= 1) {
+      _mergePendingFreshFirstPage();
       scheduleAutoApplyTopicUpdates();
     }
   }
@@ -3593,6 +3652,7 @@ class _TopicListState extends ConsumerState<_TopicList>
   @override
   void dispose() {
     widget.scrollController.removeListener(_onScrollForTopicUpdates);
+    PreloadedDataService().freshRevision.removeListener(_onFreshPreload);
     if (PlatformUtils.isDesktop) {
       _listShortcutBinding.disposeDeferred();
     }
@@ -3635,7 +3695,8 @@ class _TopicListState extends ConsumerState<_TopicList>
         scrollToTop();
       });
       ref.listen(tabTagsProvider(widget.categoryId), (prev, next) {
-        if (prev != next) {
+        // 按内容比：两个空列表不算变化
+        if (!listEquals(prev, next)) {
           _loadMoreCoordinator.resetCooldown();
           ref.read(topicListProvider(widget.categoryId).notifier).refresh();
           _clearIncomingState();
@@ -4009,7 +4070,7 @@ class _TopicListState extends ConsumerState<_TopicList>
                     ),
                   ),
                   // 顶部消隐纱：钉在头部下缘，内容被裁切时 bg→透明
-                  // 消散（在 ClipRRect 内 = 随本 tab 横滑一起走）
+                  // 透明模式由遮罩处理，VS Code 风格不使用顶部消隐。
                   if (VscodeTokens.maybeOf(context) == null &&
                       !_isTransparentPage(context))
                     _TopEdgeFade(

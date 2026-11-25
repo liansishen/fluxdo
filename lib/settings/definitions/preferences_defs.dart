@@ -61,6 +61,9 @@ List<SettingsGroup> buildPreferencesGroups(BuildContext context) {
           title: l10n.preferences_homeFabRefreshOnScrollUp,
           subtitle: l10n.preferences_homeFabRefreshOnScrollUpDesc,
           icon: Symbols.arrow_upward_rounded,
+          // 开着独立刷新钮时创作按钮不再变刷新，这一项没有作用，收起来
+          enabledWhen: (ref) =>
+              !ref.watch(preferencesProvider).homeRefreshButton,
           getValue: (ref) =>
               ref.watch(preferencesProvider).homeFabRefreshOnScrollUp,
           onChanged: (ref, v) => ref
@@ -159,6 +162,19 @@ List<SettingsGroup> buildPreferencesGroups(BuildContext context) {
           ),
           condition: () => Platform.isIOS || Platform.isAndroid,
         ),
+        // 预测性返回只有 Android 有
+        PlatformConditionalModel(
+          inner: SwitchModel(
+            id: 'predictiveBack',
+            title: l10n.preferences_predictiveBack,
+            subtitle: l10n.preferences_predictiveBackDesc,
+            icon: Symbols.gesture_rounded,
+            getValue: (ref) => ref.watch(preferencesProvider).predictiveBack,
+            onChanged: (ref, v) =>
+                ref.read(preferencesProvider.notifier).setPredictiveBack(v),
+          ),
+          condition: () => Platform.isAndroid,
+        ),
         PlatformConditionalModel(
           inner: SwitchModel(
             id: 'exitOnSingleBack',
@@ -256,6 +272,9 @@ List<SettingsGroup> buildPreferencesGroups(BuildContext context) {
           id: 'aiPostReviewModel',
           title: l10n.preferences_aiPostReviewModel,
           icon: Symbols.psychology_alt_rounded,
+          // 没开审核时这一行没有作用，收起来（开关打开后才出现）
+          visibleWhen: (ref) =>
+              ref.watch(preferencesProvider).aiPostReviewEnabled,
           getDynamicSubtitle: (ref) {
             final selected = ref.watch(aiPostReviewSelectedModelProvider);
             if (selected == null) {
@@ -290,6 +309,9 @@ List<SettingsGroup> buildPreferencesGroups(BuildContext context) {
           id: 'aiTranslationTargetLanguage',
           title: l10n.ai_translationTargetLanguage,
           icon: Symbols.translate_rounded,
+          // 没开翻译时目标语言与模型都没有作用，收起来
+          visibleWhen: (ref) =>
+              ref.watch(preferencesProvider).aiTranslationEnabled,
           getDynamicSubtitle: (ref) {
             final preferred = ref.watch(
               preferencesProvider.select(
@@ -308,6 +330,8 @@ List<SettingsGroup> buildPreferencesGroups(BuildContext context) {
           id: 'aiTranslationModel',
           title: l10n.ai_translationModel,
           icon: Symbols.psychology_alt_rounded,
+          visibleWhen: (ref) =>
+              ref.watch(preferencesProvider).aiTranslationEnabled,
           getDynamicSubtitle: (ref) {
             final selected = ref.watch(aiTranslationSelectedModelProvider);
             if (selected == null) {

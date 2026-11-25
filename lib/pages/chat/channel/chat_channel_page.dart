@@ -1,3 +1,4 @@
+import 'package:fluxdo/utils/avatar_url.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -25,6 +26,7 @@ import '../../../providers/chat/chat_channels_provider.dart';
 import '../../../providers/chat/chat_messages_provider.dart';
 import '../../../providers/chat/chat_typing_provider.dart';
 import '../../../providers/discourse_providers.dart';
+import '../../../providers/download_provider.dart';
 import '../../../providers/message_bus/models.dart' show TypingUser;
 import '../../../services/discourse_cache_manager.dart';
 import '../../../services/emoji_handler.dart';

@@ -14,6 +14,7 @@ import 'cf_challenge_service.dart';
 import 'cf_clearance_authority.dart';
 import 'cf_clearance_refresh_service.dart';
 import 'network/cf/cf_round_outcome.dart';
+import 'network/doh_proxy/gateway_error.dart';
 import 'discourse/discourse_service.dart';
 import 'network/cookie/cookie_jar_service.dart';
 import 'network/cookie/webview_cookie_priming.dart';
@@ -22,6 +23,7 @@ import 'session/webview_use.dart';
 import 'startup/app_startup.dart';
 import 'startup_progress.dart';
 import 'webview_session_cookie_refresh_service.dart';
+import 'webview_render_gone.dart';
 import 'webview_settings.dart';
 import 'windows_webview_environment_service.dart';
 
@@ -174,7 +176,8 @@ class BrowserTrustCoordinator {
     String reason = 'unknown',
     required StartupPreloadProgress progress,
   }) {
-    if (_preload.isLoaded) return Future.value();
+    // 启动快照不算：要的是这次运行的首页数据
+    if (_preload.isFresh) return Future.value();
 
     final active = _activePreload;
     if (active != null) {
@@ -311,10 +314,27 @@ class BrowserTrustCoordinator {
       _log('preload path=native reason=$reason');
       progress.stage(StartupStage.connecting);
       try {
-        await _preload.ensureLoaded(observer: progress);
+        await _preload.ensureFresh(observer: progress);
         _log('native preload success reason=$reason');
         return;
       } catch (e) {
+        if (GatewayError.isUpstreamFailure(e)) {
+          // 本机网关连不上服务器节点：内置浏览器也经同一个网关，绕过去只会
+          // 再失败一轮、白等十几秒（还会报成 TLS 握手失败）。直接再试一次
+          // 直连，这期间选线路那边可能已经换到能连上的节点
+          _log(
+            'native preload failed: gateway upstream unreachable, retry native '
+            'without WebView detour: $e',
+            level: 'warning',
+          );
+          progress.stage(
+            StartupStage.connecting,
+            reason: StartupDetourReason.upstreamUnreachable,
+          );
+          await _preload.ensureFresh(observer: progress);
+          _log('native preload retry success reason=$reason');
+          return;
+        }
         _log(
           'trusted native preload failed, switching to startup WebView: $e',
           level: 'warning',
@@ -367,7 +387,7 @@ class BrowserTrustCoordinator {
           ? StartupDetourReason.webViewTimeout
           : StartupDetourReason.webViewNoData,
     );
-    await _preload.ensureLoaded(observer: progress);
+    await _preload.ensureFresh(observer: progress);
     _log('fallback native preload success reason=$reason');
   }
 
@@ -407,9 +427,22 @@ class BrowserTrustCoordinator {
     );
     var bootstrap = await WebViewSessionCookieRefreshService.instance
         .ensureSynced(reason: reason, force: forceSessionSync);
-    // bootstrap 被 CF(403/429)挡下:作废本地假阳性信任,复用/发起 CF 验证拿到
+    // bootstrap 被 CF(403)挡下:作废本地假阳性信任,复用/发起 CF 验证拿到
     // 新 cf_clearance 后 force 重跑一次,避免与 Dio 侧的 CF 自愈各自为政。
-    if (bootstrap.cfBlocked) {
+    // 429 是限流规则给的挑战,不说明 clearance 坏了;bootstrap 又只是软依赖,
+    // 按它自己的失败退避稍后再试。以前也替它发起验证、把本地 clearance 记成
+    // 被拒,启动时常因此多弹一次盾(2026-11 用户日志:启动 bootstrap 被 429 挡下 9 次)
+    if (bootstrap.cfBlocked && bootstrap.status == 429) {
+      _log(
+        'bootstrap rate-limited by CF (429), backing off without verification '
+        'reason=$reason',
+        level: 'warning',
+      );
+      AppLogger.warning(
+        'WebView bootstrap 被 CF 限流(429),稍后按退避重试,不发起验证',
+        tag: 'BrowserTrust',
+      );
+    } else if (bootstrap.cfBlocked) {
       bootstrap = await _recoverBootstrapFromCfBlock(
         reason: reason,
         blocked: bootstrap,
@@ -575,6 +608,11 @@ class BrowserTrustCoordinator {
       initialUserScripts: _startupPreloadScripts(),
       onReceivedServerTrustAuthRequest: (_, challenge) =>
           WebViewSettings.handleServerTrustAuthRequest(challenge),
+      // 渲染进程没了：这个 WebView 不能再用，取消本轮，回退原生预载
+      onRenderProcessGone: (_, detail) {
+        WebViewRenderGone.report('startup_preload', detail);
+        cancellation.cancel();
+      },
       onWebViewCreated: (createdController) {
         WebViewSettings.applyWindowsHeadlessMemoryTarget(createdController);
         WebViewSettings.registerJsErrorReporter(createdController);

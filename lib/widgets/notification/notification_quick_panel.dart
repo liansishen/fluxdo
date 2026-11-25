@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:app_icons/app_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-
 import '../../models/shortcut_binding.dart';
 import '../../l10n/s.dart';
 import '../../providers/discourse_providers.dart';
@@ -66,13 +65,15 @@ class NotificationQuickPanel {
         builder: (_) => const _MobileNotificationPanel(),
       ).then<void>((_) {});
       _mobileFuture = future;
-      future.whenComplete(() {
-        if (identical(_mobileFuture, future)) {
-          _mobileFuture = null;
-          _mobileRoute = null;
-          _mobileDismissPending = false;
-        }
-      }).ignore();
+      future
+          .whenComplete(() {
+            if (identical(_mobileFuture, future)) {
+              _mobileFuture = null;
+              _mobileRoute = null;
+              _mobileDismissPending = false;
+            }
+          })
+          .ignore();
       return future;
     }
 

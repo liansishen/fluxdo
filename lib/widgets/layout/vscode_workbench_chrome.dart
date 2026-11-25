@@ -170,7 +170,10 @@ class VscodeStatusBar extends ConsumerWidget {
             border: Border(top: BorderSide(color: tokens.border)),
           ),
           child: DefaultTextStyle(
-            style: TextStyle(color: tokens.muted, fontSize: 11),
+            style: Theme.of(context).textTheme.bodySmall!.copyWith(
+              color: tokens.muted,
+              fontSize: 11,
+            ),
             child:
                 (controls == null
                     ? null

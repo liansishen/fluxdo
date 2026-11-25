@@ -1,5 +1,3 @@
-import 'package:enhanced_cookie_jar/enhanced_cookie_jar.dart';
-import 'package:fluxdo/services/accounts/account_switcher.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxdo/services/accounts/account_verification.dart';
 import 'package:fluxdo/services/session/session_token_ports.dart';
@@ -33,51 +31,6 @@ Future<AccountCheckResult> _verify(
 );
 
 void main() {
-  for (final failsByThrowing in [false, true]) {
-    test('切号必须确认整组 WebView cookie，失败不能当作成功：抛异常=$failsByThrowing', () async {
-      final cookies = [
-        CanonicalCookie(name: '_t', value: 'B', domain: 'linux.do'),
-        CanonicalCookie(
-          name: '_forum_session',
-          value: 'fs-B',
-          domain: 'linux.do',
-        ),
-        CanonicalCookie(name: '_t', value: 'sub-B', domain: 'connect.linux.do'),
-      ];
-      final called = <CanonicalCookie>[];
-      final result = await AccountSwitcher.pushAccountCookies(
-        cookies,
-        push: (cookie) async {
-          called.add(cookie);
-          if (cookie.name == '_forum_session') {
-            if (failsByThrowing) throw StateError('平台通道不可用');
-            return false;
-          }
-          return true;
-        },
-      );
-      expect(result, isFalse);
-      expect(called, unorderedEquals(cookies));
-      expect(called.where((c) => c.name == '_t').map((c) => c.value), [
-        'B',
-        'sub-B',
-      ]);
-    });
-  }
-
-  test('切号整组 WebView cookie 都确认成功才放行', () async {
-    expect(
-      await AccountSwitcher.pushAccountCookies([
-        CanonicalCookie(name: '_t', value: 'B', domain: 'linux.do'),
-        CanonicalCookie(
-          name: '_forum_session',
-          value: 'fs-B',
-          domain: 'linux.do',
-        ),
-      ], push: (_) async => true),
-      isTrue,
-    );
-  });
   test('探测确认是目标账号：直接确认，不等首页预加载', () async {
     var preloadAwaited = false;
     final probe = _Probe([

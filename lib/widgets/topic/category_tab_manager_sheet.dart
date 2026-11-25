@@ -3,7 +3,6 @@ import 'package:app_icons/app_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:m3e_ui/m3e_ui.dart';
-
 import '../../models/category.dart';
 import '../../providers/discourse_providers.dart';
 import '../../providers/pinned_categories_provider.dart';
@@ -11,10 +10,8 @@ import '../../utils/font_awesome_helper.dart';
 import '../../services/discourse_cache_manager.dart';
 import '../../utils/url_helper.dart';
 import '../../pages/category_topics_page.dart';
-
 import 'package:common_ui/common_ui.dart';
-
-import '../../../../../l10n/s.dart';
+import '../../l10n/s.dart';
 
 // ============================================================
 // 工具函数

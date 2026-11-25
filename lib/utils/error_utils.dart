@@ -7,6 +7,7 @@ import 'package:app_icons/app_icons.dart';
 
 import '../services/network/exceptions/api_exception.dart';
 import '../l10n/s.dart';
+import '../services/network/doh_proxy/gateway_error.dart';
 
 /// 结构化错误信息（图标 + 标题 + 描述）
 class ErrorInfo {
@@ -262,13 +263,22 @@ class ErrorUtils {
             isNetworkError: true,
           );
         }
-        if (errorStr.contains('SSL') ||
-            errorStr.contains('CERT') ||
-            errorStr.contains('CERTIFICATE')) {
+        // 只有证书校验本身失败才算证书问题。SSL 握手 / 协议错误（如
+        // net::ERR_SSL_PROTOCOL_ERROR）多半是连接中途被掐（本机网关连不上
+        // 上游、运营商重置），报成「证书异常」会把人带偏
+        if (errorStr.contains('CERTIFICATE') || errorStr.contains('ERR_CERT')) {
           return ErrorInfo(
             icon: Symbols.gpp_bad_rounded,
             title: S.current.error_certificateError,
             message: S.current.error_certificateVerifyFailed,
+            isNetworkError: true,
+          );
+        }
+        if (errorStr.contains('SSL') || errorStr.contains('HANDSHAKE')) {
+          return ErrorInfo(
+            icon: Symbols.signal_wifi_off_rounded,
+            title: S.current.error_networkUnavailable,
+            message: S.current.error_networkCheckSettings,
             isNetworkError: true,
           );
         }
@@ -301,6 +311,15 @@ class ErrorUtils {
   }
 
   static ErrorInfo _handleHttpStatus(int? statusCode, DioException error) {
+    // 本机网关自己回的错误：不是论坛服务器出了问题，是连不上它的节点
+    if (GatewayError.isGatewayResponse(error.response)) {
+      return ErrorInfo(
+        icon: Symbols.cloud_off_rounded,
+        title: S.current.error_upstreamUnreachable,
+        message: S.current.error_upstreamUnreachableRetry,
+        isNetworkError: true,
+      );
+    }
     // 先尝试从响应体提取服务器返回的具体错误信息
     String? serverMessage;
     final data = error.response?.data;

@@ -19,6 +19,7 @@ import '../network/cookie/webview_cookie_priming.dart';
 import '../network/cookie/webview_cookie_push.dart';
 import '../preloaded_data_service.dart';
 import '../session/session_token_authority.dart';
+import '../session/session_token_diagnostics.dart';
 import '../site_context.dart';
 import '../site_data_lifecycle.dart';
 import '../user_api_key_service.dart';
@@ -47,14 +48,7 @@ enum AccountSwitchOutcome {
 }
 
 /// 写入一个账号凭据后的核对结论（见 [AccountSwitcher._attach]）
-enum _Attach {
-  confirmed,
-  unverified,
-  invalid,
-  browserUnavailable;
-
-  bool get isAttached => this == confirmed || this == unverified;
-}
+enum _Attach { confirmed, unverified, invalid }
 
 /// 切换各段的累计耗时（毫秒），记日志排查「切换卡住」
 class _SwitchTiming {
@@ -163,6 +157,12 @@ class AccountSwitcher {
     if (_busy || CfChallengeService().isVerifying) {
       return AccountSwitchOutcome.busy;
     }
+    // 点的就是当前账号（刚切完、面板里的「当前」还没刷新时会发生，佬友日志
+    // 里有两次）：不动。以前会把同一个账号的 cookie 清掉再写回、多轮换一次
+    if (_service.currentUserNotifier.value?.id == target.userId) {
+      _log('account_switch_skipped_current', target: target);
+      return AccountSwitchOutcome.switched;
+    }
     _busy = true;
     final timing = _SwitchTiming();
     SavedAccount? previous;
@@ -186,28 +186,32 @@ class AccountSwitcher {
       await _detach(container, previous: previous);
       timing.mark('detach');
       final attached = await _attach(target, targetCookies, timing: timing);
-      if (attached.isAttached) {
+      if (attached != _Attach.invalid) {
         await store.markNeedsLogin(target.userId, needsLogin: false);
         _log('account_switch_done', target: target, previous: previous);
+        // 切完两端各是哪枚 _t（核对请求可能刚轮换过），排查之后掉登录用
+        unawaited(
+          SessionTokenDiagnostics.log(
+            'account_switch',
+            extra: {'targetUserId': target.userId},
+          ),
+        );
         return outcome = attached == _Attach.confirmed
             ? AccountSwitchOutcome.switched
             : AccountSwitchOutcome.switchedUnverified;
       }
 
-      if (attached == _Attach.invalid) {
-        await store.markNeedsLogin(target.userId, needsLogin: true);
-      }
+      await store.markNeedsLogin(target.userId, needsLogin: true);
       _log('account_switch_target_invalid', target: target, previous: previous);
       await _detach(container);
       if (previous != null &&
           previousCookies != null &&
-          (await _attach(previous, previousCookies)).isAttached) {
+          await _attach(previous, previousCookies) != _Attach.invalid) {
         timing.mark('restore');
         return outcome = AccountSwitchOutcome.targetInvalidRestored;
       }
       timing.mark('restore');
       _log('account_switch_restore_failed', target: target, previous: previous);
-      await _detach(container);
       return outcome = AccountSwitchOutcome.loggedOut;
     } finally {
       _busy = false;
@@ -275,8 +279,7 @@ class AccountSwitcher {
           ...timing.stages,
         },
       );
-      if (!attached.isAttached) await _detach(container);
-      return attached.isAttached;
+      return attached != _Attach.invalid;
     } finally {
       _busy = false;
     }
@@ -350,22 +353,20 @@ class AccountSwitcher {
     // 先推进会话代再写 cookie：本地登出后按游客身份发出的请求就此作废，
     // 它们的响应不会落在目标账号的 cookie 之后
     AuthSession().advance();
-    SessionTokenAuthority.instance.beginAccountSwitch(account.userId);
     await _jar.replaceAccountCookies(cookies);
     final token = await _jar.getTToken() ?? '';
     if (token.isEmpty) return _Attach.invalid;
-    final pushed = await _pushToWebView(cookies);
+    await _pushToWebView(cookies);
     timing?.mark('cookies');
-    if (!pushed) {
-      _log('account_switch_webview_failed', target: account);
-      return _Attach.browserUnavailable;
-    }
+    // 存下的凭据是唯一来源：WebView 只跟着写，不反过来采纳它的值（它若
+    // 残留了别的值，采纳进 jar 就把存好的凭据冲掉了）。没推进去的由对账
+    // 再推一次。
+    SessionTokenAuthority.instance
+      ..resetLineage()
+      ..markAgreed(token);
 
     await _service.saveUsername(account.username);
     _service.setToken(token);
-    if (await _jar.getTToken() == token) {
-      SessionTokenAuthority.instance.markAgreed(token);
-    }
     PreloadedDataService().reset();
     // 首页预加载放后台（本地登出的广播会让启动流程按游客身份拉一次首页，
     // reloadAfterPending 等它落地再按新身份拉）；核对先问 /session/current.json，
@@ -417,44 +418,26 @@ class AccountSwitcher {
 
   /// 把账号 cookie 推进 WebView。不同名字互不相干（各自的变体清理有自己
   /// 的锁），并行推；同名的（多个子域）按顺序推。
-  Future<bool> _pushToWebView(List<CanonicalCookie> cookies) =>
-      pushAccountCookies(
-        cookies,
-        push: (cookie) => WebViewCookiePush.instance.push(
-          name: cookie.name,
-          reason: 'account_switch',
-          url: _urlFor(cookie),
-          rawSetCookie: cookie.toSetCookieHeader(),
-          expectedValue: cookie.value,
-          clearVariantsFirst: true,
-        ),
-      );
-
-  @visibleForTesting
-  static Future<bool> pushAccountCookies(
-    List<CanonicalCookie> cookies, {
-    required Future<bool> Function(CanonicalCookie) push,
-  }) async {
+  Future<void> _pushToWebView(List<CanonicalCookie> cookies) async {
     final byName = <String, List<CanonicalCookie>>{};
     for (final cookie in cookies) {
       (byName[cookie.name] ??= []).add(cookie);
     }
-    final results = await Future.wait([
+    await Future.wait([
       for (final group in byName.values)
         () async {
-          var pushed = true;
           for (final cookie in group) {
-            try {
-              final ok = await push(cookie);
-              pushed = ok && pushed;
-            } catch (_) {
-              pushed = false;
-            }
+            await WebViewCookiePush.instance.push(
+              name: cookie.name,
+              reason: 'account_switch',
+              url: _urlFor(cookie),
+              rawSetCookie: cookie.toSetCookieHeader(),
+              expectedValue: cookie.value,
+              clearVariantsFirst: true,
+            );
           }
-          return pushed;
         }(),
     ]);
-    return results.every((pushed) => pushed);
   }
 
   Future<void> _clearWebViewAccountCookies() async {

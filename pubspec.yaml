@@ -1,7 +1,7 @@
 name: fluxdo
 description: "CFluxDo：基于 FluxDO 的 Linux.do 第三方 Android 客户端"
 publish_to: 'none'
-version: 1.2.2-beta.7+2026102802
+version: 1.3.5-beta.4+2026112400
 
 environment:
   sdk: ^3.13.0
@@ -38,7 +38,8 @@ dependencies:
   # 自研:native Rust 解码动图(GIF/APNG/动画 WebP),绕开 Flutter Skia
   # multi_frame_codec 在 disposal=2 等场景下的 #85831 bug。
   # 源码:https://github.com/Lingyan000/native_animated_image
-  native_animated_image: ^0.3.4
+  native_animated_image:
+    path: third_party/native_animated_image
   flutter_riverpod: ^3.3.2
   extended_image_lite:
     path: packages/extended_image_lite
@@ -149,22 +150,20 @@ dependencies:
   volume_controller: ^3.6.0 # 播放器竖滑手势调系统音量
   screen_brightness: ^2.1.11 # 播放器竖滑手势调 app 亮度
   just_audio: ^0.10.6 # 原生上传音频播放(FluxdoRender audioBuilder)
-  rhttp:
-    git:
-      url: https://github.com/Lingyan000/rhttp_plus.git
-      path: rhttp
   ffi: any
   # 性能诊断:掉帧时 app 内连接自身 VM Service 抓取当帧 timeline,
   # 自动归并出耗时 widget(debug/profile 有效,release 无 VM Service)
   vm_service: ^15.2.0
   full_svg_flutter: ^1.3.0
 dependency_overrides:
+  # Dio 5.11.1 内置一份（移植自上游 FluxDO third_party/dio），只改
+  # response_stream_handler.dart：消费方订阅后才读源、取消向下传到适配器、暂停停表，
+  # 被取消的图片下载和跳转响应体不再在后台继续读。说明见 third_party/dio/FLUXDO_PATCH.md
+  dio:
+    path: third_party/dio
   # super_clipboard 0.9.1 要求 device_info_plus <12.0.0，
   # 但实际 12.x 接口兼容，强制使用项目版本
   device_info_plus: 12.3.0
-  # 锁定 flutter_rust_bridge 版本，与 rhttp 插件的 codegen 版本保持一致。
-  # rhttp_plus 已同步 upstream 0.18.0，生成代码基于 2.12.0。
-  flutter_rust_bridge: 2.12.0
   # Linux WebView（WPE WebKit）插件内置一份：要加「预先放行代理叶子证书」的接口，
   # 并兼容旧版 WPE 的编译（见 packages/flutter_inappwebview_linux/CFLUXDO_PATCHES.md）
   flutter_inappwebview_linux:
@@ -184,6 +183,10 @@ melos:
   useRootAsPackage: true
 
 flutter:
+  # 关闭 SwiftPM：flutter_avif、flutter_js、super_native_extensions 等
+  # 插件仍未支持 SwiftPM，iOS 构建继续走 CocoaPods。
+  config:
+    enable-swift-package-manager: false
   uses-material-design: true
   shaders:
     - shaders/progressive_top_blur.frag

@@ -155,7 +155,12 @@ class ThemeState {
   bool get isVscode => uiStyle == UiStyle.vscode;
 
   /// VS Code 只支持原生 Windows；读取备份和程序写入时使用同一限制。
-  static bool get supportsVscode => !kIsWeb && Platform.isWindows;
+  static bool get supportsVscode =>
+      debugSupportsVscodeOverride ?? (!kIsWeb && Platform.isWindows);
+
+  /// 测试用：在非 Windows 主机上跑 VS Code 风格的用例（用完置回 null）
+  @visibleForTesting
+  static bool? debugSupportsVscodeOverride;
 
   static UiStyle supportedUiStyle(UiStyle style) =>
       style == UiStyle.vscode && !supportsVscode ? UiStyle.mojian : style;
@@ -202,8 +207,9 @@ class ThemeState {
 
   /// 墨笺标题的字体族：null = 宋体；不用宋体时跟正文同一个字体（系统默认
   /// 取平台的正文字体名，传 null 会被当成宋体）。
-  String? get titleFontFamilyName =>
-      serifTitles ? null : fontFamilyName ?? MojianTheme.platformBodyFamily;
+  String? get titleFontFamilyName => serifTitles
+      ? null
+      : fontFamilyName ?? MojianTheme.platformBodyFamily;
 
   /// 获取实际用于 ThemeData 的 fontFamily 字符串
   String? get fontFamilyName {
@@ -436,11 +442,6 @@ class ThemeNotifier extends StateNotifier<ThemeState> {
         !RecommendedFontService.isRecommendedFontPath(customFontPath)) {
       importedFontPath = customFontPath;
       importedFontName = customFontName;
-      // 切换推荐字体会覆盖当前字体键，认领时需独立保存导入记录。
-      unawaited(prefs.setString(_importedFontPathKey, importedFontPath));
-      if (importedFontName != null) {
-        unawaited(prefs.setString(_importedFontNameKey, importedFontName));
-      }
     }
 
     // ── 透明模式与背景配置 ──

@@ -322,6 +322,7 @@ class _TopicPostListState extends ConsumerState<TopicPostList> {
   }
 
   void _scheduleLayoutCheck() {
+
     if (_layoutCheckScheduled || widget.onLayout == null) return;
     _layoutCheckScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -885,17 +886,14 @@ class _TopicPostListState extends ConsumerState<TopicPostList> {
   @override
   Widget build(BuildContext context) {
     final posts = detail.postStream.posts;
-    final sourceOptions = ref.watch(
-      preferencesProvider.select(
-        (prefs) => (prefs.vscodeBodyStyle, prefs.vscodeCodeLanguage),
-      ),
-    );
+    final sourceOptions = ref.watch(preferencesProvider.select(
+      (prefs) => (prefs.vscodeBodyStyle, prefs.vscodeCodeLanguage),
+    ));
     final hasFirstPost = posts.isNotEmpty && posts.first.postNumber == 1;
     _buildRenderSegments(posts);
     _scheduleLayoutCheck();
     if (VscodePostSource.enabled(context) &&
-        (!identical(_sourceLinePosts, posts) ||
-            _sourceOptions != sourceOptions)) {
+        (!identical(_sourceLinePosts, posts) || _sourceOptions != sourceOptions)) {
       _sourceLines.update(
         posts.map((post) {
           final plan = _renderPlans.planFor(

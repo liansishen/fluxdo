@@ -5,7 +5,7 @@ import '../../models/emoji.dart';
 import '../../utils/platform_utils.dart';
 import 'emoji_picker.dart';
 import 'sticker_picker.dart';
-import '../../../../../l10n/s.dart';
+import '../../l10n/s.dart';
 
 /// 悬浮 Tab 的高度（含上下内边距），用于给内容区预留底部空间
 const double floatingTabHeight = 48;

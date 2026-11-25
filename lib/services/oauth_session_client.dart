@@ -69,10 +69,7 @@ class OAuthSessionClient {
     check();
     if (CfChallengeClassifier.isChallengeResponse(response)) {
       throw OAuthErrorPolicy.classify(
-        DioException(
-          requestOptions: response.requestOptions,
-          response: response,
-        ),
+        DioException(requestOptions: response.requestOptions, response: response),
         serviceName: serviceName,
       );
     }

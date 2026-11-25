@@ -125,9 +125,9 @@ SOFTWARE.
 
 ## 全局字体与推荐字体
 
-- 外观页提供统一字体入口，独立字体页管理系统默认、MiSans、系统字体、导入文件及推荐字体；导入记录与当前选用状态分别保存。墨笺通过「标题用宋体」开关控制内置标题字体，自选字体继续同步到标题，Claude 与 VS Code 继承全局字体。
+- 外观页通过「字体」进入独立页面，统一展示当前字体、预览、系统默认、MiSans、导入文件及推荐字体；系统已安装字体选择仅在桌面端提供。自选与系统安装字体通过 `ThemeState.titleFontFamilyName` 同步到墨笺标题；系统默认与 MiSans 可通过「标题用宋体」开关选择标题字体。Claude 与 VS Code 继续继承全局字体。
 - 推荐清单位于 `assets/fonts/recommended_fonts.json`，下载支持顺序镜像、大小与 SHA-256 校验，以及从声明的 tgz 成员提取字体。下载后通过既有自选字体链路启用，重启恢复使用同一缓存键。
-- 切换或取消选用推荐字体不删除已下载文件；只有推荐字体的显式删除操作清理其缓存。导入字体仍按原规则删除，目录判断兼容 Windows 分隔符且不误认相似目录名。
+- 切换或取消选用推荐字体不删除已下载文件；只有推荐字体的显式删除操作清理其缓存。导入字体单独保存，切换字体后仍可重新选用，显式删除才清理文件；目录判断兼容 Windows 分隔符且不误认相似目录名。
 - 回归入口：`test/services/recommended_font_service_test.dart`、`test/providers/theme_provider_font_test.dart`、`test/pages/font_settings_page_test.dart`。
 
 ## 编辑器、草稿与上传
@@ -142,11 +142,12 @@ SOFTWARE.
 
 ## 网络启动与增量消息
 
-- 启动时并行读取网络签名，代理启动前补种签名并处理 VPN 压制；Windows 保持系统代理 → `NetworkSettingsService` → 后台 UA → WebView Environment 顺序。rhttp 未启用时不在冷启动初始化运行时。
+- 启动时并行读取网络签名，代理启动前补种签名并处理 VPN 压制；Windows 保持系统代理 → `NetworkSettingsService` → 后台 UA → WebView Environment 顺序，网络请求统一使用单引擎方案。
 - 桌面 UA 缓存按实际 WebView 运行时版本验证；版本变化或缓存损坏时重新探测，仍在代理决策完成后后台初始化。
 - Rust 原生产物需与 Dart FFI 同批构建，Windows 通过 `native:prepare windows --release` 暂存 DLL。内置公共 ECH 域名含 LINUX DO、静态资源和 IDCFlare，关闭开关同时关闭公共兜底，但不关闭原域名 HTTPS/ECH 查询；Selector 覆盖范围独立，不随公共 ECH 域名扩展。
 - Selector 显式覆盖 LINUX DO、IDCFlare、`ldstatic.com` 及配置主机的子域，共享赢家与故障统计；静态资源域纳入叶证书预放行及 MITM，范围外继续隧道转发。
 - PM、勿扰与分类变更订阅由登录后启动项统一持有和释放；MessageBus 轮询、延迟队列和私信请求均检查会话或请求代际。列表事件按版本消费，静音不阻断已读与删除恢复同步。
+- 通知数上涨时可在后台静默预取最近通知，打开面板先使用预取结果，再正常读取以更新已看到位置。退出或换号会推进预取代际：旧请求不能回写缓存或清除新账号进行中的预取；回归入口为 `test/providers/recent_notifications_prefetch_test.dart`。
 - 首页辅助刷新按钮偏好独立于主 FAB；「上滑变刷新」默认开启，可通过 `pref_home_fab_refresh_on_scroll_up` 单独关闭。开启时主 FAB 朝顶部滚动切换为刷新，回到折叠锚位或点击刷新后恢复加号，非活跃列表不回写模式。切换刷新模式收起菜单；VS Code 保留固定资源管理器工具按钮。社区点数显示精确千分位值，缺少插件数据时不占位，点击进入当前站排行榜。标签与话题共用通知级别面板；预览入口继续使用 `MorphingDialogAnchor`。
 - 「阅读设置 → 自动载入新话题」默认关闭，持久化键为 `pref_auto_load_topic_updates`。启用后仅前台、可见、停在顶部且未拖动的列表自动消费更新；2 秒攒批、请求最小间隔 30 秒。关闭、离开页面或切换筛选时取消旧定时器，插入话题时保留开头的置顶行。
 - CF 验证轮次收到 `/challenge` 的源站 404 后，先等待 3 秒；若始终没有新 Cookie，才采纳 WebView 现值。现值也必须通过权威闸门并确认写入 jar，不放宽主站/双站 Cookie 准入。
@@ -190,6 +191,17 @@ SOFTWARE.
 - 原生产物准备统一走 `just native -- ...` 或 `dart run tool/project_tasks.dart native:prepare ...`
 - Windows / iOS 平台工程已移除内置 cargo / shell build hook，只消费仓库脚本预先落盘的 native 产物
 - macOS 保留一个轻量级 bundle copy/sign 阶段，只负责拷贝和签名已准备好的 native 产物
+
+### iOS 独立分享扩展
+
+- `ios/ShareExtension` 是不依赖 Flutter 引擎的原生 UIKit / WebKit 扩展；系统分享面板选择 FluxDO 后直接处理链接，不启动主应用。仅接收 `https://linux.do/t/...`、`https://idcflare.com/t/...`，可从标题附带的文本中识别唯一链接。
+- 点击「分享图片」直接打开独立长图预览页，按主应用的 375 逻辑像素卡片版式显示标题、作者、头像、正文及来源链接。经典、纯白、深色、纯黑、蓝调、绿野、墨笺七套配色即时切换，仅更新 CSS，不重新下载图片；底部可保存到相册或系统分享。导出时内部按片截图、流式编码成一张 2 倍像素 PNG，避免完整长图 RGBA 画布的内存峰值；渲染超限、图片失败或缺片会明确报错。点击「导出文章」直接打开「范围 → 格式 → 去向」选项页，支持保存到文件及系统分享，选项变化按范围/格式分别缓存；Markdown 最多前 10 条，HTML 按帖子 ID 分批取全。
+- 主应用与扩展均声明原始 App Group `group.com.github.lingyan000.fluxdo`；运行时优先从各自的 `embedded.mobileprovision` 读取授权组，兼容 SideStore / AltStore 追加的单个 10 位团队后缀。仅在没有描述文件时读取旧版 `ALTAppGroups`，两者都缺失才尝试原组；描述文件损坏、缺组或存在多个匹配组时拒绝选择，不能回退到无关共享容器。最终访问仍须系统容器接口授权，不依赖私有 API。
+- `ShareSessionStore` 将两站 `_t`、`_forum_session`、`cf_clearance` 和匹配 UA 分别存入原子写、排除备份、受文件保护的共享私有文件；逐 Cookie 保留有效期。Dart 监听 CookieJar 中央写入、恢复和删除，退出清空共享会话，凭据不写入日志或导出文件。扩展优先直接请求与主应用相同的帖子 JSON 接口，复用扩展已有 Cookie（含网页生成的 `_rt`）与匹配 UA，共享快照仅补缺失凭据；原生响应的同站 Cookie 写回扩展容器。正常读取无需先导航帖子网页。原生网络、登录、验证或响应格式失败后，仅切换一次到现有 WebKit 同源请求，后续补帖、原文和同站图片沿用该通道；限流、帖子不存在、取消和安全错误直接报告。原生请求只允许精确同源 HTTPS 跳转，WebKit 接口请求拒绝跳转；外站图片使用无凭据请求。原生 JSON / 图片分别限制为 8 / 16 MB，图片串行读取以控制内存。
+- 扩展使用自身容器内持久化的 WebKit 会话；App Group 不可用时仍可独立工作。接口读取成功时保持验证网页隐藏，原生通道失败后才导航网页；遇到 Cloudflare 或登录要求，用户完成后点击「验证完成，继续保存」，继续原操作。扩展不会继承来源 App 的登录态，也不会启动主应用或其代理；「退出扩展登录」清除扩展网页数据。扩展提供独立的「分享扩展诊断」，仅包含版本、站点、共享会话诊断码、实际请求通道、接口回退原因和 HTTP 状态，不输出 Cookie、帖子正文或私有路径。主应用同步失败仍由 `AppLogger` 记录。
+- CI 同时产出 `*-nosign.ipa` 原未签名包和 `*-sidestore.ipa` 重签准备包。后者在临时副本中按依赖顺序进行 ad-hoc 签名，仅向主应用和分享扩展写入同一 App Groups 声明，方便 SideStore 从 Mach-O 发现并申请能力；不包含 Apple 开发者证书或描述文件，安装时仍须重签。构建脚本要求存在 `Runner.app/PlugIns/ShareExtension.appex/ShareExtension`；CI 另外执行 Swift 链接解析 / 安全 HTML 行为验证，检查扩展声明、主扩展版本一致性及 ZIP 内可执行文件。侧载工具必须保留并签名 `.appex`、为主应用和扩展授予一致的 App Group，不能仅重签主可执行文件。SideStore 安装优先选用准备包，CI 验证二进制的权限声明及准备包自签完整性。
+- 本地 Windows 可运行 `flutter test test/services/share_extension_session_service_test.dart` 验证凭据最小化、跨站隔离与退出并发写入屏障。原生编译在 macOS CI，不能代替实机验收：分享面板启用 FluxDO 后，分别验证两站公开 / 受限帖、主应用关闭、短文 / 多图 / 长文、PNG 保存相册与文件、Markdown / 全量 HTML，以及取消后重试和退出登录后的权限变化。原生卡片使用同一组配色及经典/墨笺布局；正文仍由安全 HTML 排版，复杂内容与 Flutter 渲染引擎可能存在细节差异。可用 `tool/ios_share_preview_tests/run_ios_ui_tests.sh` 在 iPhone/iPad 模拟器离线验证七色切换、长图保存/分享、导出选项与系统面板取消；`tool/ios_share_card_browser_test.py` 在 Chromium 验证模板布局，`tool/ios_share_image_smoke.swift` 在 macOS 验证 PNG 像素、拼接边界和文件清理。
+- `tool/ios_share_native_first_smoke.swift` 在 CI 离线执行生产客户端，覆盖双站原生成功、会话与 UA 配对、响应 Cookie 回传、挑战或格式失败单次回退、原文/图片通道复用、验证后继续，以及取消/限流/跨站请求边界。原生接口与主应用采用相同业务接口；扩展使用 URLSession，其 TLS 和网络出口仍可能与主应用网络栈不同，Cloudflare 成功率需实机确认。
 
 ## macOS 代码签名
 

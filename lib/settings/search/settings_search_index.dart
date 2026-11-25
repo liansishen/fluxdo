@@ -6,8 +6,10 @@ import '../../l10n/s.dart';
 import '../../pages/appearance_page.dart';
 import '../../pages/bottom_nav_settings_page.dart';
 import '../../pages/data_management_page.dart';
+import '../../pages/network_settings_page/network_advanced_settings_page.dart';
 import '../../pages/network_settings_page/network_settings_page.dart';
 import '../../pages/preferences_page.dart';
+import '../../pages/progress_gesture_settings_page.dart';
 import '../../pages/reading_settings_page.dart';
 import '../../pages/shortcut_settings_page.dart';
 import '../../utils/platform_utils.dart';
@@ -81,6 +83,15 @@ List<SettingsSearchResult> buildSearchIndex(
       pageBuilder: ({highlightId}) =>
           ReadingSettingsPage(highlightId: highlightId),
     ),
+    // 阅读设置的进度条手势子页：搜到的项直接进子页定位
+    ...fromGroups(
+      buildProgressGestureGroups(context),
+      categoryName: '${l10n.settings_reading} · ${l10n.progressGesture_title}',
+      categoryIcon: Symbols.auto_stories_rounded,
+      categoryColor: Colors.deepOrange,
+      pageBuilder: ({highlightId}) =>
+          ProgressGestureSettingsPage(highlightId: highlightId),
+    ),
     ...fromGroups(
       buildPreferencesGroups(context),
       categoryName: l10n.settings_preferences,
@@ -112,6 +123,16 @@ List<SettingsSearchResult> buildSearchIndex(
       categoryColor: Colors.blueGrey,
       pageBuilder: ({highlightId}) =>
           NetworkSettingsPage(highlightId: highlightId),
+    ),
+    // 网络设置的高级子页：搜到的项直接进子页定位
+    ...fromGroups(
+      buildNetworkAdvancedGroups(context),
+      categoryName:
+          '${l10n.settings_network} · ${l10n.networkSettings_advancedEntry}',
+      categoryIcon: Symbols.network_check_rounded,
+      categoryColor: Colors.blueGrey,
+      pageBuilder: ({highlightId}) =>
+          NetworkAdvancedSettingsPage(highlightId: highlightId),
     ),
     ...fromGroups(
       buildDataManagementGroups(context),

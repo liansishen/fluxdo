@@ -227,17 +227,21 @@ class _TopicsFabState extends ConsumerState<TopicsFab>
     final hideBarOnScroll = ref.watch(
       preferencesProvider.select((p) => p.hideBarOnScroll),
     );
+    // 上滑切换：只对有创作按钮的登录用户生效。开着独立刷新钮时不切换——
+    // 刷新入口已经常驻，再让创作按钮跟着变，上滑时一个隐一个变、回到顶部
+    // 又换回来，等于两个刷新按钮来回倒（佬友反馈）。资源管理器使用独立的刷新入口。
     final swapOnScrollUp = ref.watch(
       preferencesProvider.select((p) => p.homeFabRefreshOnScrollUp),
+    );
+    final showRefresh = ref.watch(
+      preferencesProvider.select((p) => p.homeRefreshButton),
     );
     final refreshMode =
         !isExplorer &&
         widget.canCreate &&
         swapOnScrollUp &&
+        !showRefresh &&
         ref.watch(fabRefreshModeProvider);
-    final showRefresh =
-        ref.watch(preferencesProvider.select((p) => p.homeRefreshButton)) &&
-        !refreshMode;
     // 与底栏使用相同规则和同一逐帧进度，不再叠加延迟动画。
     // 宽屏使用 NavigationRail，没有滚动隐藏的底栏，FAB 保持可见。
     final visibility =
@@ -460,8 +464,12 @@ class _TopicsFabState extends ConsumerState<TopicsFab>
     // 最近的 Stack 就是 master 格，不能用整窗宽度让菜单侵入导航栏。
     final pane = this.context.findAncestorRenderObjectOfType<RenderStack>();
     final paneLeft = pane?.localToGlobal(Offset.zero).dx ?? 0;
+    // 资源管理器里的菜单贴边留 8；普通加号菜单照旧留 16。
     final availableWidth =
-        origin.dx + (anchor?.size.width ?? 56) - paneLeft - 8;
+        origin.dx +
+        (anchor?.size.width ?? 56) -
+        paneLeft -
+        (isExplorer ? 8 : 16);
     final availableHeight = isExplorer
         ? media.size.height - origin.dy - (anchor?.size.height ?? 28) - 16
         : origin.dy - media.viewPadding.top - 16;

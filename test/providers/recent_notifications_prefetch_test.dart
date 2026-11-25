@@ -1,14 +1,11 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxdo/models/notification.dart';
-import 'package:fluxdo/models/user.dart';
 import 'package:fluxdo/providers/core_providers.dart';
 import 'package:fluxdo/providers/recent_notifications_provider.dart';
 import 'package:fluxdo/services/discourse/discourse_service.dart';
-import 'package:fluxdo/services/auth_session.dart';
 
 DiscourseNotification _notification(int id) => DiscourseNotification(
   id: id,
@@ -20,33 +17,23 @@ DiscourseNotification _notification(int id) => DiscourseNotification(
   data: NotificationData.fromJson(const {}),
 );
 
-NotificationListResponse _response(int id) => NotificationListResponse(
-  notifications: [_notification(id)],
-  totalRowsNotifications: 1,
-  seenNotificationId: 0,
-);
-
 class _Service implements DiscourseService {
   final calls = <bool>[];
   List<int> ids = [1];
-  Future<NotificationListResponse> Function()? load;
-
-  @override
-  final currentUserNotifier = ValueNotifier<User?>(
-    User(id: 1, username: 'alice', trustLevel: 2),
-  );
+  Completer<void>? pending;
 
   @override
   Future<NotificationListResponse> getRecentNotifications({
     bool silent = false,
   }) async {
     calls.add(silent);
-    if (load != null) return load!();
-    return NotificationListResponse(
+    final response = NotificationListResponse(
       notifications: [for (final id in ids) _notification(id)],
       totalRowsNotifications: ids.length,
       seenNotificationId: 0,
     );
+    await pending?.future;
+    return response;
   }
 
   @override
@@ -60,7 +47,6 @@ void main() {
   setUp(() {
     RecentNotificationsNotifier.clearPrefetched();
     service = _Service();
-    addTearDown(service.currentUserNotifier.dispose);
     container = ProviderContainer(
       overrides: [discourseServiceProvider.overrideWithValue(service)],
     );
@@ -100,102 +86,43 @@ void main() {
     expect(service.calls, [true, false], reason: '清掉后不用旧账号那份');
   });
 
-  for (final oldFinishesFirst in [true, false]) {
-    test('换号后旧预取${oldFinishesFirst ? '先' : '后'}返回不回写或干扰新预取', () async {
-      final oldResponse = Completer<NotificationListResponse>();
-      final newResponse = Completer<NotificationListResponse>();
-      service.load = () => oldResponse.future;
-      final oldPrefetch = RecentNotificationsNotifier.prefetch(service);
-
-      RecentNotificationsNotifier.clearPrefetched();
-      service.currentUserNotifier.value = User(
-        id: 2,
-        username: 'bob',
-        trustLevel: 2,
-      );
-      service.load = () => newResponse.future;
-      final newPrefetch = RecentNotificationsNotifier.prefetch(service);
-      expect(service.calls, [true, true], reason: '新账号立即发起预取');
-      expect(identical(oldPrefetch, newPrefetch), isFalse);
-
-      if (oldFinishesFirst) {
-        oldResponse.complete(_response(1));
-        await oldPrefetch;
-        expect(
-          identical(RecentNotificationsNotifier.prefetch(service), newPrefetch),
-          isTrue,
-          reason: '旧请求结束不能清掉新请求的在途引用',
-        );
-      }
-      newResponse.complete(_response(2));
-      await newPrefetch;
-      if (!oldFinishesFirst) {
-        oldResponse.complete(_response(1));
-        await oldPrefetch;
-      }
-
-      final first = await container.read(recentNotificationsProvider.future);
-      expect(first.map((n) => n.id), [2]);
-      expect(service.calls, [true, true], reason: '消费新账号预取，不补发请求');
-    });
-  }
-
-  test('清理后即使身份相同，旧在途响应也不能覆盖新的预取', () async {
-    final oldResponse = Completer<NotificationListResponse>();
-    service.load = () => oldResponse.future;
+  test('换号后迟到的旧通知不能成为新账号预取', () async {
+    final oldPending = service.pending = Completer<void>();
     final oldPrefetch = RecentNotificationsNotifier.prefetch(service);
     RecentNotificationsNotifier.clearPrefetched();
-    service.load = () async => _response(2);
-    await RecentNotificationsNotifier.prefetch(service);
-    oldResponse.complete(_response(1));
+    service.ids = [2];
+    service.pending = null;
+    oldPending.complete();
     await oldPrefetch;
 
-    final first = await container.read(recentNotificationsProvider.future);
-    expect(first.map((n) => n.id), [2]);
-    expect(service.calls, [true, true]);
-  });
-
-  test('身份变化即使未显式清理，也不复用旧账号在途请求和节流窗口', () async {
-    final oldResponse = Completer<NotificationListResponse>();
-    service.load = () => oldResponse.future;
-    final oldPrefetch = RecentNotificationsNotifier.prefetch(service);
-    service.currentUserNotifier.value = User(
-      id: 2,
-      username: 'bob',
-      trustLevel: 2,
+    final notifications = await container.read(
+      recentNotificationsProvider.future,
     );
-    service.load = () async => _response(2);
-    await RecentNotificationsNotifier.prefetch(service);
-    oldResponse.complete(_response(1));
-    await oldPrefetch;
-
-    final first = await container.read(recentNotificationsProvider.future);
-    expect(first.map((n) => n.id), [2]);
-    expect(service.calls, [true, true]);
+    expect(notifications.map((notification) => notification.id), [2]);
   });
 
-  for (final changeSession in [false, true]) {
-    test('消费预取时拒绝${changeSession ? '旧会话' : '其他账号'}的缓存', () async {
-      await RecentNotificationsNotifier.prefetch(service);
-      if (changeSession) {
-        AuthSession().advance();
-      } else {
-        service.currentUserNotifier.value = User(
-          id: 2,
-          username: 'bob',
-          trustLevel: 2,
-        );
-      }
-      service.ids = [2];
-      final first = await container.read(recentNotificationsProvider.future);
-      expect(first.map((n) => n.id), [2]);
-      expect(service.calls, [true, false], reason: '身份不匹配时正常拉取');
-    });
-  }
+  test('旧预取收尾不能清掉新账号正在进行的请求', () async {
+    final oldPending = service.pending = Completer<void>();
+    final oldPrefetch = RecentNotificationsNotifier.prefetch(service);
+    RecentNotificationsNotifier.clearPrefetched();
+    service.ids = [2];
+    final newPending = service.pending = Completer<void>();
+    final newPrefetch = RecentNotificationsNotifier.prefetch(service);
+    oldPending.complete();
+    await oldPrefetch;
 
-  test('未登录时不预取通知', () async {
-    service.currentUserNotifier.value = null;
-    await RecentNotificationsNotifier.prefetch(service);
-    expect(service.calls, isEmpty);
+    final joined = RecentNotificationsNotifier.prefetch(service);
+    var joinedFinished = false;
+    unawaited(joined.then((_) => joinedFinished = true));
+    await Future<void>.value();
+    expect(joinedFinished, isFalse, reason: '同账号预取必须等待正在进行的请求');
+
+    newPending.complete();
+    await Future.wait([newPrefetch, joined]);
+    final notifications = await container.read(
+      recentNotificationsProvider.future,
+    );
+    expect(notifications.map((notification) => notification.id), [2]);
+    expect(service.calls, [true, true]);
   });
 }

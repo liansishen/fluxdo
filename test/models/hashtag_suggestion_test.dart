@@ -2,8 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxdo/models/hashtag_suggestion.dart';
 
 void main() {
-  String? query(String before) =>
-      hashtagQueryPattern.firstMatch(before)?.group(1);
+  String? query(String before) => hashtagQueryPattern.firstMatch(before)?.group(1);
 
   test('光标前的 #查询：行首或空白之后才算', () {
     expect(query('#'), '');

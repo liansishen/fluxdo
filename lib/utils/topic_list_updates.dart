@@ -23,7 +23,21 @@ class TopicListUpdateQuery {
   final bool ascending;
   final bool newNewView;
 
-  bool accepts(String type) => switch (filter) {
+  bool accepts(String type) => _sortAccepts(type) && _filterAccepts(type);
+
+  /// 新消息插在列表开头，只有它在当前排序下确实排到开头才提示：
+  /// 默认 / 按活跃度倒序时新话题和新回复都会顶上来；按创建时间倒序只有新话题会；
+  /// 其余排序（点赞、浏览、回复数、正序……）都不会，提示了点开也对不上
+  bool _sortAccepts(String type) {
+    if (ascending) return false;
+    return switch (order) {
+      null || 'activity' => true,
+      'created' => type == 'new_topic',
+      _ => false,
+    };
+  }
+
+  bool _filterAccepts(String type) => switch (filter) {
     TopicListFilter.latest => type == 'latest' || type == 'new_topic',
     TopicListFilter.newTopics =>
       (type == 'new_topic' && (!newNewView || subset != NewSubset.replies)) ||
@@ -147,21 +161,34 @@ class TopicListUpdates {
 /// 新到 / 有更新的话题插到列表开头的置顶话题之后，与整页刷新的顺序一致；
 /// 否则每载入一次置顶就往下沉一截（开了自动载入时很快就沉没了）。
 /// 置顶话题自己有更新时原位换成新数据，不挪位置。
-List<Topic> prependTopicUpdates(List<Topic> current, List<Topic> updates) {
+///
+/// 对齐网页版 TopicList.loadBefore：本次请求了但服务端没返回的话题（已删除、
+/// 移入静音分类、不再符合当前筛选）也要移除，否则旧卡片会一直留在列表里。
+List<Topic> prependTopicUpdates(
+  List<Topic> current,
+  List<Topic> updates,
+  Iterable<int> requestedIds,
+) {
   final pending = {for (final topic in updates) topic.id: topic};
+  final dropped = {...requestedIds}..removeAll(pending.keys);
   var pinnedCount = 0;
   while (pinnedCount < current.length && current[pinnedCount].pinned) {
     pinnedCount++;
   }
   final pinnedHead = [
     for (final topic in current.take(pinnedCount))
-      pending.remove(topic.id) ?? topic,
+      if (!dropped.contains(topic.id)) pending.remove(topic.id) ?? topic,
   ];
   final fresh = updates.where((topic) => pending.containsKey(topic.id));
   final freshIds = fresh.map((topic) => topic.id).toSet();
   return [
     ...pinnedHead,
     ...fresh,
-    ...current.skip(pinnedCount).where((topic) => !freshIds.contains(topic.id)),
+    ...current
+        .skip(pinnedCount)
+        .where(
+          (topic) =>
+              !freshIds.contains(topic.id) && !dropped.contains(topic.id),
+        ),
   ];
 }

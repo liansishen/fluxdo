@@ -1,7 +1,6 @@
 // ignore: depend_on_referenced_packages
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
 import '../services/site_context.dart';
 import '../services/site_data_lifecycle.dart';
 import 'theme_provider.dart';
@@ -60,9 +59,9 @@ class PinnedCategoriesNotifier extends StateNotifier<List<int>> {
 
 final pinnedCategoriesProvider =
     StateNotifierProvider<PinnedCategoriesNotifier, List<int>>((ref) {
-      final prefs = ref.watch(sharedPreferencesProvider);
-      final notifier = PinnedCategoriesNotifier(prefs);
-      final unregister = SiteDataLifecycle.register(notifier._save);
-      ref.onDispose(unregister);
-      return notifier;
-    });
+  final prefs = ref.watch(sharedPreferencesProvider);
+  final notifier = PinnedCategoriesNotifier(prefs);
+  final unregister = SiteDataLifecycle.register(notifier._save);
+  ref.onDispose(unregister);
+  return notifier;
+});

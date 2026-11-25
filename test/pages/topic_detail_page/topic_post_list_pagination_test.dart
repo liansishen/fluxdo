@@ -17,6 +17,7 @@ import 'package:fluxdo/services/discourse/discourse_service.dart';
 import 'package:fluxdo/services/screen_track.dart';
 import 'package:fluxdo/services/local_notification_service.dart'
     show navigatorKey;
+
 import 'package:scroll_to_index/scroll_to_index.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -166,6 +167,7 @@ void main() {
     WidgetTester tester,
     TopicDetail initial, {
     bool positioned = true,
+
   }) async {
     SharedPreferences.setMockInitialValues({});
     final preferences = await SharedPreferences.getInstance();
@@ -198,6 +200,7 @@ void main() {
         child: TranslationProvider(
           child: MaterialApp(
             navigatorKey: navigatorKey,
+
             supportedLocales: AppLocaleUtils.supportedLocales,
             localizationsDelegates: const [
               GlobalMaterialLocalizations.delegate,
@@ -299,4 +302,5 @@ void main() {
     expect(service.requests, hasLength(1));
     expect(tester.takeException(), isNull);
   });
+
 }

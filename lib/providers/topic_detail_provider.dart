@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-
 import '../l10n/s.dart';
 import '../models/topic.dart';
 import '../models/pending_post.dart';
@@ -32,7 +31,6 @@ part 'topic_detail/_gap_methods.dart';
 class TopicDetailParams {
   final int topicId;
   final int? postNumber;
-
   /// 唯一实例 ID，确保每次打开页面都创建新的 provider 实例
   /// 默认为空字符串，用于 MessageBus 等不需要精确匹配的场景
   final String instanceId;
@@ -63,7 +61,6 @@ class TopicDetailParams {
 class TopicDetailNotifier extends AsyncNotifier<TopicDetail> {
   TopicDetailNotifier(this.arg);
   final TopicDetailParams arg;
-  final _cacheOwner = TopicDetailMemoryCache.scope;
 
   /// 活跃实例注册表:topicId → 该话题当前存活的 provider 参数(后注册在后)。
   ///
@@ -113,11 +110,9 @@ class TopicDetailNotifier extends AsyncNotifier<TopicDetail> {
 
   /// 待加载的新帖子 ID 队列（对齐 Discourse _newPostsInStream）
   final List<int> _pendingNewPostIds = [];
-
   /// 正在拉取内容的新帖子 ID(已出队、未落地)
   final Set<int> _loadingNewPostIds = {};
   bool _isLoadingNewPosts = false;
-
   /// 新回复拉取的连续失败次数:指数退避,超过上限停止自动重试(队列保留,
   /// 下一条 created 消息或刷新再拉)。无上限时断网会每 3 秒打一次请求直到
   /// 离开页面,期间还挡住用户自己的翻页。
@@ -138,7 +133,6 @@ class TopicDetailNotifier extends AsyncNotifier<TopicDetail> {
   /// 会让两条 acted 消息的第二条覆盖 cooked/read(单帖接口无 topic_view
   /// 上下文,read 缺省 false),已读楼层重新变未读、长帖重付一次解析。
   final Map<int, bool> _needsRetry = {};
-
   /// 过滤视图按 stream id 翻页时每页条数
   static const int _streamPageSize = 20;
 
@@ -434,9 +428,7 @@ class TopicDetailNotifier extends AsyncNotifier<TopicDetail> {
 
   @override
   Future<TopicDetail> build() async {
-    debugPrint(
-      '[TopicDetailNotifier] build called with topicId=${arg.topicId}, postNumber=${arg.postNumber}',
-    );
+    debugPrint('[TopicDetailNotifier] build called with topicId=${arg.topicId}, postNumber=${arg.postNumber}');
 
     // 注册活跃实例(见 _activeParams);autoDispose 时反注册。
     // build 重跑(refresh)会重复进入,先去重再追加保持"最近激活在尾"。
@@ -464,13 +456,12 @@ class TopicDetailNotifier extends AsyncNotifier<TopicDetail> {
       // 离开页面：留一份给马上又点进来的情况（生命周期回调里不能读
       // state，挪到回调之后）
       scheduleMicrotask(() {
-        // 旧微任务读取 state 会触发失效实例重建，须先核对缓存归属。
-        if (_cacheOwner != TopicDetailMemoryCache.scope || !ref.mounted) return;
+        if (!ref.mounted) return;
         final current = state.value;
         if (current != null &&
             !state.hasError &&
             _viewMode == TopicViewMode.all) {
-          TopicDetailMemoryCache.put(current, owner: _cacheOwner);
+          TopicDetailMemoryCache.put(current);
         }
       });
     });
@@ -527,10 +518,9 @@ class TopicDetailNotifier extends AsyncNotifier<TopicDetail> {
   }
 }
 
-final topicDetailProvider = AsyncNotifierProvider.family
-    .autoDispose<TopicDetailNotifier, TopicDetail, TopicDetailParams>(
-      TopicDetailNotifier.new,
-    );
+final topicDetailProvider = AsyncNotifierProvider.family.autoDispose<TopicDetailNotifier, TopicDetail, TopicDetailParams>(
+  TopicDetailNotifier.new,
+);
 
 /// 话题内「只看某用户」请求(用户卡片/头像长按菜单发起,话题详情页消费)。
 ///
@@ -576,9 +566,9 @@ final topicUserFilterRequestProvider =
 /// 普通展开优先复用 Discourse AI 的缓存摘要；没有缓存时服务层才会触发生成。
 final topicSummaryProvider = StreamProvider.autoDispose
     .family<TopicSummary?, int>((ref, topicId) {
-      final service = ref.read(discourseServiceProvider);
-      return service.watchTopicSummary(topicId);
-    });
+  final service = ref.read(discourseServiceProvider);
+  return service.watchTopicSummary(topicId);
+});
 
 /// 话题 AI 摘要重新生成 Provider。
 ///
@@ -586,6 +576,6 @@ final topicSummaryProvider = StreamProvider.autoDispose
 /// 仅 invalidate 普通 Provider 后再次读回旧缓存。
 final topicSummaryRegenerationProvider = StreamProvider.autoDispose
     .family<TopicSummary?, int>((ref, topicId) {
-      final service = ref.read(discourseServiceProvider);
-      return service.watchTopicSummary(topicId, skipAgeCheck: true);
-    });
+  final service = ref.read(discourseServiceProvider);
+  return service.watchTopicSummary(topicId, skipAgeCheck: true);
+});

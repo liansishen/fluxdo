@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:collection/collection.dart';
-import 'package:common_ui/common_ui.dart' show GlassEffectLevel;
+import 'package:common_ui/common_ui.dart'
+    show GlassEffectLevel, PredictiveBackSettings;
 import 'package:flutter/services.dart';
 // ignore: depend_on_referenced_packages
 import 'package:flutter_riverpod/legacy.dart';
@@ -14,6 +16,7 @@ import '../navigation/nav_action_bus.dart';
 import '../services/network/request_scheduler_config.dart';
 import '../services/uploads/upload_settings.dart';
 import '../services/cf_challenge_service.dart';
+import '../services/emoji_handler.dart';
 import '../services/render_backend_service.dart';
 import '../utils/blocked_user_filter.dart';
 import '../widgets/topic/topic_card_layout.dart';
@@ -159,6 +162,10 @@ class AppPreferences {
   /// 全屏侧滑返回(页面任意位置右滑,默认仅屏幕左缘)
   final bool fullscreenSwipeBack;
 
+  /// Android 预测性返回手势：返回手势拖动时页面 / 弹层跟手预览。关闭后松手才按普通
+  /// 返回处理（见 common_ui 的 PredictiveBackSettings）
+  final bool predictiveBack;
+
   /// Android 首页单次返回直接退出；关闭时需在 2 秒内返回两次
   final bool exitOnSingleBack;
 
@@ -228,7 +235,7 @@ class AppPreferences {
   /// 且第三方签名图成本高、良莠不齐,默认关对齐网页更稳妥。
   final bool showSignatures;
 
-  /// 小尾巴动画 SVG 自适应帧率
+  /// 小尾巴动画 SVG 自适应帧率（恒开，设置里不再提供开关）
   final bool adaptiveSignatureFrameRate;
 
   /// Boost 弹幕化（默认关闭）
@@ -243,7 +250,7 @@ class AppPreferences {
   /// 默认使用树形视图
   final bool defaultNestedView;
 
-  /// 嵌套视图连接线样式
+  /// 嵌套视图连接线样式（恒为自适应，设置里不再提供选择）
   final NestedLineStyle nestedLineStyle;
 
   /// 书签页默认打开方式（桌面端与手机端均生效）
@@ -319,6 +326,9 @@ class AppPreferences {
   final VscodeBodyStyle vscodeBodyStyle;
   final VscodeCodeLanguage vscodeCodeLanguage;
 
+  /// 表情风格:[EmojiHandler.followSite] 或 [EmojiHandler.selectableSets] 之一
+  final String emojiStyle;
+
   AppPreferences({
     required this.autoPanguSpacing,
     required this.displayPanguSpacing,
@@ -338,6 +348,7 @@ class AppPreferences {
     required this.renderGlesBackend,
     required this.portraitLock,
     required this.fullscreenSwipeBack,
+    this.predictiveBack = true,
     required this.exitOnSingleBack,
     required this.hideBarOnScroll,
     this.autoLoadTopicUpdates = false,
@@ -388,6 +399,7 @@ class AppPreferences {
     this.topicCardStyle = TopicCardStyle.defaults,
     this.vscodeBodyStyle = VscodeBodyStyle.compact,
     this.vscodeCodeLanguage = VscodeCodeLanguage.java,
+    this.emojiStyle = EmojiHandler.defaultPreference,
   });
 
   AppPreferences copyWith({
@@ -409,6 +421,7 @@ class AppPreferences {
     bool? renderGlesBackend,
     bool? portraitLock,
     bool? fullscreenSwipeBack,
+    bool? predictiveBack,
     bool? exitOnSingleBack,
     bool? hideBarOnScroll,
     bool? autoLoadTopicUpdates,
@@ -459,6 +472,7 @@ class AppPreferences {
     TopicCardStyle? topicCardStyle,
     VscodeBodyStyle? vscodeBodyStyle,
     VscodeCodeLanguage? vscodeCodeLanguage,
+    String? emojiStyle,
   }) {
     return AppPreferences(
       autoPanguSpacing: autoPanguSpacing ?? this.autoPanguSpacing,
@@ -482,6 +496,7 @@ class AppPreferences {
       renderGlesBackend: renderGlesBackend ?? this.renderGlesBackend,
       portraitLock: portraitLock ?? this.portraitLock,
       fullscreenSwipeBack: fullscreenSwipeBack ?? this.fullscreenSwipeBack,
+      predictiveBack: predictiveBack ?? this.predictiveBack,
       exitOnSingleBack: exitOnSingleBack ?? this.exitOnSingleBack,
       hideBarOnScroll: hideBarOnScroll ?? this.hideBarOnScroll,
       autoLoadTopicUpdates: autoLoadTopicUpdates ?? this.autoLoadTopicUpdates,
@@ -557,6 +572,7 @@ class AppPreferences {
       topicCardStyle: topicCardStyle ?? this.topicCardStyle,
       vscodeBodyStyle: vscodeBodyStyle ?? this.vscodeBodyStyle,
       vscodeCodeLanguage: vscodeCodeLanguage ?? this.vscodeCodeLanguage,
+      emojiStyle: emojiStyle ?? this.emojiStyle,
     );
   }
 }
@@ -588,6 +604,7 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
   static const String _renderGlesBackendKey = 'renderer_gles';
   static const String _portraitLockKey = 'pref_portrait_lock';
   static const String _fullscreenSwipeBackKey = 'pref_fullscreen_swipe_back';
+  static const String _predictiveBackKey = 'pref_predictive_back';
   static const String _exitOnSingleBackKey = 'pref_exit_on_single_back';
   static const String _hideBarOnScrollKey = 'pref_hide_bar_on_scroll';
   static const String _autoLoadTopicUpdatesKey = 'pref_auto_load_topic_updates';
@@ -613,14 +630,19 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
   static const String _cryptoRecentAlgorithmsKey =
       'pref_crypto_recent_algorithms';
   static const String _showSignaturesKey = 'pref_show_signatures';
-  static const String _adaptiveSignatureFrameRateKey =
-      'pref_adaptive_signature_frame_rate';
   static const String _boostDanmakuKey = 'pref_boost_danmaku';
   static const String _showSuggestedTopicsKey = 'pref_show_suggested_topics';
   static const String _showTopicCreationTimeKey =
       'pref_show_topic_creation_time';
   static const String _defaultNestedViewKey = 'pref_default_nested_view';
-  static const String _nestedLineStyleKey = 'pref_nested_line_style';
+
+  /// 已从设置里拿掉、行为固定为默认值的偏好（小尾巴自适应帧率恒开、
+  /// 树形连接线恒为自适应、废弃的局部浮窗玻璃开关）：启动时把旧值清掉，不再读它们
+  static const List<String> _retiredKeys = [
+    'pref_adaptive_signature_frame_rate',
+    'pref_nested_line_style',
+    'pref_bottom_nav_floating_blur',
+  ];
   static const String _bookmarksOpenModeKey = 'pref_bookmarks_open_mode';
   static const String _maxConcurrentKey = 'pref_max_concurrent';
   static const String _maxPerWindowKey = 'pref_max_per_window';
@@ -653,6 +675,7 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
   static const String _topicCardStyleKey = 'pref_topic_card_style';
   static const String _vscodeBodyStyleKey = 'pref_vscode_body_style';
   static const String _vscodeCodeLanguageKey = 'pref_vscode_code_language';
+  static const String _emojiStyleKey = 'pref_emoji_style';
 
   PreferencesNotifier(this._prefs)
     : super(
@@ -682,6 +705,7 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
           renderGlesBackend: _prefs.getBool(_renderGlesBackendKey) ?? false,
           portraitLock: _prefs.getBool(_portraitLockKey) ?? false,
           fullscreenSwipeBack: _prefs.getBool(_fullscreenSwipeBackKey) ?? false,
+          predictiveBack: _prefs.getBool(_predictiveBackKey) ?? true,
           exitOnSingleBack: _prefs.getBool(_exitOnSingleBackKey) ?? false,
           hideBarOnScroll: _prefs.getBool(_hideBarOnScrollKey) ?? true,
           autoLoadTopicUpdates:
@@ -709,16 +733,11 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
           cryptoRecentAlgorithms:
               _prefs.getStringList(_cryptoRecentAlgorithmsKey) ?? const [],
           showSignatures: _prefs.getBool(_showSignaturesKey) ?? false,
-          adaptiveSignatureFrameRate:
-              _prefs.getBool(_adaptiveSignatureFrameRateKey) ?? true,
           boostDanmaku: _prefs.getBool(_boostDanmakuKey) ?? false,
           showSuggestedTopics: _prefs.getBool(_showSuggestedTopicsKey) ?? true,
           showTopicCreationTime:
               _prefs.getBool(_showTopicCreationTimeKey) ?? true,
           defaultNestedView: _prefs.getBool(_defaultNestedViewKey) ?? false,
-          nestedLineStyle: NestedLineStyle.fromString(
-            _prefs.getString(_nestedLineStyleKey),
-          ),
           bookmarksOpenMode: BookmarksOpenMode.fromString(
             _prefs.getString(_bookmarksOpenModeKey),
           ),
@@ -782,15 +801,19 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
             (value) => value.name == _prefs.get(_vscodeCodeLanguageKey),
             orElse: () => VscodeCodeLanguage.java,
           ),
+          emojiStyle:
+              _prefs.getString(_emojiStyleKey) ??
+              EmojiHandler.defaultPreference,
         ),
       ) {
-    // 废弃的局部开关不再参与全局玻璃策略。
-    if (_prefs.containsKey('pref_bottom_nav_floating_blur')) {
-      _prefs.remove('pref_bottom_nav_floating_blur');
+    for (final key in _retiredKeys) {
+      if (_prefs.containsKey(key)) unawaited(_prefs.remove(key));
     }
     isPortraitLocked = state.portraitLock;
+    PredictiveBackSettings.enabled = state.predictiveBack;
     TopicCardStyleScope.current = state.topicCardStyle;
     TopicCreationTimeScope.enabled.value = state.showTopicCreationTime;
+    EmojiHandler.setPreference(state.emojiStyle);
     CfChallengeService().autoVerifyEnabled = state.autoCfChallenge;
     // CF 服务在「切兼容」询问里给用户第二条出路(关掉自动过盾),但它拿不到
     // Riverpod 容器,也不该自己写 SharedPreferences —— 这里把持久化通道注入。
@@ -938,6 +961,12 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
     await _prefs.setBool(_fullscreenSwipeBackKey, enabled);
   }
 
+  Future<void> setPredictiveBack(bool enabled) async {
+    state = state.copyWith(predictiveBack: enabled);
+    PredictiveBackSettings.enabled = enabled;
+    await _prefs.setBool(_predictiveBackKey, enabled);
+  }
+
   Future<void> setExitOnSingleBack(bool enabled) async {
     state = state.copyWith(exitOnSingleBack: enabled);
     await _prefs.setBool(_exitOnSingleBackKey, enabled);
@@ -1069,14 +1098,20 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
     await _prefs.setBool(_showTopicCreationTimeKey, enabled);
   }
 
+  /// 切换表情风格。emoji 地址在取图时按 [EmojiHandler.displaySet] 拼接/
+  /// 改写,新建的组件立即用新风格;话题卡排版里缓存着标题 emoji 地址,
+  /// 清掉重排。已在屏的正文随重建刷新。
+  Future<void> setEmojiStyle(String style) async {
+    if (state.emojiStyle == style) return;
+    EmojiHandler.setPreference(style);
+    state = state.copyWith(emojiStyle: EmojiHandler.preference);
+    TopicCardLayout.evictAll();
+    await _prefs.setString(_emojiStyleKey, EmojiHandler.preference);
+  }
+
   Future<void> setShowSignatures(bool enabled) async {
     state = state.copyWith(showSignatures: enabled);
     await _prefs.setBool(_showSignaturesKey, enabled);
-  }
-
-  Future<void> setAdaptiveSignatureFrameRate(bool enabled) async {
-    state = state.copyWith(adaptiveSignatureFrameRate: enabled);
-    await _prefs.setBool(_adaptiveSignatureFrameRateKey, enabled);
   }
 
   Future<void> setBoostDanmaku(bool enabled) async {
@@ -1094,11 +1129,6 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
   Future<void> setDefaultNestedView(bool enabled) async {
     state = state.copyWith(defaultNestedView: enabled);
     await _prefs.setBool(_defaultNestedViewKey, enabled);
-  }
-
-  Future<void> setNestedLineStyle(NestedLineStyle style) async {
-    state = state.copyWith(nestedLineStyle: style);
-    await _prefs.setString(_nestedLineStyleKey, style.name);
   }
 
   Future<void> setBookmarksOpenMode(BookmarksOpenMode mode) async {

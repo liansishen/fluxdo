@@ -21,6 +21,9 @@ import '../../providers/locale_provider.dart';
 import '../../providers/preferences_provider.dart';
 import '../../providers/theme_provider.dart';
 import '../../services/app_background_service.dart';
+import '../../services/discourse_cache_manager.dart'
+    show BlobImageCache, BlobImageProvider;
+import '../../services/emoji_handler.dart';
 import '../../services/toast_service.dart';
 import '../../theme/app_background.dart';
 import '../../theme/app_palettes.dart';
@@ -385,9 +388,9 @@ List<SettingsGroup> buildAppearanceGroups(BuildContext context) {
       ],
     ),
 
-    // ── 字体 ──────────────────────────────────────────────────────
+    // ── 字体与表情 ────────────────────────────────────────────────
     SettingsGroup(
-      title: l10n.appearance_font,
+      title: l10n.appearance_fontEmojiGroup,
       icon: Symbols.font_download_rounded,
       items: [
         ActionModel(
@@ -409,30 +412,11 @@ List<SettingsGroup> buildAppearanceGroups(BuildContext context) {
             MaterialPageRoute(builder: (_) => const FontSettingsPage()),
           ),
         ),
-      ],
-    ),
-
-    // ── 屏幕帧率（仅 Android）──────────────────────────────────────
-    SettingsGroup(
-      title: l10n.appearance_displayMode,
-      icon: Symbols.monitor_rounded,
-      items: [
-        PlatformConditionalModel(
-          condition: () => !kIsWeb && Platform.isAndroid,
-          inner: ActionModel(
-            id: 'displayMode',
-            title: l10n.appearance_displayMode,
-            icon: Symbols.monitor_heart_rounded,
-            getDynamicSubtitle: (ref) {
-              final rate = ref
-                  .watch(preferencesProvider)
-                  .displayModeRefreshRate;
-              return rate == 0
-                  ? context.l10n.appearance_displayModeAuto
-                  : '${rate}Hz';
-            },
-            onTap: (context, ref) => _showDisplayModeSheet(context, ref),
-          ),
+        CustomModel(
+          id: 'emojiStyle',
+          title: l10n.appearance_emojiStyle,
+          subtitle: l10n.appearance_emojiStyleDesc,
+          builder: (context, ref) => const _EmojiStyleSection(),
         ),
       ],
     ),
@@ -468,20 +452,47 @@ List<SettingsGroup> buildAppearanceGroups(BuildContext context) {
       ],
     ),
 
-    // ── M3E 风格 ─────────────────────────────────────────────────
+    // ── 动效与质感 ────────────────────────────────────────────────
+    // 屏幕帧率只在 Android 上有；M3E 只在经典风格下有意义
     SettingsGroup(
-      title: l10n.appearance_m3eStyle,
-      visibleWhen: _classicOnly,
-      icon: Symbols.animation_rounded,
+      title: l10n.appearance_effectsGroup,
+      icon: Symbols.blur_on_rounded,
       items: [
+        PlatformConditionalModel(
+          condition: () => !kIsWeb && Platform.isAndroid,
+          inner: ActionModel(
+            id: 'displayMode',
+            title: l10n.appearance_displayMode,
+            icon: Symbols.monitor_heart_rounded,
+            getDynamicSubtitle: (ref) {
+              final rate = ref
+                  .watch(preferencesProvider)
+                  .displayModeRefreshRate;
+              return rate == 0
+                  ? context.l10n.appearance_displayModeAuto
+                  : '${rate}Hz';
+            },
+            onTap: (context, ref) => _showDisplayModeSheet(context, ref),
+          ),
+        ),
         SwitchModel(
           id: 'm3eStyle',
+          enabledWhen: _classicOnly,
           title: l10n.appearance_m3eStyle,
           subtitle: l10n.appearance_m3eStyleDesc,
           icon: Symbols.animation_rounded,
           getValue: (ref) => ref.watch(themeProvider).m3eEnabled,
           onChanged: (ref, v) =>
               ref.read(themeProvider.notifier).setM3eEnabled(v),
+        ),
+        SwitchModel(
+          id: 'dialogBlur',
+          title: l10n.appearance_dialogBlur,
+          subtitle: l10n.appearance_dialogBlurDesc,
+          icon: Symbols.blur_on_rounded,
+          getValue: (ref) => ref.watch(preferencesProvider).dialogBlur,
+          onChanged: (ref, v) =>
+              ref.read(preferencesProvider.notifier).setDialogBlur(v),
         ),
       ],
     ),
@@ -576,23 +587,6 @@ List<SettingsGroup> buildAppearanceGroups(BuildContext context) {
         ),
       ],
     ),
-
-    // ── 对话框模糊 ──────────────────────────────────────────────────
-    SettingsGroup(
-      title: l10n.appearance_dialogBlur,
-      icon: Symbols.blur_on_rounded,
-      items: [
-        SwitchModel(
-          id: 'dialogBlur',
-          title: l10n.appearance_dialogBlur,
-          subtitle: l10n.appearance_dialogBlurDesc,
-          icon: Symbols.blur_on_rounded,
-          getValue: (ref) => ref.watch(preferencesProvider).dialogBlur,
-          onChanged: (ref, v) =>
-              ref.read(preferencesProvider.notifier).setDialogBlur(v),
-        ),
-      ],
-    ),
   ];
 }
 
@@ -641,6 +635,92 @@ void _showLanguagePicker(
     },
   );
 }
+
+// ── 表情风格 ─────────────────────────────────────────────────────
+
+/// 表情风格单选:每项右侧用该风格画几个示例表情,选之前就能看到画风。
+class _EmojiStyleSection extends ConsumerWidget {
+  const _EmojiStyleSection();
+
+  /// 预览用的示例表情(官方回应默认组里的几个,各表情集都有图)
+  static const _samples = ['heart', '+1', 'laughing'];
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = context.l10n;
+    final theme = Theme.of(context);
+    final current = ref.watch(preferencesProvider.select((p) => p.emojiStyle));
+    final options = <(String, String, String)>[
+      // (偏好值, 名称, 预览用的表情集)
+      (
+        EmojiHandler.followSite,
+        l10n.appearance_emojiStyleFollowSite,
+        EmojiHandler.siteSet,
+      ),
+      for (final set in EmojiHandler.selectableSets)
+        (set, _emojiSetLabel(l10n, set), set),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          child: Text(
+            l10n.appearance_emojiStyleDesc,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        RadioGroup<String>(
+          groupValue: current,
+          onChanged: (value) {
+            if (value == null) return;
+            ref.read(preferencesProvider.notifier).setEmojiStyle(value);
+          },
+          child: Column(
+            children: [
+              for (final (value, label, set) in options)
+                RadioListTile<String>(
+                  value: value,
+                  title: Text(label),
+                  secondary: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final name in _samples)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 6),
+                          child: Image(
+                            image: BlobImageProvider(
+                              EmojiHandler.urlForSet(name, set),
+                              bucket: BlobImageCache.emojiBucket,
+                            ),
+                            width: 22,
+                            height: 22,
+                            errorBuilder: (_, _, _) =>
+                                const SizedBox(width: 22, height: 22),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+String _emojiSetLabel(AppLocalizations l10n, String set) => switch (set) {
+  'noto' => 'Noto Emoji',
+  'twemoji' => 'Twemoji',
+  'fluentui' => 'Fluent Emoji',
+  'openmoji' => 'OpenMoji',
+  'unicode' => l10n.appearance_emojiStyleStandard,
+  _ => set,
+};
 
 // ── 屏幕帧率选择器（仅 Android）────────────────────────────────
 
@@ -1352,6 +1432,7 @@ class _SplitThemePreviewPainter extends CustomPainter {
 }
 
 // ══════════════════════════════════════════════════════════════════
+
 // 自定义背景：透明开关 + 背景图/遮罩/模糊控制
 // ══════════════════════════════════════════════════════════════════
 
@@ -2484,14 +2565,20 @@ class _UiStyleSection extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 820),
+          constraints: BoxConstraints(
+            maxWidth: ThemeState.supportsVscode ? 820 : 620,
+          ),
           child: LayoutBuilder(
             builder: (context, constraints) {
               final count = ThemeState.supportsVscode ? 4 : 3;
-              final columns = math.min(
-                count,
-                math.max(1, ((constraints.maxWidth + 12) / 172).floor()),
-              );
+              // 三张卡（没有 VS Code 的平台）照旧排成一行，手机上不折成 2 + 1；
+              // 四张卡才按可用宽度换行。
+              final columns = ThemeState.supportsVscode
+                  ? math.min(
+                      count,
+                      math.max(1, ((constraints.maxWidth + 12) / 172).floor()),
+                    )
+                  : count;
               final width =
                   (constraints.maxWidth - 12 * (columns - 1)) / columns;
               return Wrap(

@@ -24,7 +24,9 @@ mixin _NotificationsMixin on _DiscourseServiceBase {
 
   /// 获取通知列表（默认模式，支持完整分页）
   Future<NotificationListResponse> getNotifications({int? offset}) async {
-    final queryParams = <String, dynamic>{'limit': 60};
+    final queryParams = <String, dynamic>{
+      'limit': 60,
+    };
     if (offset != null) {
       queryParams['offset'] = offset;
     }

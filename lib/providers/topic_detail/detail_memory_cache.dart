@@ -1,7 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../models/topic.dart';
-import '../../services/auth_session.dart';
 
 /// 最近看过的话题详情（内存，进程内有效）。
 ///
@@ -18,31 +19,27 @@ class TopicDetailMemoryCache {
   static const ttl = Duration(minutes: 3);
   static const maxEntries = 16;
 
-  /// 清空也推进代次，拒绝仍存活的旧 provider 在卸载微任务里回填。
-  static int _revision = 0;
-  static ({int session, int revision}) get scope =>
-      (session: AuthSession().generation, revision: _revision);
-
   static final Map<
     int,
-    ({
-      TopicDetail detail,
-      DateTime storedAt,
-      ({int session, int revision}) scope,
-    })
+    ({TopicDetail detail, DateTime storedAt, Timer expiration})
   >
   _entries = {};
+
+  static int get entryCount => _entries.length;
 
   @visibleForTesting
   static DateTime Function() now = DateTime.now;
 
-  static void put(TopicDetail detail, {({int session, int revision})? owner}) {
-    final entryScope = owner ?? scope;
-    if (entryScope != scope) return;
-    _entries.remove(detail.id);
-    _entries[detail.id] = (detail: detail, storedAt: now(), scope: entryScope);
+  static void put(TopicDetail detail) {
+    _remove(detail.id);
+    final id = detail.id;
+    _entries[id] = (
+      detail: detail,
+      storedAt: now(),
+      expiration: Timer(ttl, () => _remove(id)),
+    );
     while (_entries.length > maxEntries) {
-      _entries.remove(_entries.keys.first);
+      _remove(_entries.keys.first);
     }
   }
 
@@ -56,10 +53,9 @@ class TopicDetailMemoryCache {
     required int? expectedHighestPostNumber,
     required int? targetPostNumber,
   }) {
-    final entry = _entries.remove(topicId);
+    final entry = _remove(topicId);
     if (entry == null || expectedHighestPostNumber == null) return null;
-    if (entry.scope != scope) return null;
-    if (now().difference(entry.storedAt) > ttl) return null;
+    if (now().difference(entry.storedAt) >= ttl) return null;
     final detail = entry.detail;
     if (expectedHighestPostNumber > detail.highestPostNumber) return null;
     final target = targetPostNumber == null || targetPostNumber < 1
@@ -71,11 +67,21 @@ class TopicDetailMemoryCache {
     return hasTarget ? detail : null;
   }
 
-  static void forget(int topicId) => _entries.remove(topicId);
+  static void forget(int topicId) => _remove(topicId);
+
+  static ({TopicDetail detail, DateTime storedAt, Timer expiration})? _remove(
+    int topicId,
+  ) {
+    final entry = _entries.remove(topicId);
+    entry?.expiration.cancel();
+    return entry;
+  }
 
   /// 退出登录 / 换账号时清空：缓存里有当前账号的已读、点赞等状态
   static void clear() {
-    _revision++;
+    for (final entry in _entries.values) {
+      entry.expiration.cancel();
+    }
     _entries.clear();
   }
 }

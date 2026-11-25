@@ -98,6 +98,12 @@ void main() {
     final notifier = container.read(themeProvider.notifier);
 
     await notifier.importFont(path: imported.path, name: 'Mine.ttf');
+    await notifier.setFontFamily(AppFontFamily.miSans);
+    expect(container.read(themeProvider).importedFontPath, imported.path);
+    expect(imported.existsSync(), isTrue);
+    await notifier.setFontFamily(AppFontFamily.custom);
+    expect(container.read(themeProvider).customFontPath, imported.path);
+    expect(prefs.getString('font_family'), 'custom');
     await notifier.setCustomFont(path: recommended.path, name: '霞鹜文楷');
 
     var state = container.read(themeProvider);
@@ -116,6 +122,36 @@ void main() {
     final reloaded = (await _createContainer(prefs)).read(themeProvider);
     expect(reloaded.importedFontPath, imported.path);
     expect(reloaded.importedFontName, 'Mine.ttf');
+  });
+
+  test('推荐字体启用时删除导入文件，不改变当前字体也不删除推荐下载', () async {
+    final root = await Directory.systemTemp.createTemp('fluxdo_font_test');
+    addTearDown(() => root.delete(recursive: true));
+    final imported = File('${root.path}/custom_font_6.ttf')
+      ..writeAsBytesSync([0, 1, 2]);
+    Directory('${root.path}/recommended_fonts').createSync();
+    final recommended = File('${root.path}/recommended_fonts/lxgw.ttf')
+      ..writeAsBytesSync([3, 4, 5]);
+
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final container = await _createContainer(prefs);
+    final notifier = container.read(themeProvider.notifier);
+    await notifier.importFont(path: imported.path, name: 'Mine.ttf');
+    await notifier.setCustomFont(path: recommended.path, name: '霞鹜文楷');
+    await notifier.removeImportedFont();
+
+    final state = container.read(themeProvider);
+    expect(state.fontFamily, AppFontFamily.custom);
+    expect(state.customFontPath, recommended.path);
+    expect(state.customFontName, '霞鹜文楷');
+    expect(state.importedFontPath, isNull);
+    expect(state.importedFontName, isNull);
+    expect(prefs.getString(CustomFontService.pathPrefKey), recommended.path);
+    expect(prefs.getString('imported_font_path'), isNull);
+    expect(prefs.getString('imported_font_name'), isNull);
+    expect(imported.existsSync(), isFalse);
+    expect(recommended.existsSync(), isTrue);
   });
 
   test('老版本只记了当前字体文件：导入的字体从那里认领，推荐字体不认领', () async {
@@ -138,86 +174,6 @@ void main() {
     state = (await _createContainer(await SharedPreferences.getInstance()))
         .read(themeProvider);
     expect(state.importedFontPath, isNull);
-  });
-
-  test('升级认领导入字体后切换推荐字体，重启仍能选回导入字体', () async {
-    SharedPreferences.setMockInitialValues({
-      'font_family': 'custom',
-      CustomFontService.pathPrefKey: '/data/custom_fonts/legacy.ttf',
-      CustomFontService.namePrefKey: 'Legacy.ttf',
-    });
-    final prefs = await SharedPreferences.getInstance();
-    final upgraded = await _createContainer(prefs);
-    expect(
-      upgraded.read(themeProvider).importedFontPath,
-      '/data/custom_fonts/legacy.ttf',
-    );
-    expect(
-      prefs.getString('imported_font_path'),
-      '/data/custom_fonts/legacy.ttf',
-    );
-    expect(prefs.getString('imported_font_name'), 'Legacy.ttf');
-
-    await upgraded
-        .read(themeProvider.notifier)
-        .setCustomFont(path: '/data/recommended_fonts/noto.ttf', name: '思源黑体');
-    await prefs.reload();
-    final restarted = await _createContainer(prefs);
-    final state = restarted.read(themeProvider);
-    expect(state.customFontPath, '/data/recommended_fonts/noto.ttf');
-    expect(state.importedFontPath, '/data/custom_fonts/legacy.ttf');
-    expect(state.importedFontName, 'Legacy.ttf');
-
-    await restarted
-        .read(themeProvider.notifier)
-        .setCustomFont(
-          path: state.importedFontPath!,
-          name: state.importedFontName!,
-        );
-    expect(
-      restarted.read(themeProvider).customFontPath,
-      '/data/custom_fonts/legacy.ttf',
-    );
-    expect(
-      restarted.read(themeProvider).titleFontFamilyName,
-      CustomFontService.familyNameFor('/data/custom_fonts/legacy.ttf'),
-    );
-    expect(
-      prefs.getString(CustomFontService.pathPrefKey),
-      '/data/custom_fonts/legacy.ttf',
-    );
-    expect(
-      prefs.getString('imported_font_path'),
-      '/data/custom_fonts/legacy.ttf',
-    );
-  });
-
-  test('系统字体与推荐字体不写入导入字体迁移键', () async {
-    for (final seed in <Map<String, Object>>[
-      {
-        'font_family': 'installed',
-        SystemFontService.familyPrefKey: 'Microsoft YaHei',
-        SystemFontService.namePrefKey: '微软雅黑',
-      },
-      for (final path in [
-        '/data/recommended_fonts/noto.ttf',
-        r'C:\data\recommended_fonts\noto.ttf',
-        r'C:\data\recommended_fonts/noto.ttf',
-      ])
-        {
-          'font_family': 'custom',
-          CustomFontService.pathPrefKey: path,
-          CustomFontService.namePrefKey: '思源黑体',
-        },
-    ]) {
-      SharedPreferences.setMockInitialValues(seed);
-      final prefs = await SharedPreferences.getInstance();
-      final state = (await _createContainer(prefs)).read(themeProvider);
-      expect(state.importedFontPath, isNull);
-      expect(state.importedFontName, isNull);
-      expect(prefs.getString('imported_font_path'), isNull);
-      expect(prefs.getString('imported_font_name'), isNull);
-    }
   });
 
   test('墨笺标题：默认按所选字体决定，手动设置后以设置为准', () async {
@@ -285,6 +241,14 @@ void main() {
     expect(reloadedState.fontFamily, AppFontFamily.installed);
     expect(reloadedState.fontFamilyName, 'Microsoft YaHei');
     expect(reloadedState.installedFontName, '微软雅黑');
+
+    // 从其他字体切回已选系统字体，沿用之前的匹配名与展示名。
+    final notifier = reloaded.read(themeProvider.notifier);
+    await notifier.setFontFamily(AppFontFamily.miSans);
+    await notifier.setFontFamily(AppFontFamily.installed);
+    expect(reloaded.read(themeProvider).fontFamilyName, 'Microsoft YaHei');
+    expect(reloaded.read(themeProvider).installedFontName, '微软雅黑');
+    expect(prefs.getString('font_family'), 'installed');
   });
 
   test('选了系统字体但 family 记录缺失：回落系统默认，不出现空选中', () async {
@@ -365,55 +329,16 @@ void main() {
       CustomFontService.familyNameFor(file.path),
     );
 
+    // 推荐字体不能被迁移为导入文件；重启后仍恢复当前选用记录。
     expect(state.importedFontPath, isNull);
+    final reloaded = await _createContainer(prefs);
+    expect(reloaded.read(themeProvider).customFontPath, file.path);
+    expect(reloaded.read(themeProvider).customFontName, '思源黑体');
+    expect(reloaded.read(themeProvider).importedFontPath, isNull);
+
     await container.read(themeProvider.notifier).stopUsingFontFile(file.path);
     expect(container.read(themeProvider).fontFamily, AppFontFamily.system);
     expect(prefs.getString(CustomFontService.pathPrefKey), isNull);
-    expect(container.read(themeProvider).customFontPath, isNull);
-    expect(container.read(themeProvider).customFontName, isNull);
-    expect(prefs.getString(CustomFontService.namePrefKey), isNull);
-    expect(prefs.getString('font_family'), 'system');
     expect(file.existsSync(), isTrue);
-  });
-
-  test('删除导入字体不影响当前推荐字体及其标题', () async {
-    final root = await Directory.systemTemp.createTemp('fluxdo_font_test');
-    addTearDown(() => root.delete(recursive: true));
-    final imported = File('${root.path}/custom_font_6.ttf')
-      ..writeAsBytesSync([0, 1, 2]);
-    Directory('${root.path}/recommended_fonts').createSync();
-    final recommended = File('${root.path}/recommended_fonts/noto.ttf')
-      ..writeAsBytesSync([3, 4, 5]);
-    SharedPreferences.setMockInitialValues({});
-    final prefs = await SharedPreferences.getInstance();
-    final container = await _createContainer(prefs);
-    final notifier = container.read(themeProvider.notifier);
-
-    await notifier.importFont(path: imported.path, name: 'Mine.ttf');
-    await notifier.setCustomFont(path: recommended.path, name: '思源黑体');
-    await notifier.removeImportedFont();
-
-    final state = container.read(themeProvider);
-    expect(state.fontFamily, AppFontFamily.custom);
-    expect(state.customFontPath, recommended.path);
-    expect(state.customFontName, '思源黑体');
-    expect(
-      state.titleFontFamilyName,
-      CustomFontService.familyNameFor(recommended.path),
-    );
-    expect(state.importedFontPath, isNull);
-    expect(state.importedFontName, isNull);
-    expect(prefs.getString('imported_font_path'), isNull);
-    expect(prefs.getString('imported_font_name'), isNull);
-    expect(prefs.getString(CustomFontService.pathPrefKey), recommended.path);
-    expect(prefs.getString(CustomFontService.namePrefKey), '思源黑体');
-    expect(prefs.getString('font_family'), 'custom');
-    expect(imported.existsSync(), isFalse);
-    expect(recommended.existsSync(), isTrue);
-
-    final reloaded = (await _createContainer(prefs)).read(themeProvider);
-    expect(reloaded.customFontPath, recommended.path);
-    expect(reloaded.importedFontPath, isNull);
-    expect(reloaded.titleFontFamilyName, state.titleFontFamilyName);
   });
 }

@@ -485,8 +485,9 @@ void main() {
       expect(item(categoryId: 5).reuseSignature, isNot(base));
       expect(item(canAssignPost: true).reuseSignature, isNot(base));
       expect(
-        item(assignmentInfo: PostAssignmentInfo(postId: _fixed.id))
-            .reuseSignature,
+        item(
+          assignmentInfo: PostAssignmentInfo(postId: _fixed.id),
+        ).reuseSignature,
         isNot(base),
       );
     });

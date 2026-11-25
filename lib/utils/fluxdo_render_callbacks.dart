@@ -36,6 +36,7 @@ import '../utils/link_launcher.dart';
 import '../utils/svg_utils.dart';
 import '../utils/url_helper.dart';
 import '../widgets/common/image_context_menu.dart';
+import '../widgets/common/animation_visibility.dart';
 import '../widgets/common/image_lift_menu.dart';
 import '../widgets/common/smart_avatar.dart';
 import '../widgets/post/quote_image_scope.dart';
@@ -283,13 +284,15 @@ class FluxdoRenderCallbacks {
     )) {
       return;
     }
-    Navigator.of(ctx).push(MaterialPageRoute(
-      builder: (_) => TopicDetailPage(
-        topicId: topicId,
-        initialTitle: topicSlug,
-        scrollToPostNumber: postNumber,
+    Navigator.of(ctx).push(
+      MaterialPageRoute(
+        builder: (_) => TopicDetailPage(
+          topicId: topicId,
+          initialTitle: topicSlug,
+          scrollToPostNumber: postNumber,
+        ),
       ),
-    ));
+    );
   }
 
   // ==========================================================================
@@ -387,9 +390,8 @@ class FluxdoRenderCallbacks {
               node.latex,
               style: TextStyle(
                 fontFamily: 'monospace',
-                color: Theme.of(
-                  ctx,
-                ).colorScheme.onSurface.withValues(alpha: 0.7),
+                color: Theme.of(ctx).colorScheme.onSurface
+                    .withValues(alpha: 0.7),
               ),
             ),
           ),
@@ -482,9 +484,7 @@ class FluxdoRenderCallbacks {
           errorBuilder: (c, failedUrl, error) =>
               _VideoErrorFallback(url: failedUrl, error: error),
           loadingBuilder: (c, _, child) => Center(
-            child: posterUrl != null
-                ? child
-                : const LoadingSpinner(size: 24),
+            child: posterUrl != null ? child : const LoadingSpinner(size: 24),
           ),
         ),
       ),
@@ -752,7 +752,8 @@ class FluxdoRenderCallbacks {
   /// 端渲染等价;解码纹理量不变(ResizeImage 仍按显示宽 × dpr cap)。
   static String? _pickSrcsetUrl(ImageRun image, double dpr) {
     if (image.srcset.isEmpty) return null;
-    final sorted = [...image.srcset]..sort((a, b) => a.scale.compareTo(b.scale));
+    final sorted = [...image.srcset]
+      ..sort((a, b) => a.scale.compareTo(b.scale));
     for (final c in sorted) {
       if (c.scale >= dpr - 0.01) return c.url;
     }
@@ -1200,6 +1201,8 @@ class FluxdoRenderCallbacks {
           // 支持长按/右键菜单(对齐 legacy buildGalleryImage 的 SVG 分支)。
           return Builder(
             builder: (svgCtx) => GestureDetector(
+              // 链接内 SVG(如外链卡片图):单击打开外层链接
+              onTap: ImageLinkScope.maybeOf(svgCtx),
               onLongPress: () => _showImageContextMenu(
                 svgCtx,
                 image: image,
@@ -1280,8 +1283,7 @@ class FluxdoRenderCallbacks {
               // 档位影响。
               final srcsetUrl = DiscourseImageUtils.isUploadUrl(image.src)
                   ? null
-                  : _pickSrcsetUrl(
-                      image, MediaQuery.devicePixelRatioOf(ctx));
+                  : _pickSrcsetUrl(image, MediaQuery.devicePixelRatioOf(ctx));
               final displayUrl = srcsetUrl == null
                   ? resolvedUrl
                   : UrlHelper.resolveUrlWithCdn(srcsetUrl);
@@ -1313,20 +1315,27 @@ class FluxdoRenderCallbacks {
                   // 打开大图前清掉自研选区:图片 tap 被 HeroImage 手势赢走,
                   // 选区层收不到不会自动清(否则返回后选区还残留)。
                   SelectionScope.clearAt(ctx);
+                  // 链接内图片(`<a href><img></a>`):单击打开外层链接,
+                  // 对齐网页端,不放大图片。
+                  final linkTap = ImageLinkScope.maybeOf(ctx);
+                  if (linkTap != null) {
+                    linkTap();
+                    return;
+                  }
                   // Discourse 契约:a.lightbox[href] 就是原图 URL,直接用;
                   // 只有裸 <img>(无 lightbox 包装)才用 /optimized/→
                   // /original/ 正则反推兜底(正则对 CDN 变体路径有漏配
                   // 风险,能不用就不用)。
                   final hasLightbox = image.lightboxUrl != null;
                   final fullUrl = image.lightboxUrl ?? resolvedUrl;
-                  var resolvedFullUrl =
-                      DiscourseImageUtils.isUploadUrl(fullUrl)
+                  var resolvedFullUrl = DiscourseImageUtils.isUploadUrl(fullUrl)
                       ? (DiscourseImageUtils.getCachedUploadUrl(fullUrl) ??
                             fullUrl)
                       : UrlHelper.resolveUrlWithCdn(fullUrl);
                   if (!hasLightbox) {
-                    resolvedFullUrl =
-                        DiscourseImageUtils.getOriginalUrl(resolvedFullUrl);
+                    resolvedFullUrl = DiscourseImageUtils.getOriginalUrl(
+                      resolvedFullUrl,
+                    );
                   }
                   // 画廊数据在点击时才解析(长帖懒解析场景首次点图会触发
                   // 全 chunk parse,离散动作可接受;之后命中缓存)。
@@ -1351,7 +1360,9 @@ class FluxdoRenderCallbacks {
                     galleryImages: hasGallery ? gallery.urls : null,
                     thumbnailUrls: hasGallery ? gallery.thumbs : null,
                     heroTags: hasGallery ? gallery.heroTags : null,
-                    filenames: hasGallery ? gallery.filenames : [image.filename],
+                    filenames: hasGallery
+                        ? gallery.filenames
+                        : [image.filename],
                     initialIndex: hasGallery ? galleryIndex : 0,
                     heroSourceFit: inGridTile ? BoxFit.cover : null,
                     heroSourceRadius: inGridTile ? 4 : 0,
@@ -1495,7 +1506,8 @@ class FluxdoRenderCallbacks {
     final base62Sha1 = image.base62Sha1;
     if (base62Sha1 != null && base62Sha1.isNotEmpty) {
       src = 'upload://$base62Sha1';
-      final ext = HtmlToMarkdown.extensionFromUrl(image.src) ??
+      final ext =
+          HtmlToMarkdown.extensionFromUrl(image.src) ??
           HtmlToMarkdown.extensionFromUrl(image.lightboxUrl) ??
           HtmlToMarkdown.extensionFromUrl(image.origSrc);
       if (ext != null) src = '$src.$ext';
@@ -1779,7 +1791,9 @@ class _MermaidBlockState extends State<_MermaidBlock> {
   /// dispose,不会出图后继续空转产帧(旧版 controller 挂在块 State 上,
   /// 出图后无人 stop,每个已渲染 mermaid 块都是常驻帧生产者)。
   Widget _buildShimmer(ThemeData theme, {bool withMargin = true}) {
-    return _MermaidShimmer(theme: theme, withMargin: withMargin);
+    return AnimationVisibility(
+      child: _MermaidShimmer(theme: theme, withMargin: withMargin),
+    );
   }
 
   /// 代码态:HighlighterService 高亮 mermaid 源码,在固定内容框内双向滚动。

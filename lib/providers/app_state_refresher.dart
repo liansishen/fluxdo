@@ -6,7 +6,6 @@ import 'bookmark_sync_controller.dart';
 import 'notification_list_provider.dart';
 import 'recent_notifications_provider.dart';
 import 'topic_detail/detail_memory_cache.dart';
-import 'topic_detail_provider.dart';
 import 'topic_list/topic_list_provider.dart';
 import 'topic_list/filter_provider.dart';
 import 'topic_list/sort_provider.dart';
@@ -67,6 +66,17 @@ class AppStateRefresher {
     });
   }
 
+  /// 冷启动先用启动快照出了内容，这次运行的首页数据到了：把从快照里取过
+  /// 数据的几样换成新的。只动不发请求的（分类、追踪状态都直接读预加载数据），
+  /// 当前用户由会话判定跟进、首页列表由列表页自己按是否在读决定，这里不管。
+  static void applyFreshPreload(ProviderContainer container) {
+    container
+      ..invalidate(categoriesProvider)
+      ..invalidate(topicTrackingStateMetaProvider)
+      ..invalidate(topicTrackingStateProvider)
+      ..invalidate(notificationCountStateProvider);
+  }
+
   static Future<void> resetForLogout(ProviderContainer container) async {
     _resetAccountState(container);
     await container.read(ldcUserInfoProvider.notifier).disable();
@@ -111,9 +121,8 @@ class AppStateRefresher {
     container.read(bookmarkSyncControllerProvider.notifier).reset();
     // 刚看过的话题详情里有这个账号的已读 / 点赞状态
     TopicDetailMemoryCache.clear();
-    container.invalidate(topicDetailProvider);
     RecentNotificationsNotifier.clearPrefetched();
-    // 重置账号关联的订阅与列表状态。
+    // 登出时 invalidate 所有（不会发请求，因为数据被清空了）
     for (final refresh in _coreRefreshers) {
       refresh(container);
     }

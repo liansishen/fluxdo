@@ -44,11 +44,31 @@ void main() {
             home: Scaffold(
               body: Consumer(
                 builder: (context, ref, _) {
+                  final groups = buildAppearanceGroups(context);
+                  final bottomItems = buildBottomNavGroups(
+                    context,
+                  ).expand((g) => g.items).toList();
+                  if (!bottomNav) {
+                    expect(
+                      groups
+                          .expand((g) => g.items)
+                          .any((i) => i.id == 'dialogBlur'),
+                      isTrue,
+                    );
+                  }
+                  expect(
+                    bottomItems.any((i) => i.id == 'bottomNavFloatingBlur'),
+                    isFalse,
+                  );
+                  // 底栏设置不再放「去外观页调玻璃」的跳转（重复入口）
+                  expect(
+                    bottomItems.any((i) => i.id == 'glassSettings'),
+                    isFalse,
+                  );
                   final group = bottomNav
                       ? buildBottomNavGroups(context).first
-                      : buildAppearanceGroups(context).firstWhere(
-                          (group) =>
-                              group.title == context.l10n.appearance_glass,
+                      : groups.firstWhere(
+                          (g) => g.items.any((i) => i.id == 'glassEnabled'),
                         );
                   return ListView(
                     children: [
@@ -118,18 +138,16 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('固定实色风格隐藏玻璃入口，Claude 与经典仍可调整', (tester) async {
+  testWidgets('固定实色风格隐藏玻璃入口，Claude 与经典仍可调整，底栏无重复入口', (tester) async {
     for (final style in UiStyle.values) {
-      for (final bottomNav in [false, true]) {
-        await pumpSettings(tester, style: style, bottomNav: bottomNav);
-        expect(
-          find.text(bottomNav ? '玻璃效果' : '启用玻璃效果'),
-          style == UiStyle.mojian || style == UiStyle.vscode
-              ? findsNothing
-              : findsOneWidget,
-        );
-        await tester.pumpWidget(const SizedBox.shrink());
-      }
+      await pumpSettings(tester, style: style);
+      expect(
+        find.text('启用玻璃效果'),
+        style == UiStyle.mojian || style == UiStyle.vscode
+            ? findsNothing
+            : findsOneWidget,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
     }
   });
 }

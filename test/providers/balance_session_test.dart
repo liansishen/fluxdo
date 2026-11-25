@@ -126,6 +126,13 @@ void main() {
       AsyncValue<Object?> current() => isLdc
           ? container.read(ldcUserInfoProvider)
           : container.read(cdkUserInfoProvider);
+      Future<void> refreshAfterVerification() => isLdc
+          ? container
+                .read(ldcUserInfoProvider.notifier)
+                .refreshAfterCfVerification()
+          : container
+                .read(cdkUserInfoProvider.notifier)
+                .refreshAfterCfVerification();
 
       DioException challenge() => DioException(
         requestOptions: RequestOptions(path: '/api/v1/oauth/user-info'),
@@ -267,6 +274,39 @@ void main() {
         expect(prefs.getString(legacyCacheKey), isNull);
         expect(current().hasError, isFalse);
       });
+
+      for (final expires in [false, true]) {
+        test('验证后刷新期间换号，旧${expires ? '过期错误' : '余额'}不能串写新账号', () async {
+          await initialize();
+          await read();
+          final pending = Completer<Map<String, dynamic>>();
+          final entered = Completer<void>();
+          load = () {
+            entered.complete();
+            return pending.future;
+          };
+          final oldRefresh = refreshAfterVerification();
+          await entered.future;
+          load = () async => {..._userInfo, 'username': 'bob', 'score': 34};
+          (container.read(currentUserProvider.notifier) as _CurrentUser)
+              .switchTo('bob');
+          await read();
+          final newAccountCache = prefs.getString(otherAccountCacheKey);
+          if (expires) {
+            pending.completeError(OAuthExpiredException(serviceName: name));
+          } else {
+            pending.complete(_userInfo);
+          }
+          await oldRefresh;
+          expect(current().hasError, isFalse);
+          expect(prefs.getString(otherAccountCacheKey), newAccountCache);
+          expect((jsonDecode(newAccountCache!) as Map)['username'], 'bob');
+          expect(
+            (jsonDecode(prefs.getString(cacheKey)!) as Map)['username'],
+            'alice',
+          );
+        });
+      }
 
       test('旧版同账号缓存仍可兜底，成功后迁移到账号专属键', () async {
         await initialize();

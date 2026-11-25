@@ -47,16 +47,40 @@
 //    实测:sheet 的 popGestureEnabled=true、手势进度驱动位移
 //    6.7px→48.2px→150.0px 单调跟手、下层 page route isCurrent=false
 //    (故不会同时认领)。
+// 9. 手势计数由探测器统一配对，路由提前退出或探测器销毁时也会释放。
+//    cancel 不再把计数收尾交给框架，避免销毁时与框架回调重复释放。
+// 10. start 重入防护(上游同样缺失)。部分机型会在同一次按压内重发
+//    startBackGesture,前一轮既不 commit 也不 cancel(实录:拖出后进度
+//    瞬间回 0,右缘箭头重现,再拖出提交)。popGestureEnabled 只看
+//    animation.isCompleted、不看 userGestureInProgress,进度回 0 时路由
+//    动画恰为 completed,重发的 start 会被再次认领并再计一次
+//    didStartUserGesture,收尾只释放一次 → 计数永久卡 1 → 所有路由
+//    IgnorePointer,全局点击失效。拖到一半重发则相反:不认领、被 binding
+//    踢出认领列表,页面冻结在半途,后续 cancel 无人收尾。故手势活跃期的
+//    start 一律视为同一手势延续(不重复计数,按新进度同步);无法延续时
+//    自己收尾释放计数。
 //
 // Copyright 2014 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+
+import 'dart:async';
 
 import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
+/// 预测返回的全局开关（设置里的「预测性返回手势」，默认开）。
+///
+/// 关掉后，页面转场、弹层（[wrapPredictiveBackForModalRoute]）和 App 里各浮层的手势
+/// 探测器都不再认领系统返回手势：拖动时页面 / 弹层不跟手预览，松手后由框架按普通返回
+/// 处理——和三键导航的返回键是同一条路径，返回与关闭的逻辑不变，只是没有预览。
+/// 系统自己的「返回桌面」预览动画由清单里的 `enableOnBackInvokedCallback` 决定，不受它影响。
+abstract final class PredictiveBackSettings {
+  static bool enabled = true;
+}
 
 /// Android 预测返回手势 + Cupertino 滑动转场。
 ///
@@ -154,6 +178,14 @@ class _PredictiveBackGestureDetectorState
 
   _PredictiveBackPhase _phase = _PredictiveBackPhase.idle;
 
+  NavigatorState? _gestureNavigator;
+  Animation<double>? _settlingAnimation;
+  AnimationStatusListener? _settlingListener;
+
+  bool get _isDragging =>
+      _phase == _PredictiveBackPhase.start ||
+      _phase == _PredictiveBackPhase.update;
+
   /// True when the predictive back gesture is enabled.
   bool get _isEnabled {
     return widget.route.isCurrent && widget.route.popGestureEnabled;
@@ -163,21 +195,41 @@ class _PredictiveBackGestureDetectorState
 
   @override
   bool handleStartBackGesture(PredictiveBackEvent backEvent) {
-    final bool gestureInProgress = !backEvent.isButtonEvent && _isEnabled;
+    // 差异点 10:手势活跃期又收到 start(前一轮没有 commit/cancel)。
+    if (_isDragging) {
+      if (!backEvent.isButtonEvent && widget.route.isCurrent) {
+        // 当作同一手势延续:计数已持有,只按新进度同步,不再 didStart。
+        _phase = _PredictiveBackPhase.start;
+        widget.route.handleUpdateBackGestureProgress(
+          progress: 1 - backEvent.progress,
+        );
+        return true;
+      }
+      // 不再认领:binding 已清空认领者列表,前一轮的收尾事件永远不会
+      // 送达,必须自己收尾,否则计数泄漏。
+      _phase = _PredictiveBackPhase.cancel;
+      _cancelAndSettle();
+      return false;
+    }
+
+    final bool gestureInProgress =
+        PredictiveBackSettings.enabled &&
+        !backEvent.isButtonEvent &&
+        _isEnabled;
     if (!gestureInProgress) {
       return false;
     }
 
     _phase = _PredictiveBackPhase.start;
     _gestureForceCancelled = false;
-    _userGestureFinished = false;
+    _gestureNavigator = widget.route.navigator;
     widget.route.handleStartBackGesture(progress: 1 - backEvent.progress);
     return true;
   }
 
   @override
   void handleUpdateBackGestureProgress(PredictiveBackEvent backEvent) {
-    if (_gestureForceCancelled) return;
+    if (_gestureForceCancelled || !_isDragging) return;
     _phase = _PredictiveBackPhase.update;
     widget.route.handleUpdateBackGestureProgress(
       progress: 1 - backEvent.progress,
@@ -194,7 +246,7 @@ class _PredictiveBackGestureDetectorState
       return;
     }
     _phase = _PredictiveBackPhase.cancel;
-    widget.route.handleCancelBackGesture();
+    _cancelAndSettle();
   }
 
   @override
@@ -232,10 +284,8 @@ class _PredictiveBackGestureDetectorState
   /// [_finishUserGestureWhenSettled]。
   void _commitWithoutReplay() {
     final route = widget.route;
-    final navigator = route.navigator;
+    final navigator = _gestureNavigator;
     if (navigator == null) {
-      // 拿不到 navigator:退回框架实现,至少保证路由出栈
-      route.handleCommitBackGesture();
       return;
     }
     // 顺序要紧:必须先 pop 让退场动画起转,再挂归零监听。
@@ -243,8 +293,29 @@ class _PredictiveBackGestureDetectorState
     // 为 false —— 若先挂监听会走「立即归零」分支,userGestureInProgress
     // 当帧就翻 false,依赖它的消费方(如查看器缩放松弛靠它判断手势是否
     // 结束)会在退场刚开始时就收工,后半段不再跟随。
-    navigator.pop();
-    _finishUserGestureWhenSettled(navigator, route.animation);
+    try {
+      // 路由可能已被其它导航操作退出，不能继续 pop 下层页面。
+      if (route.isCurrent) navigator.pop();
+    } finally {
+      _finishUserGestureWhenSettled(route.animation);
+    }
+  }
+
+  void _cancelAndSettle() {
+    final route = widget.route;
+    try {
+      if (route.isCurrent) {
+        // 与框架取消返回时的 forward 一致，但由本探测器配对手势计数。
+        // 与全屏侧滑实现相同，仅通过 protected controller 驱动回弹。
+        // ignore: invalid_use_of_protected_member
+        final controller = route.controller;
+        if (controller != null && !controller.isCompleted) {
+          controller.forward();
+        }
+      }
+    } finally {
+      _finishUserGestureWhenSettled(route.animation);
+    }
   }
 
   /// 手势计数归零(替代框架 `_handleDragEnd` 尾部的同名逻辑)。
@@ -256,32 +327,44 @@ class _PredictiveBackGestureDetectorState
   /// 与框架同口径:监听退场动画的 status,任一变化即归零并摘监听
   /// (框架用 controller,我们只有只读 animation,派发时机一致);
   /// 若 pop 已同步走完(无动画),立即归零。
-  void _finishUserGestureWhenSettled(
-    NavigatorState navigator,
-    Animation<double>? animation,
-  ) {
-    if (_userGestureFinished) return;
-
-    void finish() {
-      if (_userGestureFinished) return;
-      _userGestureFinished = true;
-      navigator.didStopUserGesture();
-    }
+  void _finishUserGestureWhenSettled(Animation<double>? animation) {
+    if (_gestureNavigator == null) return;
 
     if (animation == null || !animation.isAnimating) {
-      finish();
+      _finishUserGesture();
       return;
     }
+    if (_settlingListener != null) return;
     late final AnimationStatusListener listener;
     listener = (AnimationStatus status) {
-      animation.removeStatusListener(listener);
-      finish();
+      _finishUserGesture();
     };
+    _settlingAnimation = animation;
+    _settlingListener = listener;
     animation.addStatusListener(listener);
   }
 
-  /// 一次性标记:见 [_finishUserGestureWhenSettled]
-  bool _userGestureFinished = false;
+  void _finishUserGesture({bool deferred = false}) {
+    final navigator = _gestureNavigator;
+    if (navigator == null) return;
+    _gestureNavigator = null;
+    _phase = _PredictiveBackPhase.idle;
+    final listener = _settlingListener;
+    if (listener != null) _settlingAnimation?.removeStatusListener(listener);
+    _settlingAnimation = null;
+    _settlingListener = null;
+
+    void stop() {
+      if (navigator.mounted) navigator.didStopUserGesture();
+    }
+
+    // dispose 可能发生在组件树清理期间，延迟通知其它路由重建。
+    if (deferred) {
+      scheduleMicrotask(stop);
+    } else {
+      stop();
+    }
+  }
 
   /// 差异点 4:Activity 进后台(挂后台/锁屏)会打断进行中的手势,且系统
   /// 不再补发 commit/cancel;不收尾则 userGestureInProgress 计数永不归零,
@@ -302,7 +385,7 @@ class _PredictiveBackGestureDetectorState
 
     _gestureForceCancelled = true;
     _phase = _PredictiveBackPhase.cancel;
-    widget.route.handleCancelBackGesture();
+    _cancelAndSettle();
   }
 
   // End WidgetsBindingObserver.
@@ -316,6 +399,7 @@ class _PredictiveBackGestureDetectorState
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _finishUserGesture(deferred: true);
     super.dispose();
   }
 

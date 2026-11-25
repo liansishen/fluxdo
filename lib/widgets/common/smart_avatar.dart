@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:app_icons/app_icons.dart';
 import 'package:jovial_svg/jovial_svg.dart';
+
 import '../../services/discourse_cache_manager.dart';
 import '../../utils/svg_utils.dart';
+import 'animation_visibility.dart';
+import 'first_paint_probe.dart';
 
 /// 智能头像组件
 ///
@@ -55,6 +58,24 @@ bool isSquareAvatarUrl(String? url) {
 }
 
 class _SmartAvatarState extends State<SmartAvatar> {
+  VoidCallback? _releaseForeground;
+
+  void _onFirstPaint() {
+    final url = widget.imageUrl;
+    if (url != null && url.isNotEmpty) {
+      _releaseForeground ??= BlobImageCache.retainForeground(
+        BlobImageCache.avatarBucket,
+        url,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _releaseForeground?.call();
+    super.dispose();
+  }
+
   /// SVG 探测结果的全局记忆(URL → svg 内容,null = 已确认非 SVG)。
   ///
   /// 绝大多数头像不是 SVG,却在**每次挂载**付一次缓存探测(文件读)
@@ -90,6 +111,8 @@ class _SmartAvatarState extends State<SmartAvatar> {
   void didUpdateWidget(SmartAvatar oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.imageUrl != widget.imageUrl) {
+      _releaseForeground?.call();
+      _releaseForeground = null;
       _setupSvgProbe(widget.imageUrl);
     }
   }
@@ -207,21 +230,33 @@ class _SmartAvatarState extends State<SmartAvatar> {
       // 绕开 Flutter Skia multi_frame_codec 的 #85831 bug。
       // RepaintBoundary 将每帧 setImage 触发的重绘限制在头像区域内,
       // 避免列表中多个动图头像同时连累整个 list item 重绘。
-      child = RepaintBoundary(
-        child: Image(
-          image: discourseImageProvider(widget.imageUrl!),
-          width: innerSize,
-          height: innerSize,
-          fit: BoxFit.cover,
-          gaplessPlayback: true,
-          frameBuilder: (context, displayChild, frame, wasSynchronouslyLoaded) {
-            if (wasSynchronouslyLoaded || frame != null) return displayChild;
-            return _buildLoading(fgColor, innerRadius);
-          },
-          errorBuilder: (context, error, stack) {
-            // 动图链路出错(网络 / Rust 解码失败),退化到字母 fallback
-            return _buildFallback(fgColor, innerRadius);
-          },
+      final decodeSide = (innerSize * MediaQuery.devicePixelRatioOf(context))
+          .ceil()
+          .clamp(1, 0x7fffffff);
+      child = AnimationVisibility(
+        child: RepaintBoundary(
+          child: Image(
+            image: discourseImageProvider(
+              widget.imageUrl!,
+              bucket: BlobImageCache.avatarBucket,
+              cacheWidth: decodeSide,
+              cacheHeight: decodeSide,
+            ),
+            width: innerSize,
+            height: innerSize,
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+            frameBuilder:
+                (context, displayChild, frame, wasSynchronouslyLoaded) {
+                  if (wasSynchronouslyLoaded || frame != null)
+                    return displayChild;
+                  return _buildLoading(fgColor, innerRadius);
+                },
+            errorBuilder: (context, error, stack) {
+              // 动图链路出错(网络 / Rust 解码失败),退化到字母 fallback
+              return _buildFallback(fgColor, innerRadius);
+            },
+          ),
         ),
       );
     } else if (_svgProbeResolved) {
@@ -286,7 +321,11 @@ class _SmartAvatarState extends State<SmartAvatar> {
       );
     }
 
-    return avatar;
+    return FirstPaintProbe(
+      key: ValueKey(widget.imageUrl),
+      onFirstPaint: _onFirstPaint,
+      child: avatar,
+    );
   }
 
   Widget? _buildSvg(String svgContent, double size) {

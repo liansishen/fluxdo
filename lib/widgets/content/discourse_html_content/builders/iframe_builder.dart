@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -6,19 +7,31 @@ import 'package:flutter/material.dart';
 import 'package:app_icons/app_icons.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:m3e_ui/m3e_ui.dart';
+import '../../../../config/forum_site.dart';
 import '../../../../constants.dart';
+import '../../../../utils/discourse_url_parser.dart';
 import '../../../../utils/layout_lock.dart';
 import '../../../../utils/url_helper.dart';
+import '../../../../pages/mini_app/mini_app_page.dart';
 import '../../../../pages/webview_page.dart';
 import '../../../../l10n/s.dart';
 import '../../../../services/navigation/app_route_observer.dart';
+import '../../../../services/session/webview_use.dart';
+import '../../../../services/site_context.dart';
 import '../../../../services/embedded_browser_controller_pool.dart';
 import '../../../../services/dynamic_content_suspension_service.dart';
+import '../../../../services/webview_render_gone.dart';
 import '../../../../services/webview_settings.dart';
 import '../../../../services/windows_webview_environment_service.dart';
 
 /// 是否需要交互遮罩（macOS 上 WebView 会捕获滚动事件）
 bool get _needsInteractionMask => !kIsWeb && Platform.isMacOS;
+
+/// 本站嵌入页 `window.open` 开的新窗口叠一页内置浏览器承载（Android）。linux.do 微应用
+/// （红包等）的「打开链接」是站方宿主脚本在用户确认后 window.open（应用本身在 sandbox
+/// 里开不了窗口）：不接的话 Android 在这个嵌入框里直接换成新页面，帖子里的应用被顶掉。
+/// 其他平台没验过新窗口接管，保持原样
+bool get _supportsPopupPages => !kIsWeb && Platform.isAndroid;
 
 /// iframe 属性解析结果
 class IframeAttributes {
@@ -154,6 +167,10 @@ class _IframeWidgetState extends State<IframeWidget> with RouteAware {
   bool _webViewActivated = false;
   EmbeddedBrowserLease? _browserLease;
 
+  /// WebView 渲染进程没了：实例已不能再用，摘掉后由用户点重新加载
+  bool _renderGone = false;
+  int _webViewGeneration = 0;
+
   /// 桌面平台：是否进入交互模式
   bool _interacting = false;
   OverlayEntry? _overlayEntry;
@@ -162,12 +179,36 @@ class _IframeWidgetState extends State<IframeWidget> with RouteAware {
   /// 避免 hybrid composition 持续脏帧触发 BackdropFilter 全屏重算。
   bool _routeOverlayed = false;
 
+  /// 本站页面（微应用、红包等）的 WebView 使用期：加载前从 jar 重灌登录 cookie，
+  /// 关掉时把页内请求轮换过的 `_t` 交给 authority，与内置浏览器同一口径。
+  /// 不灌的话 WebView 带着旧的或空的 `_t` 打开，微应用当成没登录（「检查访问权限」）
+  WebViewUse? _webViewUse;
+  bool _loadedOnce = false;
+
+  /// 新窗口只给本站页面接（见 [_supportsPopupPages]）；第三方嵌入照旧
+  bool get _allowPopups => _supportsPopupPages && _webViewUse != null;
+
+  /// 嵌的是微应用（/apps/<应用 ID>）时的应用 ID：帖子里的框只能横向操作、
+  /// 纵向滚不动，下面给一个全屏打开的入口
+  String? _miniAppId;
+
   @override
   void initState() {
     super.initState();
     DynamicContentSuspensionService.instance.addListener(
       _handleDynamicContentSuspension,
     );
+    final uri = Uri.tryParse(widget.attributes.fullUrl);
+    if (uri != null && ForumSite.fromUri(uri) == SiteContext.current) {
+      _webViewUse = WebViewUses.instance.start(
+        WebViewUsePurpose.browsing,
+        url: widget.attributes.fullUrl,
+        reason: 'post_iframe',
+      );
+      _miniAppId = DiscourseUrlParser.parseMiniApp(
+        widget.attributes.fullUrl,
+      )?.appId;
+    }
   }
 
   void _handleDynamicContentSuspension() {
@@ -204,8 +245,21 @@ class _IframeWidgetState extends State<IframeWidget> with RouteAware {
     _removeOverlay();
     _unlockLayoutIfNeeded();
     _browserLease?.release();
+    final use = _webViewUse;
+    if (use != null) {
+      unawaited(
+        _loadedOnce
+            ? use.end(WebViewUseOutcome.loaded, reason: 'post_iframe_dispose')
+            : use.end(WebViewUseOutcome.aborted),
+      );
+    }
     super.dispose();
   }
+
+  URLRequest _initialRequest(IframeAttributes attrs) => URLRequest(
+    url: WebUri(attrs.fullUrl),
+    headers: {'Referer': AppConstants.baseUrl},
+  );
 
   void _activateWindowsWebView() {
     if (_webViewActivated ||
@@ -242,6 +296,48 @@ class _IframeWidgetState extends State<IframeWidget> with RouteAware {
   void _enterInteractMode() {
     setState(() => _interacting = true);
     _showOverlay();
+  }
+
+  void _onRenderProcessGone(RenderProcessGoneDetail detail) {
+    WebViewRenderGone.report('iframe', detail);
+    if (!mounted || _renderGone) return;
+    _removeOverlay();
+    _unlockLayoutIfNeeded();
+    setState(() {
+      _renderGone = true;
+      _interacting = false;
+      _isLoaded = false;
+      _hasError = false;
+    });
+  }
+
+  void _reloadAfterRenderGone() {
+    if (!mounted) return;
+    setState(() {
+      _renderGone = false;
+      _webViewGeneration++;
+    });
+  }
+
+  /// 网页要开新窗口：叠一页内置浏览器承载它（同 WebViewPage 的弹窗）。
+  /// 必须同步答应，新窗口的地址由网页随后加载进这一页
+  Future<bool?> _openPopupPage(
+    InAppWebViewController controller,
+    CreateWindowAction action,
+  ) async {
+    if (!mounted) return false;
+    unawaited(
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => WebViewPage(
+            url: action.request.url?.toString() ?? '',
+            allowPopups: true,
+            windowId: action.windowId,
+          ),
+        ),
+      ),
+    );
+    return true;
   }
 
   void _exitInteractMode() {
@@ -312,24 +408,32 @@ class _IframeWidgetState extends State<IframeWidget> with RouteAware {
         children: [
           // Windows 快速滚动时禁止自动创建 WebView2 Controller。用户明确
           // 点击后才加载，避免列表构建/回收堵住 Win32 平台消息线程。
-          if (showWebView)
+          if (showWebView && !_renderGone)
             Offstage(
               offstage: _routeOverlayed,
               child: InAppWebView(
+                key: ValueKey(_webViewGeneration),
                 webViewEnvironment: deferWindowsWebView
                     ? WindowsWebViewEnvironmentService.instance.environment
                     : null,
-                initialUrlRequest: URLRequest(
-                  url: WebUri(attrs.fullUrl),
-                  headers: {'Referer': AppConstants.baseUrl},
-                ),
+                // 本站页面等 cookie 灌好再加载（见 [_webViewUse]）
+                initialUrlRequest: _webViewUse == null
+                    ? _initialRequest(attrs)
+                    : null,
                 initialSettings: _buildSettings(attrs),
                 initialUserScripts: WebViewSettings.compatPolyfillScripts,
-                onWebViewCreated: (controller) {
+                onWebViewCreated: (controller) async {
                   WebViewSettings.registerJsErrorReporter(controller);
+                  final use = _webViewUse;
+                  if (use == null) return;
+                  await use.ready;
+                  if (!mounted) return;
+                  await controller.loadUrl(urlRequest: _initialRequest(attrs));
                 },
                 onReceivedServerTrustAuthRequest: (_, challenge) =>
                     WebViewSettings.handleServerTrustAuthRequest(challenge),
+                onRenderProcessGone: (_, detail) =>
+                    _onRenderProcessGone(detail),
                 // 允许 WebView 接收水平滑动手势
                 gestureRecognizers: {
                   Factory<HorizontalDragGestureRecognizer>(
@@ -351,6 +455,7 @@ class _IframeWidgetState extends State<IframeWidget> with RouteAware {
                   }
                 },
                 onLoadStop: (controller, url) async {
+                  _loadedOnce = true;
                   if (mounted) {
                     setState(() => _isLoaded = true);
                   }
@@ -395,6 +500,7 @@ class _IframeWidgetState extends State<IframeWidget> with RouteAware {
                   }
                   return NavigationActionPolicy.CANCEL;
                 },
+                onCreateWindow: _allowPopups ? _openPopupPage : null,
               ),
             ),
           if (!showWebView)
@@ -430,8 +536,18 @@ class _IframeWidgetState extends State<IframeWidget> with RouteAware {
                 ),
               ),
             ),
+          if (_renderGone)
+            Positioned.fill(
+              child: ColoredBox(
+                color: theme.colorScheme.surfaceContainerHighest,
+                child: WebViewRenderGoneView(
+                  compact: true,
+                  onReload: _reloadAfterRenderGone,
+                ),
+              ),
+            ),
           // 加载指示器
-          if (showWebView && !_isLoaded && !_hasError)
+          if (showWebView && !_renderGone && !_isLoaded && !_hasError)
             Container(
               color: theme.colorScheme.surfaceContainerHighest,
               child: const Center(child: LoadingSpinner()),
@@ -501,9 +617,27 @@ class _IframeWidgetState extends State<IframeWidget> with RouteAware {
       );
     }
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: sizedContent,
+    final miniAppId = _miniAppId;
+    if (miniAppId == null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: sizedContent,
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(padding: const EdgeInsets.only(top: 8), child: sizedContent),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            onPressed: () => MiniAppPage.open(context, miniAppId),
+            icon: const Icon(Symbols.open_in_full_rounded, size: 18),
+            label: Text(context.l10n.miniApp_openFullscreen),
+            style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+          ),
+        ),
+      ],
     );
   }
 
@@ -525,8 +659,10 @@ class _IframeWidgetState extends State<IframeWidget> with RouteAware {
       // 外观
       transparentBackground: true,
 
-      // 安全
-      javaScriptCanOpenWindowsAutomatically: false,
+      // 新窗口：网页 window.open 开的页面叠一页内置浏览器承载（见 [_openPopupPage]）。
+      // 不接的话 Android 会在这个嵌入框里直接换成新页面，帖子里的应用就没了
+      supportMultipleWindows: _allowPopups,
+      javaScriptCanOpenWindowsAutomatically: _allowPopups,
 
       // 性能
       useHybridComposition: true,
@@ -537,6 +673,9 @@ class _IframeWidgetState extends State<IframeWidget> with RouteAware {
       // 允许混合内容和第三方 cookies
       mixedContentMode: MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
       thirdPartyCookiesEnabled: true,
+
+      // 渲染进程没了由我们认领，否则 Android 连 App 一起杀
+      useOnRenderProcessGone: true,
     );
   }
 

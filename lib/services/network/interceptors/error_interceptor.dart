@@ -54,10 +54,16 @@ class ErrorInterceptor extends Interceptor {
     String? errorMessage;
     final data = err.response?.data;
     if (data is Map<String, dynamic>) {
-      // Discourse API 错误格式
+      // Discourse API 错误格式是 `error: "…"` / `errors: […]`；第三方接口（LD士多
+      // 等）常是 `error: {code, message}`——以前直接 `as String?` 会在拦截器里
+      // 抛类型错误，把真实状态码和服务端文案一起盖掉
+      final error = data['error'];
+      final errors = data['errors'];
+      final nested = error is Map ? error['message'] : null;
       errorMessage =
-          data['error'] as String? ??
-          (data['errors'] as List?)?.firstOrNull?.toString();
+          (error is String ? error : null) ??
+          (nested is String ? nested : null) ??
+          (errors is List ? errors.firstOrNull?.toString() : null);
     }
 
     // 转成类型化异常供 UI 层处理。
@@ -72,7 +78,7 @@ class ErrorInterceptor extends Interceptor {
       final retryAfter = extractRetryAfterSeconds(err.response);
       if (showErrorToast) {
         final toastMessage = retryAfter != null && retryAfter > 0
-            ? S.current.network_rateLimitedWait(_formatWaitDuration(retryAfter))
+            ? S.current.network_rateLimitedWait(formatWaitDuration(retryAfter))
             : (errorMessage ?? S.current.network_rateLimited);
         ToastService.showError(toastMessage);
       }
@@ -117,7 +123,8 @@ class ErrorInterceptor extends Interceptor {
     handler.next(err);
   }
 
-  String _formatWaitDuration(int seconds) {
+  /// 等待时长的人话（「3 分钟」「45 秒」），过盾拦截器的挑战型 429 提示也用
+  static String formatWaitDuration(int seconds) {
     if (seconds >= 86400) {
       return S.current.time_days((seconds / 86400).ceil());
     }

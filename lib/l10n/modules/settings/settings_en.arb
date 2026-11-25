@@ -28,8 +28,8 @@
   "bottomNav_singleTapAction": "Single tap on active tab",
   "bottomNav_singleTapActionDesc": "Action triggered when tapping an already-selected tab",
   "bottomNav_title": "Bottom Navigation",
-  "cfVerify_autoTitle": "Auto-trigger CF challenge",
-  "cfVerify_autoDesc": "Show the verification page automatically when a Cloudflare challenge is detected. When off, trigger it manually from the error view.",
+  "cfVerify_autoTitle": "Show verification automatically",
+  "cfVerify_autoDesc": "Open the verification page automatically when Cloudflare asks for it; when off, verify manually from the error page",
   "navTapAction_none": "None",
   "navTapAction_refresh": "Refresh",
   "navTapAction_scrollToTop": "Scroll to top",
@@ -43,7 +43,7 @@
   "preferences_autoFillLogin": "Auto-fill login",
   "preferences_autoFillLoginDesc": "Remember credentials and auto-fill on login",
   "preferences_homeRefreshButton": "Floating home refresh button",
-  "preferences_homeRefreshButtonDesc": "Show a separate refresh button above the compose button on the home page",
+  "preferences_homeRefreshButtonDesc": "Show a separate refresh button above the compose button on the home page. While it's on, the compose button no longer turns into refresh when you scroll up",
   "preferences_homeFabRefreshOnScrollUp": "Compose button becomes refresh when scrolling up",
   "preferences_homeFabRefreshOnScrollUpDesc": "While scrolling back up the home list, the compose button temporarily turns into a refresh button that jumps to the top and reloads",
   "preferences_clipboardTopicLinkDetection": "Detect clipboard topic links",
@@ -94,6 +94,8 @@
   "preferences_enterUrl": "Enter URL",
   "preferences_fullscreenSwipeBack": "Full-screen swipe back",
   "preferences_fullscreenSwipeBackDesc": "Swipe right anywhere on a page to go back; when off, only the left edge responds",
+  "preferences_predictiveBack": "Predictive back gesture",
+  "preferences_predictiveBackDesc": "Pages and sheets follow your finger while you drag the back gesture; when off, back happens on release with the regular animation",
   "preferences_exitOnSingleBack": "Exit on one back press",
   "preferences_exitOnSingleBackDesc": "Exit immediately from the home screen and use the system predictive exit animation; when off, press back twice to exit",
   "preferences_hideBarOnScroll": "Hide bar on scroll",
@@ -211,5 +213,7 @@
   "preferences_crashlytics": "Crash reporting",
   "preferences_crashlyticsDesc": "Auto-report crash logs to help developers",
   "preferences_enableCrashlyticsContent": "This app uses Firebase Crashlytics to collect crash information to improve stability.\n\nCollected data includes device info and crash details, no personal data. You can disable this in Settings.",
-  "preferences_enableCrashlyticsTitle": "Data Collection Notice"
+  "preferences_enableCrashlyticsTitle": "Data Collection Notice",
+  "cfVerify_manualTitle": "Verify now",
+  "cfVerify_manualDesc": "Open the verification page and pass it manually; worth a try when challenges keep coming back"
 }

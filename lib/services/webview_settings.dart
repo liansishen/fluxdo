@@ -100,7 +100,8 @@ class WebViewSettings {
       final host = challenge.protectionSpace.host;
       final der =
           challenge.protectionSpace.sslCertificate?.x509Certificate?.encoded;
-      final trusted = NetworkSettingsService.instance.isGatewayMode &&
+      final trusted =
+          NetworkSettingsService.instance.relaysWebViewThroughGateway &&
           ProxyLeafTrust.isProxyLeaf(host, der);
       return ServerTrustAuthResponse(
         action: trusted
@@ -108,9 +109,9 @@ class WebViewSettings {
             : ServerTrustAuthResponseAction.CANCEL,
       );
     }
-    // Android/macOS: gateway MITM 模式下放行代理 CA 证书。
-    // iOS: 使用隧道模式（非 MITM），不会触发代理 CA 信任问题。
-    if (NetworkSettingsService.instance.isGatewayMode) {
+    // Android/macOS: 网关中转内置网页（MITM）时放行代理 CA 证书（含 VPN 让路时只为
+    // 浏览器指纹起的网关）。iOS: 使用隧道模式（非 MITM），不会触发代理 CA 信任问题。
+    if (NetworkSettingsService.instance.relaysWebViewThroughGateway) {
       return ServerTrustAuthResponse(
         action: ServerTrustAuthResponseAction.PROCEED,
       );
@@ -140,6 +141,8 @@ class WebViewSettings {
     useShouldInterceptRequest: false,
     useOnLoadResource: false,
     useOnDownloadStart: false,
+    // 渲染进程没了由我们认领，否则 Android 连 App 一起杀（见 WebViewRenderGone）
+    useOnRenderProcessGone: true,
 
     // 其他优化
     transparentBackground: true,
@@ -168,6 +171,7 @@ class WebViewSettings {
     useShouldInterceptRequest: false,
     useOnLoadResource: false,
     useOnDownloadStart: false,
+    useOnRenderProcessGone: true,
 
     transparentBackground: true,
     disableContextMenu: true,
@@ -255,8 +259,75 @@ class WebViewSettings {
     forMainFrameOnly: true,
   );
 
+  /// 微应用子框架补 `AbortSignal.any`（Chrome 116 才有）。
+  ///
+  /// linux.do 微应用跑在 sandbox 子框架里（`/mini-app-api/…/runtime`），站方
+  /// SDK 一启动就调它；旧 WebView 上抛 TypeError，站方把启动异常一律报成
+  /// SANDBOX_UNAVAILABLE「浏览器无法安全运行此应用，请升级或更换浏览器。」。
+  /// 主框架的加载器靠上面的 polyfill 跑得起来，子框架没有（polyfill 只进主
+  /// 框架），所以单补这一个：注入所有框架，只在微应用的地址下生效，碰不到验证页
+  /// 等别的子框架；只在缺的时候补，站方加固要查「原生」的那批函数一个不动。
+  /// 用到的内建函数注入时先取好，应用代码改原型影响不到它
+  static final UserScript _miniAppFrameScript = UserScript(
+    source: r'''
+(function () {
+  'use strict';
+  try {
+    if (!/^\/(?:mini-app-api\/|apps(?:\/|$))/.test(location.pathname)) return;
+    var Signal = window.AbortSignal, Controller = window.AbortController;
+    if (typeof Signal !== 'function' || typeof Controller !== 'function' ||
+        typeof Signal.any === 'function') return;
+    var apply = Reflect.apply, toArray = Array.from;
+    var describe = Object.getOwnPropertyDescriptor;
+    var signalOf = describe(Controller.prototype, 'signal').get;
+    var abort = Controller.prototype.abort;
+    var isAborted = describe(Signal.prototype, 'aborted').get;
+    var reasonProperty = describe(Signal.prototype, 'reason');
+    var reasonOf = function (signal) {
+      return reasonProperty ? apply(reasonProperty.get, signal, []) : undefined;
+    };
+    var listen = EventTarget.prototype.addEventListener;
+    var unlisten = EventTarget.prototype.removeEventListener;
+    var any = function any(signals) {
+      var sources = toArray(signals), handlers = [], i;
+      // 混进非 AbortSignal 时在这里抛 TypeError，和原生一致
+      for (i = 0; i < sources.length; i++) apply(isAborted, sources[i], []);
+      var controller = new Controller();
+      var result = apply(signalOf, controller, []);
+      for (i = 0; i < sources.length; i++) {
+        if (apply(isAborted, sources[i], [])) {
+          apply(abort, controller, [reasonOf(sources[i])]);
+          return result;
+        }
+      }
+      var follow = function (source) {
+        return function () {
+          for (var j = 0; j < sources.length; j++) {
+            apply(unlisten, sources[j], ['abort', handlers[j]]);
+          }
+          apply(abort, controller, [reasonOf(source)]);
+        };
+      };
+      for (i = 0; i < sources.length; i++) {
+        handlers[i] = follow(sources[i]);
+        apply(listen, sources[i], ['abort', handlers[i]]);
+      }
+      return result;
+    };
+    Object.defineProperty(Signal, 'any', {
+      value: any,
+      writable: true,
+      configurable: true,
+    });
+  } catch (e) {}
+})();
+''',
+    injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
+    forMainFrameOnly: false,
+  );
+
   /// 兼容性脚本列表，传给 `InAppWebView.initialUserScripts`。
-  /// 必须先在启动期调 [preloadPolyfill]；未加载时返回空列表 + 一次性告警。
+  /// 必须先在启动期调 [preloadPolyfill]；未加载时只剩微应用子框架补丁 + 一次性告警。
   ///
   /// Eruda 开关关闭时 (默认), 在 polyfill 前追加禁用脚本; 打开时原样返回让
   /// bundle 内的 eruda 正常初始化。
@@ -269,12 +340,13 @@ class WebViewSettings {
           '老 WebView 兼容性会缺失。请检查 main.dart 初始化序列。',
         );
       }
-      return UnmodifiableListView<UserScript>([]);
+      return UnmodifiableListView<UserScript>([_miniAppFrameScript]);
     }
-    if (!ErudaSettingsService.instance.enabled) {
-      return UnmodifiableListView<UserScript>([_erudaDisableScript, ...cached]);
-    }
-    return cached;
+    return UnmodifiableListView<UserScript>([
+      if (!ErudaSettingsService.instance.enabled) _erudaDisableScript,
+      ...cached,
+      _miniAppFrameScript,
+    ]);
   }
 
   /// 注册 JS 错误 / lifecycle 回传 handler，把 WebView 内的事件落到 LogWriter。
@@ -376,6 +448,7 @@ class WebViewSettings {
 
     // 启用下载拦截
     useOnDownloadStart: true,
+    useOnRenderProcessGone: true,
 
     // 安全相关
     thirdPartyCookiesEnabled: true,

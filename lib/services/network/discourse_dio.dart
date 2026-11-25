@@ -98,7 +98,10 @@ enum DiscourseDioKind {
     required this.recovery,
     required this.cfRecovery,
     required this.networkLog,
-  }) : assert(!freezeDuringCfVerification || scheduled, '验证期冻结由调度器执行，必须同时启用调度');
+  }) : assert(
+         !freezeDuringCfVerification || scheduled,
+         '验证期冻结由调度器执行，必须同时启用调度',
+       );
 
   /// 并发 + 滑动窗口速率调度（参数从 RequestSchedulerConfig 动态读取）。
   final bool scheduled;
@@ -146,35 +149,26 @@ class DiscourseDio {
     dio.transformer = BackgroundTransformer();
 
     // 1. 配置平台适配器
-    //
-    // 需要绕开 rhttp 走系统栈的场景(如 MessageBus 长轮询依赖系统级省电)
-    // 由请求侧的 FluxRequestKeys.skipRhttpAdapter 逐请求声明,不在这里分档。
     configurePlatformAdapter(dio);
 
     // 论坛引擎只服务一个站点，另一站（含子域）不能进入会话拦截器链。
-    dio.interceptors.add(
-      InterceptorsWrapper(
-        onRequest: (options, handler) {
-          final host = options.uri.host.toLowerCase();
-          final otherSite = ForumSite.values.any(
-            (site) =>
-                site != SiteContext.current &&
-                (host == site.host || host.endsWith('.${site.host}')),
-          );
-          if (otherSite) {
-            handler.reject(
-              DioException(
-                requestOptions: options,
-                type: DioExceptionType.cancel,
-                message: '跨站请求须先切换到对应站点',
-              ),
-            );
-            return;
-          }
-          handler.next(options);
-        },
-      ),
-    );
+    dio.interceptors.add(InterceptorsWrapper(onRequest: (options, handler) {
+      // 请求发起的时刻：日志里据此算上排队和重放的总时长
+      NetworkLogInterceptor.markFirstSeen(options);
+      final host = options.uri.host.toLowerCase();
+      final otherSite = ForumSite.values.any((site) =>
+          site != SiteContext.current &&
+          (host == site.host || host.endsWith('.${site.host}')));
+      if (otherSite) {
+        handler.reject(DioException(
+          requestOptions: options,
+          type: DioExceptionType.cancel,
+          message: '跨站请求须先切换到对应站点',
+        ));
+        return;
+      }
+      handler.next(options);
+    }));
 
     // 2. 会话代守卫（最先执行，确保过期请求不进入后续拦截器）
     dio.interceptors.add(SessionGuardInterceptor());
@@ -192,7 +186,7 @@ class DiscourseDio {
     // 4. 恢复协调器:全项目唯一的重放引擎
     //
     // 策略顺序即失败归属(首个 canHandle 者独占决策权):
-    //   会话自愈 → 限流等待 → 瞬态重试
+    //   会话自愈 → BAD CSRF 刷新重放 → 限流等待 → 瞬态重试
     //
     // 必须注册在 AppCookieManager **之前**:dio 5.11 三相全 FIFO,先注册者
     // 先看到响应。服务端拒绝时常带 Set-Cookie 清 _t,自愈判定要读的是那条
@@ -217,6 +211,8 @@ class DiscourseDio {
           policies: [
             // 自愈读 jar 快照时会自行等待 jar 初始化
             if (enableCookies) SessionSelfHealPolicy(),
+            // CSRF 只有带会话的主站链路才有
+            if (enableCookies) BadCsrfPolicy(),
             RateLimitPolicy(
               isChallengeResponse: CfChallengeClassifier.isChallengeResponse,
             ),
@@ -230,9 +226,12 @@ class DiscourseDio {
     }
 
     // 5. Cookie 管理
+    Future<void> Function(RequestOptions)? reloadCookies;
     if (enableCookies) {
       if (cookieJarService.isInitialized) {
-        dio.interceptors.add(AppCookieManager(cookieJarService.cookieJar));
+        final manager = AppCookieManager(cookieJarService.cookieJar);
+        dio.interceptors.add(manager);
+        reloadCookies = manager.refreshRequestCookies;
       } else {
         // 启动顺序出了偏差：留下记录，但链路照常完整（等 jar 就绪）
         AppLogger.warning(
@@ -240,12 +239,16 @@ class DiscourseDio {
           'Cookie 管理改为等 jar 就绪后再处理请求',
           tag: 'DiscourseDio',
         );
-        dio.interceptors.add(JarReadyCookieManager(cookieJarService));
+        final manager = JarReadyCookieManager(cookieJarService);
+        dio.interceptors.add(manager);
+        reloadCookies = manager.refreshRequestCookies;
       }
     }
 
-    // 6. 请求头拦截器
-    dio.interceptors.add(RequestHeaderInterceptor(CsrfTokenService()));
+    // 6. 请求头拦截器（CSRF 现取后要按新会话重载 Cookie，见 [RequestHeaderInterceptor]）
+    dio.interceptors.add(
+      RequestHeaderInterceptor(CsrfTokenService(), reloadCookies: reloadCookies),
+    );
 
     // 7. 重定向拦截器
     dio.interceptors.add(RedirectInterceptor(dio));
@@ -320,6 +323,12 @@ class JarReadyCookieManager extends Interceptor {
       return;
     }
     await inner.onRequest(options, handler);
+  }
+
+  /// 同 [AppCookieManager.refreshRequestCookies]；能走到这里说明请求阶段已等到 jar。
+  Future<void> refreshRequestCookies(RequestOptions options) async {
+    final inner = await _resolve();
+    await inner.refreshRequestCookies(options);
   }
 
   @override

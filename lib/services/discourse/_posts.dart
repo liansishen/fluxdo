@@ -352,14 +352,16 @@ mixin _PostsMixin on _DiscourseServiceBase {
   }
 
   /// 接受答案
-  Future<Map<String, dynamic>> acceptAnswer(int postId) async {
+  ///
+  /// 新版插件返回已采纳答案数组(旧版为单个对象),调用方不消费响应体,
+  /// 这里不解析,避免版本差异导致类型转换失败。
+  Future<void> acceptAnswer(int postId) async {
     try {
-      final response = await _dio.post(
+      await _dio.post(
         '/solution/accept',
         data: {'id': postId},
         options: Options(contentType: Headers.formUrlEncodedContentType),
       );
-      return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
       _throwApiError(e);
     }
@@ -444,7 +446,15 @@ mixin _PostsMixin on _DiscourseServiceBase {
         'post_id': postId,
         'topic_id': topicId,
       },
-      options: Options(contentType: Headers.formUrlEncodedContentType),
+      options: Options(
+        contentType: Headers.formUrlEncodedContentType,
+        // 点击统计是后台请求：失败（502 等）不弹「服务器暂时不可用」，
+        // 以前点外链时偶尔跳出这条提示，让人以为是链接打不开（Issue #2）
+        extra: {
+          FluxRequestKeys.isSilent: true,
+          FluxRequestKeys.showErrorToast: false,
+        },
+      ),
     ).catchError((e) {
       debugPrint('[DiscourseService] trackClick failed: $e');
       return Response(requestOptions: RequestOptions());

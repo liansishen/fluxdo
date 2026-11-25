@@ -2285,7 +2285,7 @@ class _TopicDetailPageState extends ConsumerState<TopicDetailPage>
               ),
             ),
             PopupMenuButton<VoidCallback>(
-              tooltip: '当前楼层作者操作',
+              tooltip: context.l10n.topic_vscodeAuthorActions,
               icon: const Icon(Icons.person_outline),
               onSelected: (action) => action(),
               itemBuilder: (context) => [
@@ -2322,14 +2322,16 @@ class _TopicDetailPageState extends ConsumerState<TopicDetailPage>
               ),
             if (target.showEditsIndicator)
               IconButton(
-                tooltip: '编辑历史',
+                tooltip: context.l10n.postRevision_modalTitle,
                 icon: const Icon(Icons.history),
                 onPressed: () =>
                     showPostRevisionSheet(context: context, postId: target.id),
               ),
             if (danmakuPref && hasBoosts)
               IconButton(
-                tooltip: danmakuOff ? '显示弹幕' : '关闭弹幕',
+                tooltip: danmakuOff
+                    ? context.l10n.boost_danmakuShow
+                    : context.l10n.boost_danmakuDismiss,
                 icon: Icon(danmakuOff ? Icons.subtitles_off : Icons.subtitles),
                 onPressed: () => ref
                     .read(topicSessionProvider(widget.topicId).notifier)
@@ -2392,7 +2394,7 @@ class _TopicDetailPageState extends ConsumerState<TopicDetailPage>
               ),
             ),
             IconButton(
-              tooltip: '收起楼层操作',
+              tooltip: context.l10n.topic_vscodeHideFloorActions,
               onPressed: () => _vscodeSelectedPost.value = null,
               icon: const Icon(Icons.close),
             ),
@@ -2705,7 +2707,7 @@ class _TopicDetailPageState extends ConsumerState<TopicDetailPage>
       if (mounted) setState(() {});
     });
 
-    ref.listen<AsyncValue<void>>(authStateProvider, (_, _) {
+    ref.listen<AsyncValue<int>>(authStateProvider, (_, _) {
       if (!context.mounted) return;
       final stillLoggedIn = ref.read(currentUserProvider).value != null;
       if (_controller.trackEnabled != stillLoggedIn) {
@@ -3310,9 +3312,12 @@ class _TopicDetailPageState extends ConsumerState<TopicDetailPage>
         // 使用 Offstage 保持帖子列表存在但在搜索模式下隐藏，保留滚动位置
         Offstage(
           offstage: isSearchMode,
-          child: VscodeReaderFlowScope(
-            selectedPost: _vscodeSelectedPost,
-            child: content,
+          child: TickerMode(
+            enabled: !isSearchMode,
+            child: VscodeReaderFlowScope(
+              selectedPost: _vscodeSelectedPost,
+              child: content,
+            ),
           ),
         ),
 

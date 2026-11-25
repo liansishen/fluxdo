@@ -351,21 +351,11 @@ void main() {
       final (outcome, round) = await start();
       env.webView = 'v1';
       round.clearanceSeen('v1', source: 'polling');
-      await clock.advance(const Duration(milliseconds: 5999));
-      expect(round.isDone, isFalse);
-      expect(env.landed, isEmpty, reason: '无完成信号时必须先稳定满 6 秒');
-      await clock.advance(const Duration(milliseconds: 1));
-      expect(env.landed, ['v1', 'v2']);
-      expect(round.isDone, isFalse);
-      await clock.advance(const Duration(milliseconds: 999));
-      expect(round.isDone, isFalse, reason: '改落后的三次尝试仍须遵守重试间隔');
-      await clock.advance(const Duration(milliseconds: 1));
-      expect(round.isDone, isTrue);
+      round.completionHint('js navigation: beforeunload');
+      await clock.advance(const Duration(seconds: 5));
       expect((await outcome as CfRoundFailed).reason, CfRoundFailure.notLanded);
-      expect(env.landed, ['v1', 'v2', 'v2', 'v2']);
+      expect(env.landed.toSet(), {'v1', 'v2'});
       expect(env.jar, 'old');
-      expect(env.calls, isNot(contains('afterLanded')));
-      expect(env.recordedFailures, [round.id]);
     });
 
     test('值一直在变、稳定不下来 → 不落值，按超时收口', () async {

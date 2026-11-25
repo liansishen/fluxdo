@@ -35,10 +35,12 @@ class DohProxyService {
   String? _currentDohBootstrapSignature;
   String? _currentDohAuthSignature;
   bool? _currentPreferIPv6;
+  bool? _currentIpv6Auto;
   int? _currentPreferredPort;
   String? _currentServerIp;
   bool? _currentMitmConnect;
   bool? _currentH2Mitm;
+  bool? _currentBrowserTls;
   String? _currentUpstreamSignature;
   String? _currentDohRoutesUrl;
   String? _currentSelectMode;
@@ -50,6 +52,8 @@ class DohProxyService {
     DohProxyFfi.instance.configureEchDnsPolicy(policy);
   }
 
+  /// 启动时带的自定义节点清单（拼成一个串比较）
+  String? _currentCustomNodes;
   String? _lastError;
   bool _processAuthRejected = false;
   // 进程模式下 stdout 打出的 DOH_ACCEL_UPDATE 行，等 App 取走
@@ -77,6 +81,7 @@ class DohProxyService {
     int preferredPort = 0,
     bool enableDoh = true,
     bool preferIPv6 = false,
+    bool ipv6Auto = false,
     bool gatewayMode = false,
     String? dohServer,
     String? dohServerEch,
@@ -100,6 +105,7 @@ class DohProxyService {
     String? dohNodeListJson,
     String selectMode = 'off',
     String? selectStateJson,
+    List<String> customNodes = const [],
     bool shareMeasurements = false,
     String? atlasRoutesUrl,
     List<Map<String, Object>> publicDoh = const [],
@@ -109,6 +115,9 @@ class DohProxyService {
     String? appVersion,
     String? networkSig,
     List<String> preconnectHosts = const [],
+    bool browserTls = false,
+    String? fingerprintCachePath,
+    String? webviewUserAgent,
   }) async {
     final authSignature = _buildAuthSignature(dohAuthToken, dohEchAuthToken);
     final bootstrapSignature = _buildBootstrapSignature(
@@ -132,17 +141,20 @@ class DohProxyService {
           _currentDohBootstrapSignature == bootstrapSignature &&
           _currentDohAuthSignature == authSignature &&
           _currentPreferIPv6 == preferIPv6 &&
+          _currentIpv6Auto == ipv6Auto &&
           _currentPreferredPort == preferredPort &&
           _currentServerIp == serverIp &&
           _currentMitmConnect == mitmConnect &&
           _currentH2Mitm == h2Mitm &&
           _currentEchDnsPolicySignature == jsonEncode(_echDnsPolicy.toJson()) &&
+          _currentBrowserTls == browserTls &&
           _currentUpstreamSignature == upstreamSignature &&
           // 路由表 / 节点列表只是启动时的种子，内容变了不重启；只看接口地址
           _currentDohRoutesUrl == dohRoutesUrl &&
-          // 优选模式变了要重启；share / bearer / networkSig / selectState / appVersion
-          // 都是运行态（有专门的 FFI 入口或只在启动时回灌），不触发重启
-          _currentSelectMode == selectMode;
+          // 优选模式、自定义节点变了要重启；share / bearer / networkSig / selectState /
+          // appVersion 都是运行态（有专门的 FFI 入口或只在启动时回灌），不触发重启
+          _currentSelectMode == selectMode &&
+          _currentCustomNodes == customNodes.join('\n');
       if (sameConfig) {
         NetworkLogger.log('[DOH] 代理已在运行，端口: $_port');
         return true;
@@ -182,6 +194,7 @@ class DohProxyService {
         dohNodeListJson,
         selectMode: selectMode,
         selectStateJson: selectStateJson,
+        customNodes: customNodes,
         shareMeasurements: shareMeasurements,
         atlasRoutesUrl: atlasRoutesUrl,
         publicDoh: publicDoh,
@@ -191,6 +204,10 @@ class DohProxyService {
         appVersion: appVersion,
         networkSig: networkSig,
         preconnectHosts: preconnectHosts,
+        ipv6Auto: ipv6Auto,
+        browserTls: browserTls,
+        fingerprintCachePath: fingerprintCachePath,
+        webviewUserAgent: webviewUserAgent,
       );
       // 桌面平台 FFI 加载失败时，回退到进程模式
       if (!result && DohProxyFfi.canFallbackToProcess) {
@@ -219,6 +236,11 @@ class DohProxyService {
           dohRoutesUrl,
           selectMode: selectMode,
           preconnectHosts: preconnectHosts,
+          customNodes: customNodes,
+          ipv6Auto: ipv6Auto,
+          browserTls: browserTls,
+          fingerprintCachePath: fingerprintCachePath,
+          webviewUserAgent: webviewUserAgent,
         );
       }
       return result;
@@ -246,6 +268,11 @@ class DohProxyService {
         dohRoutesUrl,
         selectMode: selectMode,
         preconnectHosts: preconnectHosts,
+        customNodes: customNodes,
+        ipv6Auto: ipv6Auto,
+        browserTls: browserTls,
+        fingerprintCachePath: fingerprintCachePath,
+        webviewUserAgent: webviewUserAgent,
       );
     }
   }
@@ -278,6 +305,7 @@ class DohProxyService {
     String? dohNodeListJson, {
     String selectMode = 'off',
     String? selectStateJson,
+    List<String> customNodes = const [],
     bool shareMeasurements = false,
     String? atlasRoutesUrl,
     List<Map<String, Object>> publicDoh = const [],
@@ -287,12 +315,19 @@ class DohProxyService {
     String? appVersion,
     String? networkSig,
     List<String> preconnectHosts = const [],
+    bool ipv6Auto = false,
+    bool browserTls = false,
+    String? fingerprintCachePath,
+    String? webviewUserAgent,
   }) async {
     try {
       return await _enqueueFfiOp(() async {
-        NetworkLogger.log(
-          '[DOH] 使用 FFI 启动代理，模式: ${enableDoh ? "DoH 网关" : "纯上游代理"}',
-        );
+        final mode = enableDoh
+            ? 'DoH 网关'
+            : gatewayMode
+            ? '浏览器指纹网关（不开 DoH）'
+            : '纯上游代理';
+        NetworkLogger.log('[DOH] 使用 FFI 启动代理，模式: $mode');
 
         final policy = _echDnsPolicy;
         _currentPreferredPort = port;
@@ -325,6 +360,7 @@ class DohProxyService {
           dohNodeListJson: dohNodeListJson,
           selectMode: selectMode,
           selectStateJson: selectStateJson,
+          customNodes: customNodes,
           shareMeasurements: shareMeasurements,
           atlasRoutesUrl: atlasRoutesUrl,
           publicDoh: publicDoh,
@@ -334,6 +370,10 @@ class DohProxyService {
           appVersion: appVersion,
           networkSig: networkSig,
           preconnectHosts: preconnectHosts,
+          ipv6Auto: ipv6Auto,
+          browserTls: browserTls,
+          fingerprintCachePath: fingerprintCachePath,
+          webviewUserAgent: webviewUserAgent,
         );
         // 启动期间用户可能再次修改策略，独立查询不能被旧启动快照覆盖。
         if (!identical(policy, _echDnsPolicy)) {
@@ -361,11 +401,13 @@ class DohProxyService {
           dohEchAuthToken,
         );
         _currentPreferIPv6 = preferIPv6;
+        _currentIpv6Auto = ipv6Auto;
         _currentPreferredPort = port;
         _currentServerIp = serverIp;
         _currentMitmConnect = mitmConnect;
         _currentH2Mitm = h2Mitm;
         _currentEchDnsPolicySignature = jsonEncode(policy.toJson());
+        _currentBrowserTls = browserTls;
         _currentUpstreamSignature = _buildUpstreamSignature(
           protocol: upstreamProtocol,
           host: upstreamHost,
@@ -376,6 +418,7 @@ class DohProxyService {
         );
         _currentDohRoutesUrl = dohRoutesUrl;
         _currentSelectMode = selectMode;
+        _currentCustomNodes = customNodes.join('\n');
         NetworkLogger.log('[DOH] FFI 代理已启动，端口: $_port');
         return true;
       });
@@ -408,9 +451,14 @@ class DohProxyService {
     bool mitmConnect,
     bool h2Mitm,
     String? dohRoutesUrl, {
-    // 进程模式不做本地优选，只记下模式让 sameConfig 比较稳定
+    // 进程模式不做本地优选，只记下模式和自定义节点让 sameConfig 比较稳定
     String selectMode = 'off',
     List<String> preconnectHosts = const [],
+    List<String> customNodes = const [],
+    bool ipv6Auto = false,
+    bool browserTls = false,
+    String? fingerprintCachePath,
+    String? webviewUserAgent,
   }) async {
     try {
       final policyJson = jsonEncode(_echDnsPolicy.toJson());
@@ -435,6 +483,17 @@ class DohProxyService {
         if (!mitmConnect) '--tunnel-connect',
         if (h2Mitm) '--h2-mitm',
         if (preferIPv6) '--ipv6',
+        if (ipv6Auto) '--ipv6-auto',
+        if (browserTls) '--browser-tls',
+        if (fingerprintCachePath != null &&
+            fingerprintCachePath.isNotEmpty) ...[
+          '--fingerprint-cache-path',
+          fingerprintCachePath,
+        ],
+        if (webviewUserAgent != null && webviewUserAgent.isNotEmpty) ...[
+          '--webview-user-agent',
+          webviewUserAgent,
+        ],
         if (preconnectHosts.isNotEmpty) ...[
           '--preconnect-hosts',
           preconnectHosts.join(','),
@@ -534,11 +593,13 @@ class DohProxyService {
             dohEchAuthToken,
           );
           _currentPreferIPv6 = preferIPv6;
+          _currentIpv6Auto = ipv6Auto;
           _currentPreferredPort = preferredPort;
           _currentServerIp = serverIp;
           _currentMitmConnect = mitmConnect;
           _currentH2Mitm = h2Mitm;
           _currentEchDnsPolicySignature = policyJson;
+          _currentBrowserTls = browserTls;
           _currentUpstreamSignature = _buildUpstreamSignature(
             protocol: upstreamProtocol,
             host: upstreamHost,
@@ -549,6 +610,7 @@ class DohProxyService {
           );
           _currentDohRoutesUrl = dohRoutesUrl;
           _currentSelectMode = selectMode;
+          _currentCustomNodes = customNodes.join('\n');
           NetworkLogger.log('[DOH] 代理已启动，端口: $_port');
           completed = true;
           completer.complete(true);
@@ -651,14 +713,17 @@ class DohProxyService {
     _currentDohBootstrapSignature = null;
     _currentDohAuthSignature = null;
     _currentPreferIPv6 = null;
+    _currentIpv6Auto = null;
     _currentPreferredPort = null;
     _currentServerIp = null;
     _currentMitmConnect = null;
     _currentH2Mitm = null;
     _currentEchDnsPolicySignature = null;
+    _currentBrowserTls = null;
     _currentUpstreamSignature = null;
     _currentDohRoutesUrl = null;
     _currentSelectMode = null;
+    _currentCustomNodes = null;
     // 注意：不清除 _lastError，保留用于 UI 展示
   }
 
@@ -859,13 +924,6 @@ class DohProxyService {
       }
       return null;
     });
-  }
-
-  Future<Uint8List?> lookupEchConfig(String host, String dohServer) async {
-    if (!DohProxyFfi.isAvailable) {
-      return DohProxyFfi.instance.lookupEchConfig(host, dohServer);
-    }
-    return _enqueueFfiOp(() => _callFfiLookupEchConfig(host, dohServer));
   }
 
   Future<List<String>> lookupIp(
@@ -1070,6 +1128,12 @@ class DohProxyService {
     return DohProxyFfi.instance.netStats();
   }
 
+  /// 浏览器指纹模板的状态（见 [DohProxyFfi.fingerprintStatus]）；进程模式 / 库不支持返回 null
+  Map<String, dynamic>? fingerprintStatus() {
+    if (!DohProxyFfi.isAvailable || _process != null) return null;
+    return DohProxyFfi.instance.fingerprintStatus();
+  }
+
   Future<DohDnsCacheStats?> dnsCacheStats() async {
     if (!DohProxyFfi.isAvailable) {
       return DohProxyFfi.instance.dnsCacheStats();
@@ -1082,85 +1146,6 @@ class DohProxyService {
       return DohProxyFfi.instance.dnsCacheRecords();
     }
     return _enqueueFfiOp(_callFfiDnsCacheRecords);
-  }
-
-  Future<bool> recordHostSuccess(
-    String host,
-    String dohServer, {
-    String? dohServerEch,
-    bool preferIpv6 = false,
-    required String ip,
-  }) async {
-    if (!DohProxyFfi.isAvailable) {
-      return DohProxyFfi.instance.recordHostSuccess(
-        host,
-        dohServer,
-        dohServerEch: dohServerEch,
-        preferIpv6: preferIpv6,
-        ip: ip,
-      );
-    }
-    return _enqueueFfiOp(
-      () => _callFfiRecordHostSuccess(
-        host,
-        dohServer,
-        dohServerEch: dohServerEch,
-        preferIpv6: preferIpv6,
-        ip: ip,
-      ),
-    );
-  }
-
-  /// 报告连 [host] -> [ip] 失败（作废粘性 IP；[ip] 是钉住的优选赢家时计入它的连败）
-  Future<bool> reportHostFailure(
-    String host,
-    String dohServer, {
-    String? dohServerEch,
-    bool preferIpv6 = false,
-    required String ip,
-  }) async {
-    if (!DohProxyFfi.isAvailable) {
-      return DohProxyFfi.instance.reportHostFailure(
-        host,
-        dohServer,
-        dohServerEch: dohServerEch,
-        preferIpv6: preferIpv6,
-        ip: ip,
-      );
-    }
-    return _enqueueFfiOp(
-      () => _callFfiReportHostFailure(
-        host,
-        dohServer,
-        dohServerEch: dohServerEch,
-        preferIpv6: preferIpv6,
-        ip: ip,
-      ),
-    );
-  }
-
-  Future<bool> clearPreferredHostIp(
-    String host,
-    String dohServer, {
-    String? dohServerEch,
-    bool preferIpv6 = false,
-  }) async {
-    if (!DohProxyFfi.isAvailable) {
-      return DohProxyFfi.instance.clearPreferredHostIp(
-        host,
-        dohServer,
-        dohServerEch: dohServerEch,
-        preferIpv6: preferIpv6,
-      );
-    }
-    return _enqueueFfiOp(
-      () => _callFfiClearPreferredHostIp(
-        host,
-        dohServer,
-        dohServerEch: dohServerEch,
-        preferIpv6: preferIpv6,
-      ),
-    );
   }
 
   Future<T> _enqueueFfiOp<T>(Future<T> Function() op) {
@@ -1204,6 +1189,7 @@ class DohProxyService {
     String? dohNodeListJson,
     String selectMode = 'off',
     String? selectStateJson,
+    List<String> customNodes = const [],
     bool shareMeasurements = false,
     String? atlasRoutesUrl,
     List<Map<String, Object>> publicDoh = const [],
@@ -1213,6 +1199,10 @@ class DohProxyService {
     String? appVersion,
     String? networkSig,
     List<String> preconnectHosts = const [],
+    bool ipv6Auto = false,
+    bool browserTls = false,
+    String? fingerprintCachePath,
+    String? webviewUserAgent,
   }) async {
     final sendPort = await _ensureFfiIsolate();
     final response = ReceivePort();
@@ -1224,6 +1214,7 @@ class DohProxyService {
       'h2Mitm': h2Mitm,
       'echDnsPolicy': echDnsPolicy.toJson(),
       'preferIpv6': preferIpv6,
+      'ipv6Auto': ipv6Auto,
       'dohServer': dohServer,
       'dohServerEch': dohServerEch,
       'dohBootstrapIps': dohBootstrapIps,
@@ -1245,6 +1236,7 @@ class DohProxyService {
       'dohNodeListJson': dohNodeListJson,
       'selectMode': selectMode,
       'selectStateJson': selectStateJson,
+      'customNodes': customNodes,
       'shareMeasurements': shareMeasurements,
       'atlasRoutesUrl': atlasRoutesUrl,
       'publicDoh': publicDoh,
@@ -1254,6 +1246,9 @@ class DohProxyService {
       'appVersion': appVersion,
       'networkSig': networkSig,
       'preconnectHosts': preconnectHosts,
+      'browserTls': browserTls,
+      'fingerprintCachePath': fingerprintCachePath,
+      'webviewUserAgent': webviewUserAgent,
       'preferredPort': port,
       'replyTo': response.sendPort,
     });
@@ -1291,26 +1286,6 @@ class DohProxyService {
     response.close();
     if (result is Map<String, dynamic>) return result;
     return {'ok': false};
-  }
-
-  Future<Uint8List?> _callFfiLookupEchConfig(
-    String host,
-    String dohServer,
-  ) async {
-    final sendPort = await _ensureFfiIsolate();
-    final response = ReceivePort();
-    sendPort.send({
-      'cmd': 'lookup_ech',
-      'host': host,
-      'dohServer': dohServer,
-      'replyTo': response.sendPort,
-    });
-    final result = await response.first;
-    response.close();
-    if (result is Map && result['ok'] == true && result['data'] is Uint8List) {
-      return result['data'] as Uint8List;
-    }
-    return null;
   }
 
   Future<List<String>> _callFfiLookupIp(
@@ -1418,73 +1393,6 @@ class DohProxyService {
     return null;
   }
 
-  Future<bool> _callFfiRecordHostSuccess(
-    String host,
-    String dohServer, {
-    required String? dohServerEch,
-    required bool preferIpv6,
-    required String ip,
-  }) async {
-    final sendPort = await _ensureFfiIsolate();
-    final response = ReceivePort();
-    sendPort.send({
-      'cmd': 'record_host_success',
-      'host': host,
-      'dohServer': dohServer,
-      'dohServerEch': dohServerEch,
-      'preferIpv6': preferIpv6,
-      'ip': ip,
-      'replyTo': response.sendPort,
-    });
-    final result = await response.first;
-    response.close();
-    return result is Map && result['ok'] == true;
-  }
-
-  Future<bool> _callFfiReportHostFailure(
-    String host,
-    String dohServer, {
-    required String? dohServerEch,
-    required bool preferIpv6,
-    required String ip,
-  }) async {
-    final sendPort = await _ensureFfiIsolate();
-    final response = ReceivePort();
-    sendPort.send({
-      'cmd': 'report_host_failure',
-      'host': host,
-      'dohServer': dohServer,
-      'dohServerEch': dohServerEch,
-      'preferIpv6': preferIpv6,
-      'ip': ip,
-      'replyTo': response.sendPort,
-    });
-    final result = await response.first;
-    response.close();
-    return result is Map && result['ok'] == true;
-  }
-
-  Future<bool> _callFfiClearPreferredHostIp(
-    String host,
-    String dohServer, {
-    required String? dohServerEch,
-    required bool preferIpv6,
-  }) async {
-    final sendPort = await _ensureFfiIsolate();
-    final response = ReceivePort();
-    sendPort.send({
-      'cmd': 'clear_preferred_host_ip',
-      'host': host,
-      'dohServer': dohServer,
-      'dohServerEch': dohServerEch,
-      'preferIpv6': preferIpv6,
-      'replyTo': response.sendPort,
-    });
-    final result = await response.first;
-    response.close();
-    return result is Map && result['ok'] == true;
-  }
-
   Future<void> _ensureFfiStopped() async {
     const timeout = Duration(seconds: 1);
     const interval = Duration(milliseconds: 50);
@@ -1584,6 +1492,7 @@ void _ffiIsolateEntry(SendPort mainSendPort) {
           final gatewayMode = message['gatewayMode'] as bool? ?? false;
           final h2Mitm = message['h2Mitm'] as bool? ?? false;
           final preferIpv6 = message['preferIpv6'] as bool? ?? false;
+          final ipv6Auto = message['ipv6Auto'] as bool? ?? false;
           final dohServer = message['dohServer'] as String?;
           final dohServerEch = message['dohServerEch'] as String?;
           final dohBootstrapIps = _stringList(message['dohBootstrapIps']);
@@ -1612,14 +1521,20 @@ void _ffiIsolateEntry(SendPort mainSendPort) {
           final reportUrl = message['reportUrl'] as String?;
           final reportBearer = message['reportBearer'] as String?;
           final extraCoveredHosts = _stringList(message['extraCoveredHosts']);
+          final customNodes = _stringList(message['customNodes']);
           final appVersion = message['appVersion'] as String?;
           final networkSig = message['networkSig'] as String?;
           final preconnectHosts = _stringList(message['preconnectHosts']);
+          final browserTls = message['browserTls'] as bool? ?? false;
+          final fingerprintCachePath =
+              message['fingerprintCachePath'] as String?;
+          final webviewUserAgent = message['webviewUserAgent'] as String?;
           var resultPort = DohProxyFfi.instance.start(
             port: portValue,
             enableDoh: enableDoh,
             gatewayMode: gatewayMode,
             preferIpv6: preferIpv6,
+            ipv6Auto: ipv6Auto,
             dohServer: dohServer,
             dohServerEch: dohServerEch,
             dohBootstrapIps: dohBootstrapIps,
@@ -1643,6 +1558,7 @@ void _ffiIsolateEntry(SendPort mainSendPort) {
             dohNodeListJson: dohNodeListJson,
             selectMode: selectMode,
             selectStateJson: selectStateJson,
+            customNodes: customNodes,
             shareMeasurements: shareMeasurements,
             atlasRoutesUrl: atlasRoutesUrl,
             publicDoh: publicDoh,
@@ -1652,6 +1568,9 @@ void _ffiIsolateEntry(SendPort mainSendPort) {
             appVersion: appVersion,
             networkSig: networkSig,
             preconnectHosts: preconnectHosts,
+            browserTls: browserTls,
+            fingerprintCachePath: fingerprintCachePath,
+            webviewUserAgent: webviewUserAgent,
           );
           if (resultPort <= 0 && preferredPort != 0) {
             resultPort = DohProxyFfi.instance.start(
@@ -1659,6 +1578,7 @@ void _ffiIsolateEntry(SendPort mainSendPort) {
               enableDoh: enableDoh,
               gatewayMode: gatewayMode,
               preferIpv6: preferIpv6,
+              ipv6Auto: ipv6Auto,
               dohServer: dohServer,
               dohServerEch: dohServerEch,
               dohBootstrapIps: dohBootstrapIps,
@@ -1682,6 +1602,7 @@ void _ffiIsolateEntry(SendPort mainSendPort) {
               dohNodeListJson: dohNodeListJson,
               selectMode: selectMode,
               selectStateJson: selectStateJson,
+              customNodes: customNodes,
               shareMeasurements: shareMeasurements,
               atlasRoutesUrl: atlasRoutesUrl,
               publicDoh: publicDoh,
@@ -1691,6 +1612,9 @@ void _ffiIsolateEntry(SendPort mainSendPort) {
               appVersion: appVersion,
               networkSig: networkSig,
               preconnectHosts: preconnectHosts,
+              browserTls: browserTls,
+              fingerprintCachePath: fingerprintCachePath,
+              webviewUserAgent: webviewUserAgent,
             );
           }
           if (resultPort <= 0) {
@@ -1710,12 +1634,6 @@ void _ffiIsolateEntry(SendPort mainSendPort) {
           final running = DohProxyFfi.instance.isRunning();
           final portValue = running ? DohProxyFfi.instance.getPort() : 0;
           replyTo.send({'ok': true, 'running': running, 'port': portValue});
-          return;
-        case 'lookup_ech':
-          final host = message['host'] as String? ?? '';
-          final dohServer = message['dohServer'] as String? ?? '';
-          final bytes = DohProxyFfi.instance.lookupEchConfig(host, dohServer);
-          replyTo.send({'ok': true, 'data': bytes});
           return;
         case 'lookup_ip':
           final host = message['host'] as String? ?? '';
@@ -1863,49 +1781,6 @@ void _ffiIsolateEntry(SendPort mainSendPort) {
             'ok': true,
             'records': records?.map((record) => record.toJson()).toList(),
           });
-          return;
-        case 'record_host_success':
-          final host = message['host'] as String? ?? '';
-          final dohServer = message['dohServer'] as String? ?? '';
-          final dohServerEch = message['dohServerEch'] as String?;
-          final preferIpv6 = message['preferIpv6'] as bool? ?? false;
-          final ip = message['ip'] as String? ?? '';
-          final ok = DohProxyFfi.instance.recordHostSuccess(
-            host,
-            dohServer,
-            dohServerEch: dohServerEch,
-            preferIpv6: preferIpv6,
-            ip: ip,
-          );
-          replyTo.send({'ok': ok});
-          return;
-        case 'report_host_failure':
-          final host = message['host'] as String? ?? '';
-          final dohServer = message['dohServer'] as String? ?? '';
-          final dohServerEch = message['dohServerEch'] as String?;
-          final preferIpv6 = message['preferIpv6'] as bool? ?? false;
-          final ip = message['ip'] as String? ?? '';
-          final ok = DohProxyFfi.instance.reportHostFailure(
-            host,
-            dohServer,
-            dohServerEch: dohServerEch,
-            preferIpv6: preferIpv6,
-            ip: ip,
-          );
-          replyTo.send({'ok': ok});
-          return;
-        case 'clear_preferred_host_ip':
-          final host = message['host'] as String? ?? '';
-          final dohServer = message['dohServer'] as String? ?? '';
-          final dohServerEch = message['dohServerEch'] as String?;
-          final preferIpv6 = message['preferIpv6'] as bool? ?? false;
-          final ok = DohProxyFfi.instance.clearPreferredHostIp(
-            host,
-            dohServer,
-            dohServerEch: dohServerEch,
-            preferIpv6: preferIpv6,
-          );
-          replyTo.send({'ok': ok});
           return;
       }
       replyTo.send({'ok': false, 'error': 'unknown command'});

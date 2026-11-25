@@ -86,17 +86,14 @@ mixin _UtilsMixin on _DiscourseServiceBase {
 
     if (respData is Map) {
       final target = respData['target'];
-      final seq =
-          (target is Map ? target['draft_sequence'] : null) ??
+      final seq = (target is Map ? target['draft_sequence'] : null) ??
           respData['draft_sequence'];
       if (seq is int) {
         onDraftSequence?.call(seq);
       }
     }
 
-    if (respData is Map &&
-        respData.containsKey('post') &&
-        respData['post']['topic_id'] != null) {
+    if (respData is Map && respData.containsKey('post') && respData['post']['topic_id'] != null) {
       return respData['post']['topic_id'] as int;
     }
 
@@ -112,4 +109,5 @@ mixin _UtilsMixin on _DiscourseServiceBase {
 
     throw Exception(S.current.error_unknownResponseFormat);
   }
+
 }

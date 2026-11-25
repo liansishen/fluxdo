@@ -58,18 +58,14 @@ void main() {
       source: idc,
     );
     service.observeConfigurationSnapshot({
-      'href': '$idc',
-      'managed': false,
-      'keys': [key],
+      'href': '$idc', 'managed': false, 'keys': [key],
     });
     // 等 SharedPreferences 写入，不启动 WebView。
     for (var i = 0; i < 10 && prefs.getString(cacheKey) == null; i++) {
       await Future<void>.delayed(Duration.zero);
     }
     final restored = TurnstileConfiguration.decode(
-      prefs.getString(cacheKey),
-      expected: idc,
-      now: DateTime.now(),
+      prefs.getString(cacheKey), expected: idc, now: DateTime.now(),
     );
     expect(restored?.sitekey, key);
   });

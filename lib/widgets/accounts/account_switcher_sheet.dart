@@ -9,6 +9,7 @@ import '../../providers/core_providers.dart';
 import '../../services/accounts/account_store.dart';
 import '../../services/accounts/account_switcher.dart';
 import '../../services/toast_service.dart';
+import '../../utils/avatar_url.dart';
 import '../../utils/dialog_utils.dart';
 import '../../utils/url_helper.dart';
 import '../common/loading_dialog.dart';
@@ -171,9 +172,11 @@ class _AccountSwitcherSheetState extends ConsumerState<AccountSwitcherSheet> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final currentId = ref.watch(
-      currentUserProvider.select((user) => user.value?.id),
-    );
+    // 刚切完账号时 currentUserProvider 还在重载、拿不到值：退回服务里的当前
+    // 用户，免得当前账号被当成别的账号、能点
+    final currentId =
+        ref.watch(currentUserProvider.select((user) => user.value?.id)) ??
+        ref.read(discourseServiceProvider).currentUserNotifier.value?.id;
     final accounts = ref.watch(savedAccountsProvider).value ?? const [];
     final sorted = [
       ...accounts.where((a) => a.userId == currentId),
@@ -252,7 +255,7 @@ class _AccountTile extends StatelessWidget {
       leading: SmartAvatar(
         imageUrl: template == null
             ? null
-            : UrlHelper.resolveUrlWithCdn(template.replaceAll('{size}', '96')),
+            : UrlHelper.resolveUrlWithCdn(AvatarUrl.resolve(template, size: 96)),
         radius: 20,
         fallbackText: account.username,
       ),

@@ -2994,11 +2994,7 @@ class RichComposerEditorState extends State<RichComposerEditor> {
     });
   }
 
-  Future<void> _showTableStructureMenu(
-    String tableId,
-    bool row,
-    Rect anchor,
-  ) async {
+  Future<void> _showTableStructureMenu(String tableId, bool row, Rect anchor) async {
     final target = _tableContext.value;
     if (target == null || target.tableId != tableId) return;
     final releaseChrome = ComposerChromeScope.maybeOf(context)?.hold();
@@ -4115,18 +4111,19 @@ class RichComposerEditorState extends State<RichComposerEditor> {
                                                       radius: 8,
                                                       child: child,
                                                     ),
-                                            caretViewportInsets: EdgeInsets.only(
-                                              // 创建/编辑页的顶栏覆盖在滚动区上方。
-                                              top:
-                                                  ComposerChromeScope.topInsetOf(
-                                                    context,
-                                                  ),
-                                              bottom:
-                                                  bottomInset +
-                                                  _toolsAnchor
-                                                      .contextExtent
-                                                      .value,
-                                            ),
+                                            caretViewportInsets:
+                                                EdgeInsets.only(
+                                                  // 创建/编辑页的顶栏覆盖在滚动区上方。
+                                                  top:
+                                                      ComposerChromeScope.topInsetOf(
+                                                        context,
+                                                      ),
+                                                  bottom:
+                                                      bottomInset +
+                                                      _toolsAnchor
+                                                          .contextExtent
+                                                          .value,
+                                                ),
                                             showTrailingParagraph: true,
                                             emptyParagraphHint:
                                                 isEmpty &&
@@ -4171,18 +4168,8 @@ class RichComposerEditorState extends State<RichComposerEditor> {
                                             // cook 替换
                                             onTableEdited: _onTableEdited,
                                             onTableCommit: _onTableEdited,
-                                            tableStructureControlsBuilder:
-                                                _isDesktop
-                                                ? null
-                                                : (context, cell, open) =>
-                                                      ComposerTableControls(
-                                                        cell: cell,
-                                                        onOpen: open,
-                                                      ),
-                                            onTableStructureMenuRequested:
-                                                _isDesktop
-                                                ? null
-                                                : _showTableStructureMenu,
+                                            tableStructureControlsBuilder: _isDesktop ? null : (context, cell, open) => ComposerTableControls(cell: cell, onOpen: open),
+                                            onTableStructureMenuRequested: _isDesktop ? null : _showTableStructureMenu,
                                             onTableContextChanged: _isDesktop
                                                 ? null
                                                 : _updateTableContext,
@@ -4690,27 +4677,19 @@ class _RichToolbarState extends State<_RichToolbar> {
             ? child!
             : Tooltip(
                 message: context.l10n.editor.table_format_unavailable,
-                child: ExcludeFocus(
-                  child: AbsorbPointer(
-                    child: Opacity(
-                      opacity: .45,
-                      child: Row(
-                        key: const ValueKey('table-format-tools'),
-                        children: [
-                          _buildEmojiButton(theme),
-                          Expanded(
-                            child: SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: Row(children: _buildMiddleTools(theme)),
-                            ),
-                          ),
-                          if (widget.onToggleTools != null)
-                            _buildToolsButton(theme),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
+                child: ExcludeFocus(child: AbsorbPointer(
+                  child: Opacity(opacity: .45, child: Row(
+                    key: const ValueKey('table-format-tools'),
+                    children: [
+                      _buildEmojiButton(theme),
+                      Expanded(child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(children: _buildMiddleTools(theme)),
+                      )),
+                      if (widget.onToggleTools != null) _buildToolsButton(theme),
+                    ],
+                  )),
+                )),
               ),
         child: ValueListenableBuilder<ComposerObjectSelection?>(
           valueListenable: widget.objectSelection,
