@@ -29,6 +29,7 @@ import 'providers/message_bus_providers.dart';
 import 'providers/chat/chat_notification_alert_provider.dart';
 import 'services/auth_issue_notice_service.dart';
 import 'providers/app_state_refresher.dart';
+import 'services/preloaded_data_service.dart';
 import 'services/highlighter_service.dart';
 import 'widgets/common/notification_icon_button.dart';
 import 'widgets/common/anchor_guard_sliver.dart';
@@ -42,6 +43,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import 'services/network/cookie/csrf_token_service.dart';
 import 'services/network/system_proxy_service.dart';
+import 'services/cf_clearance_authority.dart';
+import 'services/network/cf/cf_rate_challenge_limiter.dart';
 import 'services/network/cookie/cookie_devtools_extension.dart';
 import 'services/network/cookie/cookie_jar_service.dart';
 import 'services/network/cookie/cookie_store_observer.dart';
@@ -378,9 +381,17 @@ Future<void> main(List<String> args) async {
   await ErudaSettingsService.instance.initialize(prefs);
   StartupTimeline.mark('settings');
 
-  // Windows 固定系统代理必须先于本地 DoH/WebView 网关读取。
-  if (Platform.isWindows) {
+  // 系统代理（Windows 注册表 / 安卓默认网络）必须先于本地 DoH/WebView 网关读取，网关才能按
+  // 「应用代理 > 系统代理 > 直连」选择首次启动的上游出口。
+  // 上次没冷却完的挑战型 429（CF 速率规则的质询）接着冷却，别一启动就接着撞
+  CfRateChallengeLimiter.instance.initialize(
+    prefs,
+    mainHost: CfClearanceAuthority.mainHost,
+  );
+  // 安卓的系统代理（Wi-Fi 代理 / PAC / VPN 下发）经原生通道异步读，最多等 300 ms
+  if (Platform.isWindows || Platform.isAndroid) {
     SystemProxyService.instance.start();
+    if (Platform.isAndroid) await SystemProxyService.instance.ready();
   }
   // 首次签名最多额外等待 300ms；迟到结果仍补种，不能依赖首页挂载后才启动的监听。
   final startupConnectivity = await startupConnectivityCheck.timeout(
@@ -1102,6 +1113,7 @@ class _MainPageState extends ConsumerState<MainPage>
     this,
   );
   VoidCallback? _unregisterMessageBusChannels;
+  VoidCallback? _onFreshPreload;
   int? _lastTappedIndex;
   DateTime? _lastTapTime;
   Timer? _pendingSingleTap;
@@ -1166,7 +1178,11 @@ class _MainPageState extends ConsumerState<MainPage>
     // 窗口内,届时 containerOf(context) 会抛错把刷新链掐死(登录后无
     // 登录态)。container 与根 ProviderScope 同生命周期,不受元素影响。
     final appContainer = ProviderScope.containerOf(context, listen: false);
-    _authStateSub = ref.listenManual<AsyncValue<void>>(authStateProvider, (
+    // 冷启动先显示的是启动快照：这次运行的首页数据到了以后，把从快照里取的
+    // 分类、追踪状态等换成新的
+    _onFreshPreload = () => AppStateRefresher.applyFreshPreload(appContainer);
+    PreloadedDataService().freshRevision.addListener(_onFreshPreload!);
+    _authStateSub = ref.listenManual<AsyncValue<int>>(authStateProvider, (
       _,
       next,
     ) {
@@ -1421,6 +1437,10 @@ class _MainPageState extends ConsumerState<MainPage>
     _pendingSingleTap?.cancel();
     _authErrorSub?.close();
     _authStateSub?.close();
+    final onFreshPreload = _onFreshPreload;
+    if (onFreshPreload != null) {
+      PreloadedDataService().freshRevision.removeListener(onFreshPreload);
+    }
     _unregisterMessageBusChannels?.call();
     _messageBusChannels.stop();
     _connectivitySub?.close();
@@ -1439,6 +1459,13 @@ class _MainPageState extends ConsumerState<MainPage>
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       UserPresenceService().setForeground(false);
+    }
+    // 让路实测只在前台做：后台时系统可能直接拒掉 App 的连接。inactive（下拉通知栏、
+    // 权限弹窗）还算前台
+    if (state == AppLifecycleState.resumed) {
+      VpnAutoToggleService.instance.setAppForeground(true);
+    } else if (state != AppLifecycleState.inactive) {
+      VpnAutoToggleService.instance.setAppForeground(false);
     }
 
     if (state == AppLifecycleState.hidden) {

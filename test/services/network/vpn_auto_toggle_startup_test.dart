@@ -11,7 +11,9 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
     expect(NetworkSettingsService.instance.isInitialized, isFalse);
-    final toggle = VpnAutoToggleService.instance..initialize(prefs);
+    final toggle = VpnAutoToggleService.instance
+      ..resetForTest()
+      ..initialize(prefs);
 
     await toggle.syncInitialState([
       ConnectivityResult.wifi,
@@ -28,7 +30,9 @@ void main() {
   test('DoH 原本关闭则不登记压制，VPN 断开不擅自打开', () async {
     SharedPreferences.setMockInitialValues({'doh_enabled': false});
     final prefs = await SharedPreferences.getInstance();
-    final toggle = VpnAutoToggleService.instance..initialize(prefs);
+    final toggle = VpnAutoToggleService.instance
+      ..resetForTest()
+      ..initialize(prefs);
 
     await toggle.syncInitialState([ConnectivityResult.vpn]);
     expect(toggle.isDohSuppressed, isFalse);
@@ -50,7 +54,9 @@ void main() {
     test('本次 VPN 期间恢复加速，网络变化不再暂停，VPN 断开后清掉记号、下次照常让路', () async {
       SharedPreferences.setMockInitialValues({});
       final prefs = await SharedPreferences.getInstance();
-      final toggle = VpnAutoToggleService.instance..initialize(prefs);
+      final toggle = VpnAutoToggleService.instance
+        ..resetForTest()
+        ..initialize(prefs);
       await toggle.syncInitialState(vpnOn);
       expect(NetworkSettingsService.storedDohEnabled(prefs), isFalse);
       expect(toggle.locksAcceleration, isTrue);
@@ -63,7 +69,9 @@ void main() {
 
       // VPN 还连着时的网络变化（含重启 App 重新同步）不再暂停加速
       await toggle.syncInitialState(vpnOn);
-      VpnAutoToggleService.instance.initialize(prefs);
+      VpnAutoToggleService.instance
+        ..resetForTest()
+        ..initialize(prefs);
       expect(toggle.accelResumed, isTrue);
       await toggle.syncInitialState(vpnOn);
       expect(NetworkSettingsService.storedDohEnabled(prefs), isTrue);
@@ -81,7 +89,9 @@ void main() {
     test('用户自己关的加速：连不上也不擅自打开', () async {
       SharedPreferences.setMockInitialValues({'doh_enabled': false});
       final prefs = await SharedPreferences.getInstance();
-      final toggle = VpnAutoToggleService.instance..initialize(prefs);
+      final toggle = VpnAutoToggleService.instance
+        ..resetForTest()
+        ..initialize(prefs);
       await toggle.syncInitialState(vpnOn);
 
       expect(await toggle.resumeAccelerationForVpn('test'), isFalse);
@@ -93,7 +103,9 @@ void main() {
     test('连续失败够数且持续够久才恢复，中间拿到响应就作废', () async {
       SharedPreferences.setMockInitialValues({});
       final prefs = await SharedPreferences.getInstance();
-      final toggle = VpnAutoToggleService.instance..initialize(prefs);
+      final toggle = VpnAutoToggleService.instance
+        ..resetForTest()
+        ..initialize(prefs);
       var now = DateTime(2026, 11, 10, 8);
       toggle.unreachableStreak = ForumUnreachableStreak(clock: () => now);
       await toggle.syncInitialState(vpnOn);
@@ -124,7 +136,9 @@ void main() {
     test('一起失败的几个请求要等满 2 秒、期间没拿到响应才算', () async {
       SharedPreferences.setMockInitialValues({});
       final prefs = await SharedPreferences.getInstance();
-      final toggle = VpnAutoToggleService.instance..initialize(prefs);
+      final toggle = VpnAutoToggleService.instance
+        ..resetForTest()
+        ..initialize(prefs);
       toggle.unreachableStreak = ForumUnreachableStreak(
         minSpan: const Duration(milliseconds: 40),
       );

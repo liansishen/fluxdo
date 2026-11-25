@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:collection/collection.dart';
@@ -234,7 +235,7 @@ class AppPreferences {
   /// 且第三方签名图成本高、良莠不齐,默认关对齐网页更稳妥。
   final bool showSignatures;
 
-  /// 小尾巴动画 SVG 自适应帧率
+  /// 小尾巴动画 SVG 自适应帧率（恒开，设置里不再提供开关）
   final bool adaptiveSignatureFrameRate;
 
   /// Boost 弹幕化（默认关闭）
@@ -249,7 +250,7 @@ class AppPreferences {
   /// 默认使用树形视图
   final bool defaultNestedView;
 
-  /// 嵌套视图连接线样式
+  /// 嵌套视图连接线样式（恒为自适应，设置里不再提供选择）
   final NestedLineStyle nestedLineStyle;
 
   /// 书签页默认打开方式（桌面端与手机端均生效）
@@ -629,14 +630,19 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
   static const String _cryptoRecentAlgorithmsKey =
       'pref_crypto_recent_algorithms';
   static const String _showSignaturesKey = 'pref_show_signatures';
-  static const String _adaptiveSignatureFrameRateKey =
-      'pref_adaptive_signature_frame_rate';
   static const String _boostDanmakuKey = 'pref_boost_danmaku';
   static const String _showSuggestedTopicsKey = 'pref_show_suggested_topics';
   static const String _showTopicCreationTimeKey =
       'pref_show_topic_creation_time';
   static const String _defaultNestedViewKey = 'pref_default_nested_view';
-  static const String _nestedLineStyleKey = 'pref_nested_line_style';
+
+  /// 已从设置里拿掉、行为固定为默认值的偏好（小尾巴自适应帧率恒开、
+  /// 树形连接线恒为自适应、废弃的局部浮窗玻璃开关）：启动时把旧值清掉，不再读它们
+  static const List<String> _retiredKeys = [
+    'pref_adaptive_signature_frame_rate',
+    'pref_nested_line_style',
+    'pref_bottom_nav_floating_blur',
+  ];
   static const String _bookmarksOpenModeKey = 'pref_bookmarks_open_mode';
   static const String _maxConcurrentKey = 'pref_max_concurrent';
   static const String _maxPerWindowKey = 'pref_max_per_window';
@@ -727,16 +733,11 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
           cryptoRecentAlgorithms:
               _prefs.getStringList(_cryptoRecentAlgorithmsKey) ?? const [],
           showSignatures: _prefs.getBool(_showSignaturesKey) ?? false,
-          adaptiveSignatureFrameRate:
-              _prefs.getBool(_adaptiveSignatureFrameRateKey) ?? true,
           boostDanmaku: _prefs.getBool(_boostDanmakuKey) ?? false,
           showSuggestedTopics: _prefs.getBool(_showSuggestedTopicsKey) ?? true,
           showTopicCreationTime:
               _prefs.getBool(_showTopicCreationTimeKey) ?? true,
           defaultNestedView: _prefs.getBool(_defaultNestedViewKey) ?? false,
-          nestedLineStyle: NestedLineStyle.fromString(
-            _prefs.getString(_nestedLineStyleKey),
-          ),
           bookmarksOpenMode: BookmarksOpenMode.fromString(
             _prefs.getString(_bookmarksOpenModeKey),
           ),
@@ -805,9 +806,8 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
               EmojiHandler.defaultPreference,
         ),
       ) {
-    // 废弃的局部开关不再参与全局玻璃策略。
-    if (_prefs.containsKey('pref_bottom_nav_floating_blur')) {
-      _prefs.remove('pref_bottom_nav_floating_blur');
+    for (final key in _retiredKeys) {
+      if (_prefs.containsKey(key)) unawaited(_prefs.remove(key));
     }
     isPortraitLocked = state.portraitLock;
     PredictiveBackSettings.enabled = state.predictiveBack;
@@ -1114,11 +1114,6 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
     await _prefs.setBool(_showSignaturesKey, enabled);
   }
 
-  Future<void> setAdaptiveSignatureFrameRate(bool enabled) async {
-    state = state.copyWith(adaptiveSignatureFrameRate: enabled);
-    await _prefs.setBool(_adaptiveSignatureFrameRateKey, enabled);
-  }
-
   Future<void> setBoostDanmaku(bool enabled) async {
     if (state.boostDanmaku == enabled) return;
     state = state.copyWith(boostDanmaku: enabled);
@@ -1134,11 +1129,6 @@ class PreferencesNotifier extends StateNotifier<AppPreferences> {
   Future<void> setDefaultNestedView(bool enabled) async {
     state = state.copyWith(defaultNestedView: enabled);
     await _prefs.setBool(_defaultNestedViewKey, enabled);
-  }
-
-  Future<void> setNestedLineStyle(NestedLineStyle style) async {
-    state = state.copyWith(nestedLineStyle: style);
-    await _prefs.setString(_nestedLineStyleKey, style.name);
   }
 
   Future<void> setBookmarksOpenMode(BookmarksOpenMode mode) async {

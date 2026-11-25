@@ -50,6 +50,9 @@ class _Network extends Fake implements DiscourseService {
   final TopicListResponse initial;
   final requests = <({int page, Completer<TopicListResponse> response})>[];
 
+  /// 首屏（第 0 页）被请求了几次
+  int firstPageRequests = 0;
+
   @override
   Stream<void> get authStateStream => const Stream<void>.empty();
   @override
@@ -62,7 +65,10 @@ class _Network extends Fake implements DiscourseService {
     String? order,
     bool? ascending,
   }) {
-    if (page == 0) return Future.value(initial);
+    if (page == 0) {
+      firstPageRequests++;
+      return Future.value(initial);
+    }
     final response = Completer<TopicListResponse>();
     requests.add((page: page, response: response));
     return response.future;
@@ -70,6 +76,8 @@ class _Network extends Fake implements DiscourseService {
 }
 
 class _GuestStartup extends Fake implements AppStartup {
+  @override
+  final ValueNotifier<SessionVerdict?> session = ValueNotifier(null);
   @override
   SessionVerdict? get verdictNow => null;
   @override
@@ -132,6 +140,7 @@ Future<ProviderContainer> _mount(
   Size size = const Size(330, 1000),
   bool active = true,
   List<String> filterKeywords = const [],
+  bool vscode = true,
   Widget? workspace,
 }) async {
   // 访客首页快照是网络边界；不注入话题，首批仍走真实列表 provider。
@@ -185,10 +194,12 @@ Future<ProviderContainer> _mount(
             GlobalWidgetsLocalizations.delegate,
             GlobalCupertinoLocalizations.delegate,
           ],
-          theme: ThemeData(
-            colorScheme: VscodeTheme.colorScheme(Brightness.light),
-            extensions: [VscodeTokens.of(Brightness.light)],
-          ),
+          theme: vscode
+              ? ThemeData(
+                  colorScheme: VscodeTheme.colorScheme(Brightness.light),
+                  extensions: [VscodeTokens.of(Brightness.light)],
+                )
+              : ThemeData(),
           home: Scaffold(body: workspace ?? TopicsPage(isActive: active)),
         ),
       ),
@@ -206,6 +217,14 @@ void main() {
   void keepClockAlive() {}
   setUpAll(() => RelativeTimeClock.instance.addListener(keepClockAlive));
   tearDownAll(() => RelativeTimeClock.instance.removeListener(keepClockAlive));
+
+  _testPage('首次构建只取一次首屏：没变的标签筛选不触发重新请求', (tester) async {
+    final network = _Network(_page(1, 3, more: false));
+    await _mount(tester, network, vscode: false);
+    await _frames(tester);
+    expect(network.firstPageRequests, 1);
+    expect(tester.takeException(), isNull);
+  });
 
   _testPage('真实左栏无需滚动或改窗口，连续补页直到够屏且在途不重复', (tester) async {
     final network = _Network(_page(1, 1));

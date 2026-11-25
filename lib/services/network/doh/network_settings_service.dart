@@ -92,9 +92,6 @@ class NetworkSettings {
     required this.customServers,
     required this.proxyPort,
     this.ipv6Mode = Ipv6Mode.auto,
-    this.serverIp,
-    this.gatewayEnabled = true,
-    this.h2Mitm = false,
     this.echDnsPolicy = const EchDnsPolicy(),
     this.browserTls = false,
     this.selectMode = CfSelectMode.localAtlas,
@@ -123,15 +120,6 @@ class NetworkSettings {
   /// 自动：由 Rust 本地优选按本机网络决定用哪一族
   bool get ipv6Auto => ipv6Mode == Ipv6Mode.auto;
 
-  /// 全局 server IP（指定后跳过 DNS 解析直接连接）
-  final String? serverIp;
-
-  /// Gateway（反向代理）模式开关，关闭时回退为 MITM
-  final bool gatewayEnabled;
-
-  /// WebView MITM 是否启用 HTTP/2 多路复用（按请求转发到上游；安卓默认开，其余平台默认关）
-  final bool h2Mitm;
-
   final EchDnsPolicy echDnsPolicy;
 
   /// 浏览器指纹：网关的上游握手（TLS 与 HTTP/2）照 WebView 复刻（安卓默认开；
@@ -155,9 +143,6 @@ class NetworkSettings {
     List<DohServer>? customServers,
     int? Function()? proxyPort,
     Ipv6Mode? ipv6Mode,
-    String? Function()? serverIp,
-    bool? gatewayEnabled,
-    bool? h2Mitm,
     EchDnsPolicy? echDnsPolicy,
     bool? browserTls,
     CfSelectMode? selectMode,
@@ -171,9 +156,6 @@ class NetworkSettings {
       customServers: customServers ?? this.customServers,
       proxyPort: proxyPort != null ? proxyPort() : this.proxyPort,
       ipv6Mode: ipv6Mode ?? this.ipv6Mode,
-      gatewayEnabled: gatewayEnabled ?? this.gatewayEnabled,
-      serverIp: serverIp != null ? serverIp() : this.serverIp,
-      h2Mitm: h2Mitm ?? this.h2Mitm,
       echDnsPolicy: echDnsPolicy ?? this.echDnsPolicy,
       browserTls: browserTls ?? this.browserTls,
       selectMode: selectMode ?? this.selectMode,
@@ -237,9 +219,14 @@ class NetworkSettingsService {
   static const _preferIPv6Key = 'doh_prefer_ipv6';
   static const _ipv6ModeKey = 'doh_ipv6_mode';
   static const _serverIpKey = 'doh_server_ip';
+
+  /// 已从设置里拿掉的开关留下的旧值，启动时清掉
+  static const _retiredKeys = [
+    _serverIpKey,
+    'doh_gateway_enabled',
+    'doh_h2_mitm',
+  ];
   static const _echServerKey = 'doh_ech_server';
-  static const _gatewayEnabledKey = 'doh_gateway_enabled';
-  static const _h2MitmKey = 'doh_h2_mitm';
   static const _echDnsPolicyKey = 'doh_ech_dns_policy';
   static const _browserTlsKey = 'doh_browser_tls';
   static const _accelSubdomainKey = 'doh_accel_subdomain';
@@ -270,6 +257,10 @@ class NetworkSettingsService {
 
   /// linux.do 的静态资源域（cdn / cdn3 / ping / linuxdo-uploads.s3 都在它下面）
   static const _ldstaticHost = 'ldstatic.com';
+
+  /// LD士多（商城网页 ldcstore.com、接口 api / api1 / api2.ldspro.qzz.io）。都在
+  /// Cloudflare 上，借 linux.do 的 ECH 钥匙握手实测 Accepted（2026-11-18）
+  static const ldStoreHosts = ['ldcstore.com', 'ldspro.qzz.io'];
   static const accelAtlasRoutesUrl = 'https://$_atlasHost/v1/routes';
 
   /// cfhub：众包 ECH 测速分池，探针上报与探针令牌都在这里
@@ -340,12 +331,27 @@ class NetworkSettingsService {
 
   NetworkSettings get current => notifier.value;
 
+  /// 内置网页的 MITM 是否走 HTTP/2（按请求转发到上游、多路复用）。
+  /// 安卓开：和 App 自己的请求走同一种连接（h2 + 同一指纹），原样字节拷贝的 h1 MITM
+  /// 上游只能谈 HTTP/1.1，指纹与原生请求对不上；其余平台关。不再提供开关
+  static bool get webViewH2Mitm => Platform.isAndroid;
+
+  /// 旧的「服务端 IP」改记为自定义节点：只在还没填自定义节点、且写法有效时迁移；
+  /// 能不能用仍由引擎探测决定（不在 Cloudflare 网段或连不上的会被引擎忽略）
+  @visibleForTesting
+  static List<String> migrateLegacyServerIp(
+    String? legacyServerIp,
+    List<String> customNodes,
+  ) {
+    final text = legacyServerIp?.trim() ?? '';
+    if (text.isEmpty || customNodes.isNotEmpty) return customNodes;
+    final migrated = CustomNodeInput.sanitize([text]);
+    return migrated.isEmpty ? customNodes : migrated;
+  }
+
   /// 当前是否使用 gateway（反向代理）模式
-  /// Gateway 模式：DOH 开启 + 用户开关开启 + 代理运行中（加速网关）
-  bool get isGatewayMode =>
-      current.dohEnabled &&
-      current.gatewayEnabled &&
-      _rustProxyService.isRunning;
+  /// Gateway 模式：DOH 开启 + 代理运行中（加速网关）。网关是唯一的引擎，没有单独的开关
+  bool get isGatewayMode => current.dohEnabled && _rustProxyService.isRunning;
 
   /// 加速关着（含 VPN 自动让路）、也没有上游代理时，安卓仍为浏览器指纹起本地网关：
   /// 系统 DNS（开着 VPN 就是 VPN 的）、不做 ECH 和优选。内置网页也经它中转（MITM），
@@ -359,8 +365,7 @@ class NetworkSettingsService {
       Platform.isAndroid &&
       !current.dohEnabled &&
       !_proxyService.current.isValid &&
-      current.browserTls &&
-      current.gatewayEnabled;
+      current.browserTls;
 
   /// App 的请求是否改写成明文发给本地网关（加速网关，或只为浏览器指纹起的网关）
   bool get routesAppThroughGateway =>
@@ -371,7 +376,7 @@ class NetworkSettingsService {
   /// WebView 主动采样也只在这时能跑
   bool get relaysWebViewThroughGateway => routesAppThroughGateway;
 
-  /// 本地动态优选只在 Android / Linux / Windows 网关模式下跑：DoH 开着、没有上游代理、网关开关开着
+  /// 本地动态优选只在 Android / Linux / Windows 上跑：DoH 开着、没有上游代理
   /// （网关/上游的判断和 [_applyProxyState] 里启动代理时用的一致）
   bool get selectorEligible =>
       (Platform.isAndroid || Platform.isLinux || Platform.isWindows) &&
@@ -380,7 +385,7 @@ class NetworkSettingsService {
       WebViewMitmPolicy.useGatewayMode(
         isWindows: false,
         dohEnabled: current.dohEnabled,
-        gatewayEnabled: current.gatewayEnabled,
+        gatewayEnabled: true,
         webViewAdapterEnabled: WebViewAdapterSettingsService.instance.enabled,
       );
 
@@ -514,7 +519,7 @@ class NetworkSettingsService {
     final dohEnabled = prefs.getBool(_dohEnabledKey) ?? true;
     final selectMode = CfSelectMode.fromWire(prefs.getString(_selectModeKey));
     final shareMeasurements = prefs.getBool(_selectShareKey) ?? false;
-    final customNodes = CustomNodeInput.sanitize(
+    var customNodes = CustomNodeInput.sanitize(
       prefs.getStringList(_customNodesKey) ?? const [],
     );
     final selected = prefs.getString(_dohSelectedKey) ?? _defaultServerUrl;
@@ -526,12 +531,22 @@ class NetworkSettingsService {
     await prefs.remove('rhttp_enabled');
     await prefs.remove('rhttp_mode');
     final ipv6Mode = _loadIpv6Mode(prefs);
-    final serverIp = prefs.getString(_serverIpKey);
+    // 「服务端 IP」「网关模式」「内置网页 HTTP/2」不再有设置入口：
+    // 服务端 IP 对所有域名生效，早被自定义节点取代——填过的改记成自定义节点；
+    // 网关模式恒开（关掉只会更慢、且不做节点优选）；内置网页 HTTP/2 按平台固定
+    final migratedNodes = migrateLegacyServerIp(
+      prefs.getString(_serverIpKey),
+      customNodes,
+    );
+    if (!listEquals(migratedNodes, customNodes)) {
+      customNodes = migratedNodes;
+      await prefs.setStringList(_customNodesKey, migratedNodes);
+      debugPrint('[DOH] 旧的服务端 IP 已改记为自定义节点');
+    }
+    for (final key in _retiredKeys) {
+      await prefs.remove(key);
+    }
     final echServer = prefs.getString(_echServerKey);
-    final gatewayEnabled = prefs.getBool(_gatewayEnabledKey) ?? true;
-    // 安卓默认开：内置网页按请求转发到上游，和 App 自己的请求走同一种连接（h2 + 同一指纹）；
-    // 原样字节拷贝的 h1 MITM 上游只能谈 HTTP/1.1，指纹与原生请求对不上
-    final h2Mitm = prefs.getBool(_h2MitmKey) ?? Platform.isAndroid;
     final browserTls = prefs.getBool(_browserTlsKey) ?? Platform.isAndroid;
     var echDnsPolicy = const EchDnsPolicy();
     try {
@@ -552,9 +567,6 @@ class NetworkSettingsService {
       customServers: custom,
       proxyPort: proxyPort,
       ipv6Mode: ipv6Mode,
-      serverIp: serverIp,
-      gatewayEnabled: gatewayEnabled,
-      h2Mitm: h2Mitm,
       echDnsPolicy: echDnsPolicy,
       browserTls: browserTls,
       selectMode: selectMode,
@@ -714,21 +726,6 @@ class NetworkSettingsService {
     };
   }
 
-  Future<void> setServerIp(String? ip) async {
-    final prefs = _prefs;
-    if (prefs == null) return;
-    final trimmed = ip?.trim();
-    final value = (trimmed != null && trimmed.isNotEmpty) ? trimmed : null;
-    notifier.value = notifier.value.copyWith(serverIp: () => value);
-    if (value != null) {
-      await prefs.setString(_serverIpKey, value);
-    } else {
-      await prefs.remove(_serverIpKey);
-    }
-    _scheduleApplyProxyState();
-    _touch();
-  }
-
   Future<void> setEchServer(String? url) async {
     final prefs = _prefs;
     if (prefs == null) return;
@@ -751,25 +748,6 @@ class NetworkSettingsService {
     _resolver.echDnsPolicy = normalized;
     _rustProxyService.configureEchDnsPolicy(normalized);
     await prefs.setString(_echDnsPolicyKey, jsonEncode(normalized.toJson()));
-    _scheduleApplyProxyState();
-    _touch();
-  }
-
-  Future<void> setGatewayEnabled(bool enabled) async {
-    final prefs = _prefs;
-    if (prefs == null) return;
-    notifier.value = notifier.value.copyWith(gatewayEnabled: enabled);
-    await prefs.setBool(_gatewayEnabledKey, enabled);
-    _scheduleApplyProxyState();
-    _touch();
-  }
-
-  /// 切换 WebView h2 MITM（实验性）。切换后重启代理生效，需实测 CF 指纹。
-  Future<void> setH2Mitm(bool enabled) async {
-    final prefs = _prefs;
-    if (prefs == null) return;
-    notifier.value = notifier.value.copyWith(h2Mitm: enabled);
-    await prefs.setBool(_h2MitmKey, enabled);
     _scheduleApplyProxyState();
     _touch();
   }
@@ -954,7 +932,7 @@ class NetworkSettingsService {
 
       final upstream = GatewayUpstream.resolve(
         applicationProxy: _proxyService.current,
-        systemProxyUrl: Platform.isWindows
+        systemProxyUrl: Platform.isWindows || Platform.isAndroid
             ? SystemProxyService.instance.effectiveProxyUrl
             : null,
       );
@@ -969,7 +947,7 @@ class NetworkSettingsService {
           WebViewMitmPolicy.useGatewayMode(
             isWindows: Platform.isWindows,
             dohEnabled: current.dohEnabled,
-            gatewayEnabled: current.gatewayEnabled,
+            gatewayEnabled: true,
             webViewAdapterEnabled: webViewAdapterEnabled,
           );
 
@@ -1033,7 +1011,6 @@ class NetworkSettingsService {
         dohEchAuthToken: current.dohEnabled
             ? _authTokenFor(dohServerEch)
             : null,
-        serverIp: current.serverIp,
         upstreamProtocol: upstream?.protocol,
         upstreamHost: upstream?.host,
         upstreamPort: upstream?.port,
@@ -1043,7 +1020,7 @@ class NetworkSettingsService {
         caCertPem: caCertPem,
         caKeyPem: caKeyPem,
         mitmConnect: mitmConnect,
-        h2Mitm: current.h2Mitm,
+        h2Mitm: webViewH2Mitm,
         dohRoutesUrl: dohRoutesUrl,
         dohRouteTableJson: dohRouteTableJson,
         dohNodeListJson: dohNodeListJson,
@@ -1068,6 +1045,9 @@ class NetworkSettingsService {
           // linux.do 的静态资源域（图片 / 表情 / 消息总线 / 直传）：和主站同一个
           // 赢家 + ECH，高墙地区的明文 SNI 会被 RST（福建实测图片全 502）
           _ldstaticHost,
+          // LD士多：上海佬友网页和 App 都进不去，日志里接口全是网关 502
+          // 「TLS handshake failed」（约 40 ms 就断，明文 SNI 被干扰）
+          ...ldStoreHosts,
         ],
         appVersion: _appVersion,
         networkSig: ConnectivityService().networkSignature.value,
@@ -1471,9 +1451,10 @@ class NetworkSettingsService {
   }
 
   void _handleSystemProxyChanged() {
-    if (_prefs == null || !Platform.isWindows) return;
+    if (_prefs == null || !(Platform.isWindows || Platform.isAndroid)) return;
     // 应用内代理拥有更高优先级；只有走系统代理回退时才需要重启网关。
-    if (_proxyService.current.isValid || !shouldRunLocalProxy) return;
+    // 安卓让路时网关只为指纹在跑（[fingerprintOnlyGateway]），上游同样要换
+    if (_proxyService.current.isValid || !_shouldRunProxyProcess) return;
     _scheduleApplyProxyState();
   }
 
